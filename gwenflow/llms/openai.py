@@ -4,15 +4,14 @@ import openai
 from typing import Optional, Union, Mapping, Any
 from typing import Iterator, AsyncIterator
 
-from gwenflow.base.types import Usage, ChatMessage
-from gwenflow.utils.tokens import num_tokens_from_string, num_tokens_from_messages
+from gwenflow.base.types import ChatMessage
 from gwenflow.llms.base import ChatBase
 
 
 logger = logging.getLogger(__name__)
 
 
-class ChatOpenAI(ChatBase):
+class OpenAI(ChatBase):
  
     def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
         _api_key = api_key or os.environ.get("OPENAI_API_KEY")

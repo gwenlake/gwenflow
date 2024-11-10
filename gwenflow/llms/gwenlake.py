@@ -3,10 +3,10 @@ from typing import Optional, Union
 
 import openai
 
-from gwenflow.llms.openai import ChatOpenAI
+from gwenflow.llms.openai import OpenAI
 
 
-class ChatGwenlake(ChatOpenAI):
+class Gwenlake(OpenAI):
  
     def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
         _api_key = api_key or os.environ.get("GWENLAKE_API_KEY")

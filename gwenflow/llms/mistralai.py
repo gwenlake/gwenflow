@@ -4,15 +4,14 @@ import logging
 from mistralai.client import MistralClient
 # from mistralai.models.chat_completion import ChatMessage
 
-from gwenflow.base.types import Usage, ChatMessage
-from gwenflow.utils.tokens import num_tokens_from_string, num_tokens_from_messages
+from gwenflow.base.types import ChatMessage
 from gwenflow.llms.base import ChatBase
 
 
 logger = logging.getLogger(__name__)
 
 
-class ChatMistralAI(ChatBase):
+class MistralAI(ChatBase):
  
     def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
         _api_key = api_key or os.environ.get("MISTRAL_API_KEY")

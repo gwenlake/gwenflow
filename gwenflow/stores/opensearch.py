@@ -1,3 +1,4 @@
+from typing import Any
 import logging
 import boto3
 from opensearchpy import OpenSearch, helpers, AWSV4SignerAuth, RequestsHttpConnection
@@ -27,6 +28,10 @@ class OpenSearchDocumentStore():
             self._client = OpenSearch(uri, http_compress=True, use_ssl=use_ssl, verify_certs=verify_certs, ca_certs=ca_certs, ssl_assert_hostname=False, ssl_show_warn=False)
         self._index = index
         self._timeout = timeout
+
+    @property
+    def client(self) -> Any:
+        return self._client
 
     @property
     def index(self) -> str:

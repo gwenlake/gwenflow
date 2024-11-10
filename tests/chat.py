@@ -1,6 +1,6 @@
 import context
-from gwenflow.llms.openai import ChatOpenAI
-from gwenflow.llms.gwenlake import ChatGwenlake
+from gwenflow.llms.openai import OpenAI
+from gwenflow.llms.gwenlake import Gwenlake
 
 
 messages = [
@@ -11,8 +11,9 @@ messages = [
 ]
 
 # # No streaming
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = OpenAI(model="gpt-4o-mini")
 response = llm.chat(messages=messages)
+print("")
 print(response["choices"][0]["message"]["content"])
 
 # # # Streaming
@@ -22,8 +23,9 @@ print(response["choices"][0]["message"]["content"])
 #         print(chunk)
 
 # No streaming
-llm = ChatGwenlake(model="meta/llama-3.1-8b-instruct")
+llm = Gwenlake(model="meta/llama-3.1-8b-instruct")
 response = llm.chat(messages=messages)
+print("")
 print(response["choices"][0]["message"]["content"])
 
 # stream = llm.stream(messages=messages)

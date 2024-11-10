@@ -3,10 +3,10 @@ from typing import Optional, Union
 
 import openai
 
-from gwenflow.llms.openai import ChatOpenAI
+from gwenflow.llms.openai import OpenAI
 
 
-class AzureChatOpenAI(ChatOpenAI):
+class AzureOpenAI(OpenAI):
  
     def __init__(self, *, api_key: Optional[str] = None, api_version: Optional[str] = "2023-05-15", azure_endpoint: Optional[str] = None, model: str, temperature=0.0):
         _endpoint    = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
