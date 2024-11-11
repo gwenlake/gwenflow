@@ -10,8 +10,8 @@ class Gwenlake(OpenAI):
  
     def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
         _api_key = api_key or os.environ.get("GWENLAKE_API_KEY")
-        if os.environ.get('OPENAI_ORGANIZATION'):
-            openai.organization = os.environ.get('OPENAI_ORGANIZATION')
+        if os.environ.get('OPENAI_ORG_ID'):
+            openai.organization = os.environ.get('OPENAI_ORG_ID')
         if os.environ.get('GWENLAKE_ORGANIZATION'):
             openai.organization = os.environ.get('GWENLAKE_ORGANIZATION')
         self.temperature = temperature
