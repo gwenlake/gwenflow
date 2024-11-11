@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import ABC
+from pydantic import BaseModel, model_validator
 from pathlib import Path
 from typing import Any, Optional, Union
 from string import Formatter
@@ -26,7 +26,7 @@ def _get_template_variables(template: str) -> list[str]:
     return sorted(input_variables)
 
 
-class PromptTemplate(ABC):
+class PromptTemplate(BaseModel):
     """Prompt template for a language model."""
 
     template: str
@@ -34,12 +34,17 @@ class PromptTemplate(ABC):
 
     input_variables: list[str]
     """The prompt input variables."""
-
-
-    def __init__(self, template: str):        
-        self.template = template
-        self.input_variables = _get_template_variables(template)
     
+    @model_validator(mode="before")
+    @classmethod
+    def pre_init_validation(cls, values: dict) -> Any:
+        """Check that template and input variables are consistent."""
+        if values.get("template") is None:
+            # pydantic will fail if template is not provided.
+            return values
+        values["input_variables"] = _get_template_variables(values["template"])
+        return values
+
     def __str__(self) -> str:
         return self.template
 
