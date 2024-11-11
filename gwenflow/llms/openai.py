@@ -1,48 +1,92 @@
+from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
 import os
 import logging
 import openai
-from typing import Optional, Union, Mapping, Any
-from typing import Iterator, AsyncIterator
 
-from gwenflow.base.types import ChatMessage
 from gwenflow.llms.base import ChatBase
+from gwenflow.types import ChatCompletion, ChatCompletionChunk
 
 
 logger = logging.getLogger(__name__)
 
 
-class OpenAI(ChatBase):
+class ChatOpenAI(ChatBase):
  
-    def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
+    def __init__(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        model: str,
+        temperature: Optional[float] = 0.0,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+    ):        
         _api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if os.environ.get('OPENAI_ORG_ID'):
             openai.organization = os.environ.get('OPENAI_ORG_ID')
-        self.temperature = temperature
-        self.model = model
+
         self.client = openai.OpenAI(api_key=_api_key)
 
-    def chat(self, messages: Union[list[ChatMessage], ChatMessage, str]):
-        try:
-            messages = self._get_messages(messages)
-            response = self.client.chat.completions.create(model=self.model, messages=messages, temperature=self.temperature)
-        except Exception as e:
-            logger.error(e)
-            return None
-        if not response.choices[0].message.content:
-            return None
-        return response.dict()
-
-    def stream(self, messages: Union[list[ChatMessage], ChatMessage, str]) -> Iterator[Mapping[str, Any]]:
-        try:
-            messages = self._get_messages(messages)
-            response = self.client.chat.completions.create(model=self.model, messages=messages, temperature=self.temperature, stream=True) #,  stream_options={"include_usage": True})
-        except Exception as e:
-            logger.error(e)
-            yield ""
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
     
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Any] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> ChatCompletion:
+ 
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+        }
+
+        if response_format:
+            params["response_format"] = response_format
+
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
+    
+        response = self.client.chat.completions.create(**params)
+        return ChatCompletion(**response.dict())
+
+    def stream(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Any] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",            
+    ) -> Iterator[Mapping[str, Any]]:
+
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "stream": True,
+        }
+
+        if response_format:
+            params["response_format"] = response_format
+
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
+
+        response = self.client.chat.completions.create(**params)
+
         content = ""
         for chunk in response:
             if chunk.choices[0].delta.content:
                 content += chunk.choices[0].delta.content
-            yield chunk.dict()
+            yield ChatCompletionChunk(**chunk.dict())
  

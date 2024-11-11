@@ -1,43 +1,50 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Union
-
-from gwenflow.base.types import ChatMessage
+from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
 
 
 class ChatBase(ABC):
  
-    def _get_system(self, input: Union[list[ChatMessage], ChatMessage, str]):
-        if isinstance(input, list):
-            for message in input:
-                if message.role == "system":
-                    return message.content
-        elif isinstance(input, ChatMessage):
-            if input.role == "system":
-                return input.content
+    def _get_system(self, messages: list[dict]):
+        for message in messages:
+            if message["role"] == "system":
+                return message
         return None
 
-    def _get_messages(self, input: Union[list[ChatMessage], ChatMessage, str]):
-        if isinstance(input, list):
-            messages = []
-            for message in input:
-                if isinstance(message, dict):
-                    message = ChatMessage(**message)
-                if message.role != "system":
-                    messages.append(message)
-            return messages
-        elif isinstance(input, ChatMessage):
-            if isinstance(message, dict):
-                input = ChatMessage(**input)
-            if input.role != "system":
-                return [input]
-        elif isinstance(input, str):
-            return [ChatMessage(role="user", content=input)]
-        return None
+    def _get_messages(self, messages: list[dict]):
+        filtered_messages = []
+        for message in messages:
+            if message["role"] != "system":
+                filtered_messages.append(message)
+        return filtered_messages
 
     @abstractmethod
-    def chat(self, messages: Union[list[ChatMessage], ChatMessage, str]):
+    def generate(self, messages):
+        """
+        Generate a response based on the given messages.
+
+        Args:
+            messages (list): List of message dicts containing 'role' and 'content'.
+            response_format (str or object, optional): Format of the response. Defaults to "text".
+            tools (list, optional): List of tools that the model can call. Defaults to None.
+            tool_choice (str, optional): Tool choice method. Defaults to "auto".
+
+        Returns:
+            str: The generated response.
+        """
         pass
 
     @abstractmethod
-    def stream(self, messages: Union[list[ChatMessage], ChatMessage, str]):
+    def stream(self, messages):
+        """
+        Generate a streamed response based on the given messages.
+
+        Args:
+            messages (list): List of message dicts containing 'role' and 'content'.
+            response_format (str or object, optional): Format of the response. Defaults to "text".
+            tools (list, optional): List of tools that the model can call. Defaults to None.
+            tool_choice (str, optional): Tool choice method. Defaults to "auto".
+
+        Returns:
+            str: The generated response.
+        """
         pass

@@ -1,44 +1,88 @@
-from typing import Optional, Union
+from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
 import os
 import logging
 from mistralai.client import MistralClient
-# from mistralai.models.chat_completion import ChatMessage
 
-from gwenflow.base.types import ChatMessage
 from gwenflow.llms.base import ChatBase
+from gwenflow.types import ChatCompletion, ChatCompletionChunk
 
 
 logger = logging.getLogger(__name__)
 
 
-class MistralAI(ChatBase):
+class ChatMistralAI(ChatBase):
  
-    def __init__(self, *, api_key: Optional[str] = None, model: str, temperature=0.0):
+    def __init__(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        model: str,
+        temperature: Optional[float] = 0.0,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,            
+    ):
         _api_key = api_key or os.environ.get("MISTRAL_API_KEY")
-        self.temperature = temperature
-        self.model = model
+
         self.client = MistralClient(api_key=_api_key)
 
-    def chat(self, messages: Union[list[ChatMessage], ChatMessage, str]):
-        try:
-            messages = self._get_messages(messages)
-            response = self.client.chat(model=self.model, messages=messages, temperature=self.temperature)
-        except Exception as e:
-            logger.error(e)
-            return None
-        return response.dict()
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
 
-    def stream(self, messages: Union[list[ChatMessage], ChatMessage, str]):
-        try:
-            messages = self._get_messages(messages)
-            response = self.client.chat_stream(model=self.model, messages=messages, temperature=self.temperature)
-        except Exception as e:
-            logger.error(e)
-            yield ""
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Any] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> ChatCompletion:
+ 
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+        }
+
+        if response_format:
+            params["response_format"] = response_format
+
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
     
+        response = self.client.chat.completions.create(**params)
+        return ChatCompletion(**response.dict())
+
+    def stream(
+        self,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Any] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",            
+    ) -> Iterator[Mapping[str, Any]]:
+
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "stream": True,
+        }
+
+        if response_format:
+            params["response_format"] = response_format
+
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
+
         content = ""
+        response = self.client.chat.completions.create(**params)
         for chunk in response:
-            if not chunk.choices[0].finish_reason:
-                if chunk.choices[0].delta.content:
-                    content += chunk.choices[0].delta.content
-            yield chunk.dict()
+            if chunk.choices[0].delta.content:
+                content += chunk.choices[0].delta.content
+            yield ChatCompletionChunk(**chunk.dict())

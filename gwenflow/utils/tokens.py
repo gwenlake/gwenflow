@@ -2,6 +2,7 @@ import enum
 from typing import Union
 import tiktoken
 
+# o200k_base for gpt-4o, cl100k_base for others
 
 def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:
     """Returns the number of tokens in a text string."""
@@ -23,6 +24,8 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
         "gpt-4-32k-0314",
         "gpt-4-0613",
         "gpt-4-32k-0613",
+        "gpt-4o",
+        "gpt-4o-mini",
         }:
         tokens_per_message = 3
         tokens_per_name = 1

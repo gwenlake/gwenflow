@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional
 
 from gwenflow.utils.tokens import num_tokens_from_string
-from gwenflow.base.types import ChatMessage
+from gwenflow.types import ChatMessage
 from gwenflow.memory.base import BaseChatMemory
 
 

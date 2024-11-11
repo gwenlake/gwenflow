@@ -3,7 +3,7 @@ import uuid
 from typing import Any
 from abc import ABC
 
-from gwenflow.base.types import ChatMessage
+from gwenflow.types import ChatMessage
 
 
 class BaseChatMemory(ABC):

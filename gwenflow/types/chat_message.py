@@ -1,111 +1,46 @@
 
 from pydantic import BaseModel, Field
-from enum import Enum
-from typing import Optional, Union, List, Any, Dict, Generator
-from typing_extensions import Literal
-from uuid import uuid4
-from datetime import datetime
+from typing import Any, Dict, Optional, Union
+from collections.abc import Sequence
 
-
-class CompletionUsage(BaseModel):
-    prompt_tokens: int
-    """The number of tokens used by the prompt."""
-
-    completion_tokens: int
-    """Number of tokens in the generated completion."""
-
-    total_tokens: int
-    """The total number of tokens used by the request."""
-
-
-class MessageRole(str, Enum):
-    """Message role."""
-
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    FUNCTION = "function"
-    TOOL = "tool"
-    CHATBOT = "chatbot"
-    MODEL = "model"
-
-
-# class ChatMessage(BaseModel):
-#     role: str
-#     content: Optional[str] = None
 
 class ChatMessage(BaseModel):
-    """Chat message."""
+    """Chat message class."""
 
-    role: MessageRole = MessageRole.USER
-    content: Optional[Any] = ""
-    additional_kwargs: dict = Field(default_factory=dict)
+    content: Union[str, list[Union[str, dict]]]
+    role: str
+    name: Optional[str] = None
+    meta: Dict[str, Any] = Field(default_factory=dict, hash=False)
 
     def __str__(self) -> str:
-        return f"{self.role.value}: {self.content}"
+        return f"{self.role}: {self.content}"
 
-    @classmethod
-    def from_str(
-        cls,
-        content: str,
-        role: Union[MessageRole, str] = MessageRole.USER,
-        **kwargs: Any,
-    ) -> "ChatMessage":
-        if isinstance(role, str):
-            role = MessageRole(role)
-        return cls(role=role, content=content, **kwargs)
-
-    def dict(self, **kwargs: Any) -> Dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> Dict[str, Any]:
         return self.model_dump(**kwargs)
-
-# class LogProb(BaseModel):
-#     """LogProb of a token."""
-
-#     token: str = Field(default_factory=str)
-#     logprob: float = Field(default_factory=float)
-#     bytes: List[int] = Field(default_factory=list)
+    
+    def to_openai(self) -> Dict[str, Any]:
+        return { "role": self.role, "content": self.content }
 
 
-# class ChatResponse(BaseModel):
-#     """Chat response."""
+def messages_to_dict(messages: Sequence[ChatMessage]) -> list[dict]:
+    """Convert a sequence of Messages to a list of dictionaries.
 
-#     message: ChatMessage
-#     raw: Optional[Any] = None
-#     delta: Optional[str] = None
-#     logprobs: Optional[List[List[LogProb]]] = None
-#     additional_kwargs: dict = Field(default_factory=dict)
+    Args:
+        messages: Sequence of messages (as ChatMessages) to convert.
 
-#     def __str__(self) -> str:
-#         return str(self.message)
-
-
-# ChatResponseGen = Generator[ChatResponse, None, None]
+    Returns:
+        List of messages as dicts.
+    """
+    return [m.to_dict() for m in messages]
 
 
-class Choice(BaseModel):
-    index: Optional[int] = 0 
-    message: ChatMessage
-    finish_reason: Optional[str] = "stop"
+def messages_to_openai(messages: Sequence[ChatMessage]) -> list[dict]:
+    """Convert a sequence of Messages to a list of dictionaries in OpenAI format.
 
-class ChoiceDelta(BaseModel):
-    index: Optional[int] = 0 
-    delta: ChatMessage
-    finish_reason: Optional[str] = None
+    Args:
+        messages: Sequence of messages (as ChatMessages) to convert.
 
-
-class ChatCompletion(BaseModel):
-    id: str = Field(default_factory=lambda: "chatcmpl-" + str(uuid4()))
-    object: str = "chat.completion"
-    created: int = Field(default_factory=lambda: int(round(datetime.now().timestamp())))
-    model: Optional[str] = None
-    system_fingerprint: Optional[str] = None
-    choices: list[Choice]
-    usage: Optional[CompletionUsage] = None
-
-class ChatCompletionChunk(BaseModel):
-    id: str = Field(default_factory=lambda: "chatcmpl-" + str(uuid4()))
-    object: str = "chat.completion.chunk"
-    created: int = Field(default_factory=lambda: int(round(datetime.now().timestamp())))
-    model: Optional[str] = None
-    system_fingerprint: Optional[str] = None
-    choices: list[ChoiceDelta]
+    Returns:
+        List of messages as dicts.
+    """
+    return [m.to_openai() for m in messages]
