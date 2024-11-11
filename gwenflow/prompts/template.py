@@ -29,6 +29,9 @@ def _get_template_variables(template: str) -> list[str]:
 class PromptTemplate(BaseModel):
     """Prompt template for a language model."""
 
+    role: str
+    """The prompt role."""
+
     template: str
     """The prompt template."""
 
@@ -45,8 +48,8 @@ class PromptTemplate(BaseModel):
         values["input_variables"] = _get_template_variables(values["template"])
         return values
 
-    def __str__(self) -> str:
-        return self.template
+    def __str__(self) -> dict:
+        return f"{self.role}: {self.template}"
 
     def format(self, **kwargs: Any) -> str:
         """Format the prompt with the inputs.
@@ -57,7 +60,7 @@ class PromptTemplate(BaseModel):
         Returns:
             A formatted string.
         """
-        return self.template.format(**kwargs)
+        return { "role": self.role, "content": self.template.format(**kwargs) }
 
     @classmethod
     def from_file(
@@ -77,12 +80,13 @@ class PromptTemplate(BaseModel):
         """
         with open(str(template_file), encoding=encoding) as f:
             template = f.read()
-        return cls.from_template(template=template)
+        return cls.from_template(template=template, role="user")
 
     @classmethod
     def from_template(
         cls,
         template: str,
+        role: str = "user",
     ) -> PromptTemplate:
         """Load a prompt template from a template.
 
@@ -93,4 +97,4 @@ class PromptTemplate(BaseModel):
         Returns:
             The prompt template loaded from the template.
         """
-        return cls(template=template)
+        return cls(template=template, role=role)
