@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
+from typing import Optional, Union, Any, List, Dict
 
 
 class ChatBase(ABC):
