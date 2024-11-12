@@ -1,10 +1,9 @@
-from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
+from typing import Optional, Union, Any, List, Dict
 import os
 import logging
 import anthropic
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.types import ChatCompletion, ChatCompletionChunk
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,7 @@ class ChatAnthropic(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",
-    ) -> ChatCompletion:
+    ):
         
         messages = self._get_messages(messages)
         system   = self._get_system(messages)
@@ -87,7 +86,7 @@ class ChatAnthropic(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",            
-    ) -> Iterator[Mapping[str, Any]]:
+    ):
         
         messages = self._get_messages(messages)
         system   = self._get_system(messages)

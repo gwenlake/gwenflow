@@ -1,10 +1,11 @@
 from typing import Optional, Union, Mapping, Any, List, Dict, Iterator, AsyncIterator
 import os
 import logging
+import json
 import openai
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.types import ChatCompletion, ChatCompletionChunk
 
 
 logger = logging.getLogger(__name__)
@@ -59,14 +60,50 @@ class ChatOpenAI(ChatBase):
             openai.organization = os.environ.get('OPENAI_ORG_ID')
 
         self.client = openai.OpenAI(api_key=_api_key)
-    
+
+    def _parse_response(self, response, tools):
+        """
+        Process the response based on whether tools are used or not.
+
+        Args:
+            response: The raw response from API.
+            tools: The list of tools provided in the request.
+
+        Returns:
+            str or dict: The processed response.
+        """
+        if tools:
+            processed_response = {
+                "content": response.choices[0].message.content,
+                "tool_calls": [],
+            }
+
+            if response.choices[0].message.tool_calls:
+                for tool_call in response.choices[0].message.tool_calls:
+                    processed_response["tool_calls"].append(
+                        {
+                            "name": tool_call.function.name,
+                            "arguments": json.loads(tool_call.function.arguments),
+                        }
+                    )
+
+            return processed_response
+        
+        if isinstance(response, ChatCompletionChunk):
+            if response.choices[0].delta.content:
+                return response.choices[0].delta.content
+            return ""
+        
+        return response.choices[0].message.content
+        
+
     def invoke(
         self,
         messages: List[Dict[str, str]],
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",
-    ) -> ChatCompletion:
+    ):
  
         params = self.config
         params["messages"] = messages
@@ -79,7 +116,7 @@ class ChatOpenAI(ChatBase):
             params["tool_choice"] = tool_choice
     
         response = self.client.chat.completions.create(**params)
-        return ChatCompletion(**response.dict())
+        return self._parse_response(response, tools)
 
     def stream(
         self,
@@ -87,7 +124,7 @@ class ChatOpenAI(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",            
-    ) -> Iterator[Mapping[str, Any]]:
+    ):
 
         params = self.config
         params["messages"] = messages
@@ -106,5 +143,5 @@ class ChatOpenAI(ChatBase):
         for chunk in response:
             if chunk.choices[0].delta.content:
                 content += chunk.choices[0].delta.content
-            yield ChatCompletionChunk(**chunk.dict())
+            yield self._parse_response(chunk, tools)
  
