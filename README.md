@@ -10,8 +10,6 @@
 
 </div>
 
-# Gwenflow
-
 **Gwenflow** is a Python framework designed by [Gwenlake](https://gwenlake.com) to facilitate the creation of customized, production-ready applications built around Agents and
 Large Language Models (LLMs). It provides developers with the tools necessary to integrate LLMs and Agents, enabling efficient and scalable solutions tailored to specific business or user needs. With Gwenflow, developers can leverage the power of advanced language models within robust, deployable applications.
 
