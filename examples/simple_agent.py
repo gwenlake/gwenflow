@@ -11,8 +11,8 @@ dotenv.load_dotenv(override=True)
 # tool to get fx
 def getfx(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
-    response = requests.get("http://www.floatrates.com/daily/usd.json").json()
     try:
+        response = requests.get("http://www.floatrates.com/daily/usd.json").json()
         data = response[currency_iso.lower()]
         return json.dumps(data)
     except Exception as e:
