@@ -24,11 +24,14 @@ import dotenv
 from gwenflow.llms.openai import ChatOpenAI
 from gwenflow.agents import Agent, Task
 
+
 # --- load you api key
+
 dotenv.load_dotenv(override=True)
 
 
 # --- tool to get fx
+
 def getfx(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
     try:
@@ -41,6 +44,7 @@ def getfx(currency_iso: str) -> str:
 
 
 # --- llm, agent and task
+
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 agentfx = Agent(
