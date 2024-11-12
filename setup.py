@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gwenflow",
-    description = "Gwenflow is a framework for your LLM applications.",
+    description = "Gwenflow is an agent-based framework for building applications powered by LLMs.",
     version="0.2.1",
     url="https://github.com/gwenlake/gwenflow",
     author="The Gwenlake Team",
