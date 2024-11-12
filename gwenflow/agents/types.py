@@ -1,21 +1,22 @@
 
-from typing import List, Callable, Union, Optional
+from typing import List, Callable, Union, Optional, Any
 from pydantic import BaseModel
 
 
-AgentFunction = Callable[[], Union[str, "Agent", dict]]
+AgentTool = Callable[[], Union[str, "Agent", dict]]
 
 
 class Agent(BaseModel):
-    name: str = "Agent"
-    model: str = "gpt-4o-mini"
+    role: str
     instructions: Union[str, Callable[[], str]] = "You are a helpful agent."
-    functions: List[AgentFunction] = []
+    llm: Any
+    tools: List[AgentTool] = []
     tool_choice: str = None
     parallel_tool_calls: bool = True
 
 
 class Response(BaseModel):
+    output: Any = None
     messages: List = []
     agent: Optional[Agent] = None
     context_variables: dict = {}

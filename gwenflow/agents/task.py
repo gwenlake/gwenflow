@@ -1,15 +1,15 @@
 import copy
 import json
 from collections import defaultdict
-from typing import List, Callable, Union
+from typing import List, Callable, Union, Any
 
-from openai import OpenAI
+# from openai import OpenAI
 
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall, Function
 from gwenflow.agents.utils import function_to_json, debug_print, merge_chunk
-from gwenflow.agents.base import (
+from gwenflow.agents.types import (
     Agent,
-    AgentFunction,
+    AgentTool,
     Response,
     Result,
 )
@@ -17,32 +17,36 @@ from gwenflow.agents.base import (
 __CTX_VARS_NAME__ = "context_variables"
 
 
-class AgentExecutor:
+class Task:
 
-    def __init__(self, client=None):
-        if not client:
-            client = OpenAI()
-        self.client = client
+    def __init__(self, *, description: str, expected_output: str = None, agent: Any):
+
+        self.description = description
+        self.expected_output = expected_output
+        self.agent = agent
+
+        self.full_task = "Your task is: " + self.description
+        if self.expected_output:
+            self.full_task = self.full_task + "\nExpected output:" + self.expected_output
 
     def get_chat_completion(
         self,
         agent: Agent,
         history: List,
         context_variables: dict,
-        model_override: str,
         stream: bool,
-        debug: bool,
     ) -> ChatCompletionMessage:
+        
         context_variables = defaultdict(str, context_variables)
         instructions = (
             agent.instructions(context_variables)
             if callable(agent.instructions)
             else agent.instructions
         )
-        messages = [{"role": "system", "content": instructions}] + history
-        debug_print(debug, "Getting chat completion for...:", messages)
 
-        tools = [function_to_json(f) for f in agent.functions]
+        messages = [{"role": "system", "content": instructions}] + history
+
+        tools = [function_to_json(f) for f in agent.tools]
         # hide context_variables from model
         for tool in tools:
             params = tool["function"]["parameters"]
@@ -50,18 +54,21 @@ class AgentExecutor:
             if __CTX_VARS_NAME__ in params["required"]:
                 params["required"].remove(__CTX_VARS_NAME__)
 
-        create_params = {
-            "model": model_override or agent.model,
+        params = {
             "messages": messages,
             "tools": tools or None,
             "tool_choice": agent.tool_choice,
-            "stream": stream,
+            # "stream": stream,
+            "parse_response": False,
         }
 
         if tools:
-            create_params["parallel_tool_calls"] = agent.parallel_tool_calls
+            params["parallel_tool_calls"] = agent.parallel_tool_calls
 
-        return self.client.chat.completions.create(**create_params)
+        # if stream:        
+        #     return agent.llm.stream(**params)
+
+        return agent.llm.invoke(**params)
 
     def handle_function_result(self, result, debug) -> Result:
         match result:
@@ -70,7 +77,7 @@ class AgentExecutor:
 
             case Agent() as agent:
                 return Result(
-                    value=json.dumps({"assistant": agent.name}),
+                    value=json.dumps({"assistant": self.agent.name}),
                     agent=agent,
                 )
             case _:
@@ -84,11 +91,11 @@ class AgentExecutor:
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-        functions: List[AgentFunction],
+        tools: List[AgentTool],
         context_variables: dict,
         debug: bool,
     ) -> Response:
-        function_map = {f.__name__: f for f in functions}
+        function_map = {f.__name__: f for f in tools}
         partial_response = Response(
             messages=[], agent=None, context_variables={})
 
@@ -131,17 +138,16 @@ class AgentExecutor:
 
         return partial_response
 
-    def run_and_stream(
+    def stream(
         self,
-        agent: Agent,
-        messages: List,
         context_variables: dict = {},
-        model_override: str = None,
         debug: bool = False,
         max_turns: int = float("inf"),
-        execute_tools: bool = True,
     ):
-        active_agent = agent
+
+        messages = [{"role": "user", "content": self.full_task}]
+
+        active_agent = self.agent
         context_variables = copy.deepcopy(context_variables)
         history = copy.deepcopy(messages)
         init_len = len(messages)
@@ -150,7 +156,7 @@ class AgentExecutor:
 
             message = {
                 "content": "",
-                "sender": agent.name,
+                "sender": self.agent.name,
                 "role": "assistant",
                 "function_call": None,
                 "tool_calls": defaultdict(
@@ -167,9 +173,7 @@ class AgentExecutor:
                 agent=active_agent,
                 history=history,
                 context_variables=context_variables,
-                model_override=model_override,
                 stream=True,
-                debug=debug,
             )
 
             yield {"delim": "start"}
@@ -190,7 +194,7 @@ class AgentExecutor:
             debug_print(debug, "Received completion:", message)
             history.append(message)
 
-            if not message["tool_calls"] or not execute_tools:
+            if not message["tool_calls"]:
                 debug_print(debug, "Ending turn.")
                 break
 
@@ -208,7 +212,7 @@ class AgentExecutor:
 
             # handle function calls, updating context_variables, and switching agents
             partial_response = self.handle_tool_calls(
-                tool_calls, active_agent.functions, context_variables, debug
+                tool_calls, active_agent.tools, context_variables, debug
             )
             history.extend(partial_response.messages)
             context_variables.update(partial_response.context_variables)
@@ -217,6 +221,7 @@ class AgentExecutor:
 
         yield {
             "response": Response(
+                output=history[init_len]["content"],
                 messages=history[init_len:],
                 agent=active_agent,
                 context_variables=context_variables,
@@ -225,26 +230,14 @@ class AgentExecutor:
 
     def run(
         self,
-        agent: Agent,
-        messages: List,
         context_variables: dict = {},
-        model_override: str = None,
-        stream: bool = False,
         debug: bool = False,
         max_turns: int = float("inf"),
-        execute_tools: bool = True,
     ) -> Response:
-        if stream:
-            return self.run_and_stream(
-                agent=agent,
-                messages=messages,
-                context_variables=context_variables,
-                model_override=model_override,
-                debug=debug,
-                max_turns=max_turns,
-                execute_tools=execute_tools,
-            )
-        active_agent = agent
+        
+        messages = [{"role": "user", "content": self.full_task}]
+        
+        active_agent = self.agent
         context_variables = copy.deepcopy(context_variables)
         history = copy.deepcopy(messages)
         init_len = len(messages)
@@ -256,24 +249,22 @@ class AgentExecutor:
                 agent=active_agent,
                 history=history,
                 context_variables=context_variables,
-                model_override=model_override,
-                stream=stream,
-                debug=debug,
+                stream=False,
             )
             message = completion.choices[0].message
             debug_print(debug, "Received completion:", message)
-            message.sender = active_agent.name
+            message.sender = active_agent.role
             history.append(
                 json.loads(message.model_dump_json())
             )  # to avoid OpenAI types (?)
 
-            if not message.tool_calls or not execute_tools:
+            if not message.tool_calls:
                 debug_print(debug, "Ending turn.")
                 break
 
             # handle function calls, updating context_variables, and switching agents
             partial_response = self.handle_tool_calls(
-                message.tool_calls, active_agent.functions, context_variables, debug
+                message.tool_calls, active_agent.tools, context_variables, debug
             )
             history.extend(partial_response.messages)
             context_variables.update(partial_response.context_variables)
@@ -281,6 +272,7 @@ class AgentExecutor:
                 active_agent = partial_response.agent
 
         return Response(
+            output=history[-1]["content"],
             messages=history[init_len:],
             agent=active_agent,
             context_variables=context_variables,

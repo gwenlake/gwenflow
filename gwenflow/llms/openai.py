@@ -103,6 +103,8 @@ class ChatOpenAI(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",
+        parallel_tool_calls: Optional[bool] = None,
+        parse_response: bool = True,
     ):
  
         params = self.config
@@ -114,16 +116,22 @@ class ChatOpenAI(ChatBase):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
-    
+            if parallel_tool_calls:
+                params["parallel_tool_calls"] = parallel_tool_calls
+
         response = self.client.chat.completions.create(**params)
-        return self._parse_response(response, tools)
+        if parse_response:
+            response = self._parse_response(response, tools)
+        return response
 
     def stream(
         self,
         messages: List[Dict[str, str]],
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
-        tool_choice: str = "auto",            
+        tool_choice: str = "auto",
+        parallel_tool_calls: Optional[bool] = None,
+        parse_response: bool = True,
     ):
 
         params = self.config
@@ -136,12 +144,18 @@ class ChatOpenAI(ChatBase):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
+            if parallel_tool_calls:
+                params["parallel_tool_calls"] = parallel_tool_calls
+
 
         response = self.client.chat.completions.create(**params)
 
         content = ""
         for chunk in response:
-            if chunk.choices[0].delta.content:
-                content += chunk.choices[0].delta.content
-            yield self._parse_response(chunk, tools)
+            if chunk.choices[0].finish_reason == "stop":
+                break
+            content += chunk.choices[0].delta.content
+            if parse_response:
+                chunk = self._parse_response(chunk, tools)
+            yield chunk
  

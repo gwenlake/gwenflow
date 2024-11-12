@@ -99,6 +99,7 @@ class ChatMistralAI(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",
+        parallel_tool_calls: Optional[bool] = None,
     ):
  
         params = self.config
@@ -110,7 +111,9 @@ class ChatMistralAI(ChatBase):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
-    
+            if parallel_tool_calls:
+                params["parallel_tool_calls"] = parallel_tool_calls
+
         response = self.client.chat.completions.create(**params)
         return self._parse_response(response, tools)
 
@@ -119,7 +122,8 @@ class ChatMistralAI(ChatBase):
         messages: List[Dict[str, str]],
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
-        tool_choice: str = "auto",            
+        tool_choice: str = "auto",
+        parallel_tool_calls: Optional[bool] = None,
     ) -> Iterator[Mapping[str, Any]]:
 
         params = self.config
@@ -131,6 +135,8 @@ class ChatMistralAI(ChatBase):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
+            if parallel_tool_calls:
+                params["parallel_tool_calls"] = parallel_tool_calls
 
         content = ""
         response = self.client.chat.completions.create(**params)
