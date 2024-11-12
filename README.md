@@ -1,5 +1,5 @@
 <div align="center">
-![Logo of Gwenflow](./docs/images/gwenflowh.png)
+![Logo of Gwenflow](./docs/images/gwenflow.png)
 # **Gwenflow**
 
 **A framework for orchestrating applications powered by autonomous AI agents and LLMs.**
