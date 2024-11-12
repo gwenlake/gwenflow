@@ -1,6 +1,6 @@
 <div align="center">
 
-![Logo of Gwenflow](./docs/images/gwenflow.png)
+![Logo of Gwenflow](./docs/images/gwenflow-powered.png)
 
 # **Gwenflow**
 
