@@ -4,7 +4,7 @@
 
 # **Gwenflow**
 
-**A framework for orchestrating applications powered by autonomous AI agents and LLMs.**
+**A framework by [Gwenlake](https://gwenlake.com) for orchestrating applications powered by autonomous AI agents and LLMs.**
 
 🤖 Gwenflow facilitate the creation of customized, production-ready applications built around Agents and
 Large Language Models (LLMs). It provides developers with the tools necessary to integrate LLMs and Agents, enabling efficient and scalable solutions tailored to specific business or user needs.
