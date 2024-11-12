@@ -58,7 +58,11 @@ queries = [
 ]
 
 for query in queries:
-    task = Task(description=query, expected_output="Answer in one sentence and if there is a date, mention this date.", agent=agentfx)
+    task = Task(
+        description=query,
+        expected_output="Answer in one sentence and if there is a date, mention this date.",
+        agent=agentfx
+    )
     print("")
     print("Q:", query)
     print("A:", task.run().output)
