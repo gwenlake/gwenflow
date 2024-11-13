@@ -2,7 +2,7 @@ import requests
 import json
 import dotenv
 
-from gwenflow import Agent, Task, ChatOpenAI
+from gwenflow import ChatOpenAI, Agent, Task
 
 # load you api key
 dotenv.load_dotenv(override=True)
