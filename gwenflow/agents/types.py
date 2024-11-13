@@ -6,19 +6,10 @@ from pydantic import BaseModel
 AgentTool = Callable[[], Union[str, "Agent", dict]]
 
 
-class Agent(BaseModel):
-    role: str
-    instructions: Union[str, Callable[[], str]] = "You are a helpful agent."
-    llm: Any
-    tools: List[AgentTool] = []
-    tool_choice: str = None
-    parallel_tool_calls: bool = True
-
-
 class Response(BaseModel):
     output: Any = None
     messages: List = []
-    agent: Optional[Agent] = None
+    agent: Optional[Any] = None
     context_variables: dict = {}
 
 
@@ -33,5 +24,5 @@ class Result(BaseModel):
     """
 
     value: str = ""
-    agent: Optional[Agent] = None
+    agent: Optional[Any] = None
     context_variables: dict = {}

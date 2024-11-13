@@ -1,4 +1,4 @@
-from gwenflow.agents.types import Agent
+from gwenflow.agents.agent import Agent
 from gwenflow.agents.task import Task
 
 __all__ = [
