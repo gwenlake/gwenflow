@@ -101,7 +101,7 @@ class Agent(BaseModel):
         self,
         messages: List,
         context_variables: dict,
-        stream: bool = False, # TODO: add stream function to replace this
+        stream: bool = False,
     ):
         
         context_variables = defaultdict(str, context_variables)
@@ -125,7 +125,6 @@ class Agent(BaseModel):
             "messages": messages,
             "tools": tools or None,
             "tool_choice": self.tool_choice,
-            # "stream": stream,
             "parse_response": False,
         }
 
@@ -133,6 +132,7 @@ class Agent(BaseModel):
             params["parallel_tool_calls"] = self.parallel_tool_calls
 
         if stream:
+            params["stream"] = True
             return self.llm.stream(**params)
         
         return self.llm.invoke(**params)
