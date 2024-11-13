@@ -1,4 +1,7 @@
 
+import os
+import shutil
+import subprocess
 from typing import List, Callable, Union, Optional, Any, Dict
 from collections import defaultdict
 from pydantic import BaseModel
@@ -30,7 +33,14 @@ class Agent(BaseModel):
     tool_choice: str = None
     parallel_tool_calls: bool = True
     messages: List[Dict[str, str]] = [] # TODO: to add to the object (move from tasks)
-    
+
+    # stockés dans prompts.py
+    # def _format_prompt(self, prompt: str, inputs: Dict[str, str]) -> str:
+    #     prompt = prompt.replace("{input}", inputs["input"])
+    #     prompt = prompt.replace("{tool_names}", inputs["tool_names"])
+    #     prompt = prompt.replace("{tools}", inputs["tools"])
+    #     return prompt
+
     def handle_function_result(self, result) -> Result:
         match result:
             case Result() as result:
@@ -114,6 +124,7 @@ class Agent(BaseModel):
         messages = [{"role": "system", "content": instructions}] + messages
 
         tools = [function_to_json(f) for f in self.tools]
+
         # hide context_variables from model
         for tool in tools:
             params = tool["function"]["parameters"]
@@ -137,3 +148,21 @@ class Agent(BaseModel):
         
         return self.llm.invoke(**params)
     
+    def _validate_docker_installation(self) -> None:
+        """Check if Docker is installed and running."""
+        if not shutil.which("docker"):
+            raise RuntimeError(
+                f"Docker is not installed. Please install Docker to use code execution with agent: {self.role}"
+            )
+
+        try:
+            subprocess.run(
+                ["docker", "info"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.CalledProcessError:
+            raise RuntimeError(
+                f"Docker is not running. Please start Docker to use code execution with agent: {self.role}"
+            )
