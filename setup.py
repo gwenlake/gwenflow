@@ -7,7 +7,7 @@ setup(
     url="https://github.com/gwenlake/gwenflow",
     author="The Gwenlake Team",
     author_email="info@gwenlake.com",
-    install_requires=["httpx", "pydantic", "pyyaml", "numpy", "pandas", "tiktoken"],
+    install_requires=["httpx", "pydantic", "pyyaml", "tiktoken", "openai"],
     packages=find_packages(exclude=("tests")),
     python_requires=">=3.11",
 )

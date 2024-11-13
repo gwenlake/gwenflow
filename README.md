@@ -32,8 +32,7 @@ import requests
 import json
 import dotenv
 
-from gwenflow.llms.openai import ChatOpenAI
-from gwenflow.agents import Agent, Task
+from gwenflow import Agent, Task, ChatOpenAI
 
 
 # --- load you api key
