@@ -5,7 +5,7 @@
 **A framework for orchestrating applications powered by autonomous AI agents and LLMs.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-
+[![GitHub release](https://img.shields.io/github/v/release/gwenlake/gwenflow)](https://github.com/your-username/gwenflow/releases)
 </div>
 
 
