@@ -7,15 +7,16 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = ""
 
 
-from gwenflow.llms import ChatOpenAI, ChatAzureOpenAI, ChatGwenlake
+from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.agents import Agent
 from gwenflow.tasks import Task
 from gwenflow.tools import Tool
 
 __all__ = [
+    "ChatGwenlake",
     "ChatOpenAI",
     "ChatAzureOpenAI",
-    "ChatGwenlake",
+    "ChatOllama",
     "Agent",
     "Task",
     "Tool",

@@ -45,4 +45,4 @@ for query in queries:
     )
     print("")
     print("Q:", query)
-    print("A:", task.run().output)
+    print("A:", task.run())

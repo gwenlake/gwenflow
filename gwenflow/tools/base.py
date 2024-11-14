@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field, validator
 
 
 from langchain_core.tools import StructuredTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from gwenflow.tools.utils import function_to_json
 
 
 class BaseTool(BaseModel, ABC):
@@ -20,11 +22,11 @@ class BaseTool(BaseModel, ABC):
     args_schema: Type[BaseModel] = Field(default_factory=_ArgsSchemaPlaceholder)
     """The schema for the arguments that the tool accepts."""
 
-    description_updated: bool = False
-    """Flag to check if the description has been updated."""
+    openai_schema: dict = None
+    """OpenAI JSON schema"""
 
-    result_as_answer: bool = False
-    """Flag to check if the tool should be the final agent answer."""
+    tool_type: str = "function"
+    """Tool type: function, langchain, llamaindex."""
 
     @validator("args_schema", always=True, pre=True)
     def _default_args_schema(cls, v: Type[BaseModel]) -> Type[BaseModel]:
@@ -41,12 +43,12 @@ class BaseTool(BaseModel, ABC):
             },
         )
 
-    def run(self, *args: Any, **kwargs: Any) -> Any:
+    def run(self, **kwargs: Any) -> Any:
         print(f"Using Tool: {self.name}")
-        return self._run(*args, **kwargs)
+        return self._run(**kwargs)
 
     @abstractmethod
-    def _run(self, *args: Any, **kwargs: Any) -> Any:
+    def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
     @classmethod
@@ -58,7 +60,9 @@ class BaseTool(BaseModel, ABC):
                 name=tool.name,
                 description=tool.description,
                 args_schema=tool.args_schema,
+                openai_schema=convert_to_openai_tool(tool),
                 func=tool.run,
+                tool_type="langchain",
             )
         raise NotImplementedError(f"from_langchain not implemented for {cls.__name__}")
 
@@ -88,6 +92,8 @@ class BaseTool(BaseModel, ABC):
                         description=f.__doc__,
                         func=f,
                         args_schema=args_schema,
+                        openai_schema=function_to_json(f),
+                        tool_type="function",
                     )
 
                 return _make_tool
@@ -106,5 +112,7 @@ class Tool(BaseTool):
     func: Callable
     """The function that will be executed when the tool is called."""
 
-    def _run(self, *args: Any, **kwargs: Any) -> Any:
-        return self.func(*args, **kwargs)
+    def _run(self, **kwargs: Any) -> Any:
+        if self.tool_type == "langchain":
+            return self.func(kwargs)
+        return self.func(**kwargs)

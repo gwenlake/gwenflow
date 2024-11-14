@@ -9,14 +9,14 @@ import logging
 import json
 
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall, Function
-from gwenflow.agents.utils import function_to_json
+from gwenflow.tools import Tool
 from gwenflow.agents.types import (
     AgentTool,
     Response,
     Result,
 )
 
-
+MAX_TURNS = 10
 __CTX_VARS_NAME__ = "context_variables"
 
 
@@ -29,7 +29,7 @@ class Agent(BaseModel):
     role: str
     instructions: Union[str, Callable[[], str]] = "You are a helpful agent."
     llm: Any
-    tools: List[AgentTool] = []
+    tools: List[Tool] = []
     tool_choice: str = None
     parallel_tool_calls: bool = True
     messages: List[Dict[str, str]] = [] # TODO: to add to the object (move from tasks)
@@ -62,17 +62,19 @@ class Agent(BaseModel):
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-        tools: List[AgentTool],
+        tools: List[Tool],
         context_variables: dict,
     ) -> Response:
         
-        function_map = {f.__name__: f for f in tools}
+        # function_map = {f.__name__: f for f in tools}
+        tool_map = {tool.name: tool for tool in tools}
+
         partial_response = Response(messages=[], agent=None, context_variables={})
 
         for tool_call in tool_calls:
             name = tool_call.function.name
             # handle missing tool case, skip to next tool
-            if name not in function_map:
+            if name not in tool_map:
                 logger.debug(f"Tool {name} not found in function map.")
                 partial_response.messages.append(
                     {
@@ -86,11 +88,13 @@ class Agent(BaseModel):
             args = json.loads(tool_call.function.arguments)
             logger.debug(f"Processing tool call: {name} with arguments {args}")
 
-            func = function_map[name]
+            # tool = tool_map[name]
             # pass context_variables to agent functions
-            if __CTX_VARS_NAME__ in func.__code__.co_varnames:
-                args[__CTX_VARS_NAME__] = context_variables
-            raw_result = function_map[name](**args)
+            # TODO: adjust -> var names?
+            # if __CTX_VARS_NAME__ in func.__code__.co_varnames:
+            #     args[__CTX_VARS_NAME__] = context_variables
+
+            raw_result = tool_map[name].run(**args)
 
             result: Result = self.handle_function_result(raw_result)
             partial_response.messages.append(
@@ -107,23 +111,10 @@ class Agent(BaseModel):
 
         return partial_response
 
-    def invoke(
-        self,
-        messages: List,
-        context_variables: dict,
-        stream: bool = False,
-    ):
-        
-        context_variables = defaultdict(str, context_variables)
-        instructions = (
-            self.instructions(context_variables)
-            if callable(self.instructions)
-            else self.instructions
-        )
+    def invoke(self, stream: bool = False):
 
-        messages = [{"role": "system", "content": instructions}] + messages
-
-        tools = [function_to_json(f) for f in self.tools]
+        # tools in OpenAI json format
+        tools = [tool.openai_schema for tool in self.tools]
 
         # hide context_variables from model
         for tool in tools:
@@ -133,7 +124,7 @@ class Agent(BaseModel):
                 params["required"].remove(__CTX_VARS_NAME__)
 
         params = {
-            "messages": messages,
+            "messages": self.messages,
             "tools": tools or None,
             "tool_choice": self.tool_choice,
             "parse_response": False,
@@ -147,7 +138,65 @@ class Agent(BaseModel):
             return self.llm.stream(**params)
         
         return self.llm.invoke(**params)
-    
+
+    def execute_task(
+        self,
+        task: str,
+        context: Optional[str] = None,
+        context_variables: Optional[dict] = None,
+        # tools: Optional[List[BaseTool]] = None,
+    ) -> str:
+
+        # format instructions
+        context_variables = defaultdict(str, context_variables)
+        instructions = (
+            self.instructions(context_variables)
+            if callable(self.instructions)
+            else self.instructions
+        )
+
+        # TODO: add context to task prompt if any
+
+        # prepare messages
+        self.messages = [
+            { "role": "system", "content": instructions },
+            { "role": "user",   "content": task },
+        ]
+
+        # global loop
+        init_len = len(self.messages)
+        while len(self.messages) - init_len < MAX_TURNS:
+
+            completion = self.invoke()
+
+            message = completion.choices[0].message
+            message.sender = self.role
+
+            self.messages.append(json.loads(message.model_dump_json()))  # to avoid OpenAI types (?)
+
+            # check if done
+            if not message.tool_calls:
+                logging.debug("Task done.")
+                return Response(
+                    output=self.messages[-1]["content"],
+                    messages=self.messages[init_len:],
+                    agent=self,
+                    context_variables=context_variables,
+                )
+
+            # handle function calls, updating context_variables
+            partial_response = self.handle_tool_calls(message.tool_calls, self.tools, context_variables)
+            self.messages.extend(partial_response.messages)
+            context_variables.update(partial_response.context_variables)
+
+            # switching agent?
+            if partial_response.agent:
+                logging.debug(f"Task transfered to Agent[{ partial_response.agent.name }].")
+                return partial_response.agent
+
+        logging.debug(f"Task failed")
+        return None
+
     def _validate_docker_installation(self) -> None:
         """Check if Docker is installed and running."""
         if not shutil.which("docker"):

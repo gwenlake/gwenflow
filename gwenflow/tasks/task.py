@@ -9,6 +9,9 @@ from gwenflow.agents.prompts import TASK, EXPECTED_OUTPUT
 from gwenflow.agents.utils import merge_chunk
 
 
+MAX_LOOPS = 10
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,47 +120,25 @@ class Task:
             )
         }
 
-    def run(
-        self,
-        context_variables: dict = {},
-        max_turns: int = float("inf"),
-    ) -> Response:
+    def run(self, context_variables: dict = {}) -> str:
         
-        # prepare messages
-        task_prompt = self.prompt()
-        messages = [{"role": "user", "content": task_prompt}]
-
-        init_len = len(messages)
-
-        # current agent
+        task_prompt  = self.prompt()
         active_agent = self.agent
 
-        # global loop
-        while len(messages) - init_len < max_turns and active_agent:
+        num_loops = 1
+        while active_agent and num_loops < MAX_LOOPS:
 
-            completion = active_agent.invoke(messages=messages, context_variables=context_variables)
-
-            message = completion.choices[0].message
-            message.sender = active_agent.role
-            messages.append(json.loads(message.model_dump_json()))  # to avoid OpenAI types (?)
-
-            # check if done
-            if not message.tool_calls:
-                logging.debug("Ending turn.")
+            response = active_agent.execute_task(task_prompt, context_variables=context_variables)
+            
+            # task done
+            if isinstance(response, Response):
+                response = response.output
                 break
 
-            # handle function calls, updating context_variables
-            partial_response = active_agent.handle_tool_calls(message.tool_calls, active_agent.tools, context_variables)
-            messages.extend(partial_response.messages)
-            context_variables.update(partial_response.context_variables)
+            # task transfered to another agent
+            elif isinstance(response, Agent):
+                active_agent = response
 
-            # switching agent?
-            if partial_response.agent:
-                active_agent = partial_response.agent
+            num_loops += 1
 
-        return Response(
-            output=messages[-1]["content"],
-            messages=messages[init_len:],
-            agent=active_agent,
-            context_variables=context_variables,
-        )
+        return response
