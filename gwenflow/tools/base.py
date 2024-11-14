@@ -10,8 +10,8 @@ from gwenflow.tools.utils import function_to_json
 
 class BaseTool(BaseModel, ABC):
 
-    class _ArgsSchemaPlaceholder(BaseModel):
-        pass
+    # class _ArgsSchemaPlaceholder(BaseModel):
+    #     pass
 
     name: str
     """The unique name of the tool that clearly communicates its purpose."""
@@ -19,8 +19,8 @@ class BaseTool(BaseModel, ABC):
     description: str
     """Used to tell the model how to use the tool."""
 
-    args_schema: Type[BaseModel] = Field(default_factory=_ArgsSchemaPlaceholder)
-    """The schema for the arguments that the tool accepts."""
+    # args_schema: Type[BaseModel] = Field(default_factory=_ArgsSchemaPlaceholder)
+    # """The schema for the arguments that the tool accepts."""
 
     openai_schema: dict = None
     """OpenAI JSON schema"""
@@ -28,20 +28,20 @@ class BaseTool(BaseModel, ABC):
     tool_type: str = "function"
     """Tool type: function, langchain, llamaindex."""
 
-    @validator("args_schema", always=True, pre=True)
-    def _default_args_schema(cls, v: Type[BaseModel]) -> Type[BaseModel]:
-        if not isinstance(v, cls._ArgsSchemaPlaceholder):
-            return v
+    # @validator("args_schema", always=True, pre=True)
+    # def _default_args_schema(cls, v: Type[BaseModel]) -> Type[BaseModel]:
+    #     if not isinstance(v, cls._ArgsSchemaPlaceholder):
+    #         return v
 
-        return type(
-            f"{cls.__name__}Schema",
-            (BaseModel,),
-            {
-                "__annotations__": {
-                    k: v for k, v in cls._run.__annotations__.items() if k != "return"
-                },
-            },
-        )
+    #     return type(
+    #         f"{cls.__name__}Schema",
+    #         (BaseModel,),
+    #         {
+    #             "__annotations__": {
+    #                 k: v for k, v in cls._run.__annotations__.items() if k != "return"
+    #             },
+    #         },
+    #     )
 
     def run(self, **kwargs: Any) -> Any:
         print(f"Using Tool: {self.name}")
@@ -59,7 +59,7 @@ class BaseTool(BaseModel, ABC):
             return Tool(
                 name=tool.name,
                 description=tool.description,
-                args_schema=tool.args_schema,
+                # args_schema=tool.args_schema,
                 openai_schema=convert_to_openai_tool(tool),
                 func=tool.run,
                 tool_type="langchain",
@@ -91,7 +91,7 @@ class BaseTool(BaseModel, ABC):
                         name=tool_name,
                         description=f.__doc__,
                         func=f,
-                        args_schema=args_schema,
+                        # args_schema=args_schema,
                         openai_schema=function_to_json(f),
                         tool_type="function",
                     )
