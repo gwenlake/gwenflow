@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class Task:
-
+    
     def __init__(self, *, description: str, expected_output: str = None, agent: Agent):
 
+        self.id = None
         self.description = description
         self.expected_output = expected_output
         self.agent = agent

@@ -11,7 +11,7 @@ from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.agents import Agent
 from gwenflow.tasks import Task
 from gwenflow.tools import Tool
-from gwenflow.flows import Flow
+from gwenflow.flows import Flow, AutoFlow
 
 
 __all__ = [
@@ -23,4 +23,5 @@ __all__ = [
     "Task",
     "Tool",
     "Flow",
+    "AutoFlow",
 ]
