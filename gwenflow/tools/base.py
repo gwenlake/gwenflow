@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, validator
 
 from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
+
 from gwenflow.tools.utils import function_to_json
 
 
