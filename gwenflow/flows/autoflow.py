@@ -89,7 +89,10 @@ class AutoFlow(Flow):
     #     values["input_variables"] = list(all_variables)
     #     return values
     
-    def generate_tasks(self, objective: str, tools: str):
+    def generate_tasks(self, objective: str):
+
+        tools = [ tool.name for tool in self.tools ]
+        tools = ",".join(tools)
 
         task_prompt = TASK_GENERATOR.format(objective=objective, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
         tasks = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}]) #, response_format={type: 'json_object'})
