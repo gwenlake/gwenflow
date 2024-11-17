@@ -15,7 +15,7 @@ class Flow(BaseModel):
 
     instructions: str = "You are a helpful AI system that can run a complex list of tasks."
     llm: Any = None
-    # tools: List[Tool] = []
+    tools: List[Tool] = []
     tasks: List[Any] = []
     flow_type: str = "sequence"
 
