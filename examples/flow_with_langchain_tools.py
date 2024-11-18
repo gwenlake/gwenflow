@@ -60,8 +60,8 @@ agent_pptx = Agent(
 )
 
 task_pptx = Task(
-    description="Prepare a Very colorful, beautiful and professionnal Powerpoint summarizing the information given",
-    expected_output="A pptx file called biography_flow_2.pptx.",
+    description="Prepare a professionnal Powerpoint summarizing the information given",
+    expected_output="A pptx file called biography.pptx.",
     agent=agent_pptx
 )
 
