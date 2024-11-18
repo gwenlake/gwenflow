@@ -26,9 +26,14 @@ class Flow(BaseModel):
 
         for task in self.tasks:
 
+            tools = [ tool.name for tool in task.agent.tools ]
+            tools = ",".join(tools)
+
             print("")
             print("------------------------------------------")
-            print(f"Running Agent { task.agent.role }")
+            print(f"Task : { task.description }")
+            print(f"Agent: { task.agent.role }")
+            print(f"Tools: { tools }")
             print("------------------------------------------")
 
             context = task.run(context=context)
