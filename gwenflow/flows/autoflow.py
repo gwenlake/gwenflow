@@ -98,18 +98,28 @@ class AutoFlow(Flow):
         tasks = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}]) #, response_format={type: 'json_object'})
         tasks = parse_json_markdown(tasks)
 
-        generic_agent = Agent(
+        _agent = Agent(
             role="Generic Agent.",
-            instructions="You are a helpful AI agent..",
+            instructions="You are a helpful AI agent.",
             llm=self.llm,
             tools=self.tools,
         )
 
         for task in tasks:
+
+            # _tools = ....
+            # _agent = Agent(
+            #     role="Generic Agent.",
+            #     instructions="You are a helpful AI agent..",
+            #     llm=self.llm,
+            #     tools=self.tools,
+            # )
+
+            print(task["description"])
             _task = Task(
                 description=task["description"],
-                expected_output=task["description"],
-                agent=generic_agent
+                expected_output=task["expected_output"],
+                agent=_agent
             )
             self.tasks.append(_task)
 
