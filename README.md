@@ -27,7 +27,42 @@ Install from the main branch to try the newest features:
 pip install -U git+https://github.com/gwenlake/gwenflow.git@main
 ```
 
-## Example
+## Usage
+
+```python
+import os
+from gwenflow import ChatOpenAI
+
+
+client = ChatOpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY"),  # This is the default and can be omitted
+)
+```
+
+## Chat
+
+```python
+import os
+from gwenflow import ChatOpenAI
+
+
+client = ChatOpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY"),  # This is the default and can be omitted
+)
+
+messages = [
+    {
+        "role": "user",
+        "content": "Describe Argentina in one sentence."
+    }
+]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+response = llm.invoke(messages=messages)
+print(response)
+```
+
+## Agents with Tools
 
 ```python
 import requests
@@ -37,7 +72,7 @@ import dotenv
 from gwenflow import ChatOpenAI, Agent, Task
 
 
-# --- load you api key
+# --- load you api key from .env
 
 dotenv.load_dotenv(override=True)
 
