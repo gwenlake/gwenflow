@@ -20,6 +20,7 @@ python_repl_tool = langchain.agents.Tool(
 )
 _alpha = AlphaVantageAPIWrapper()
 
+# Initialize AlphaVantage tool
 def alpha_vantage (symbol):
     """Make a request to the AlphaVantage API to get the
             latest price and volume information."""
@@ -32,12 +33,12 @@ wikipedia = WikipediaQueryRun(api_wrapper=api_wrapper)
 # Wrap tools
 tool_python = Tool.from_langchain(python_repl_tool)
 tool_wikipedia = Tool.from_langchain(wikipedia)
-tool_afinance = Tool.from_function(alpha_vantage)
+tool_finance = Tool.from_function(alpha_vantage)
 
 # Set up language model
 llm = ChatOpenAI(model="gpt-4o")
 
 # Define the flow with a financial objective
-flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia, tool_afinance])
+flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia, tool_finance])
 flow.generate_tasks(objective="Create a detailed financial analysis of Apple Inc., including stock performance, revenue trends, and market competition, with charts and tables saved as PNGs and compiled into a professional PowerPoint presentation named financial_analysis.pptx")
 flow.run()
