@@ -80,7 +80,7 @@ class Qdrant(VectorStoreBase):
             distance (Distance, optional): Distance metric for vector similarity. Defaults to Distance.COSINE.
         """
         # Skip creating collection if already exists
-        response = self.list_cols()
+        response = self.get_collections()
         for collection in response.collections:
             if collection.name == self.collection_name:
                 logging.debug(f"Collection {self.collection_name} already exists. Skipping creation.")
@@ -148,7 +148,12 @@ class Qdrant(VectorStoreBase):
             query_filter=query_filter,
             limit=limit,
         )
-        return hits
+        documents = []
+        for d in hits:
+            doc = d.payload
+            doc["distance"] = 1-d.score
+            documents.append(doc)
+        return documents
 
     def delete(self, vector_id: int):
         """
