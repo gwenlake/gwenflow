@@ -72,7 +72,7 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 print( llm.invoke(messages=messages) )
 ```
 
-## Agents with Tools
+## Agents, Tasks and Tools
 
 ```python
 import requests
