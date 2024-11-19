@@ -67,6 +67,7 @@ RULES:
 - The task description should be the question you want to ask the user.
 - dependent_task_ids should always be an empty array, or an array of numbers representing the task ID it should pull results from.
 - Make sure all task IDs are in chronological order.
+- You can use multiple tools for a single task by separating them with a comma.
 
 EXAMPLE:
 ----
