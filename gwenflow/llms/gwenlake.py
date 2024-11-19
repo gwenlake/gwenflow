@@ -30,6 +30,12 @@ class ChatGwenlake(ChatOpenAI):
         api_key: Optional[str] = None,
         **kwargs,
     ):
+        _api_key = api_key or os.environ.get("GWENLAKE_API_KEY")
+        if os.environ.get('OPENAI_ORG_ID'):
+            openai.organization = os.environ.get('OPENAI_ORG_ID')
+        if os.environ.get('GWENLAKE_ORGANIZATION'):
+            openai.organization = os.environ.get('GWENLAKE_ORGANIZATION')
+
         super().__init__(
             model = model,
             timeout = timeout,
@@ -46,13 +52,8 @@ class ChatGwenlake(ChatOpenAI):
             seed = seed,
             logprobs = logprobs,
             top_logprobs = top_logprobs,
+            api_key = _api_key,
             **kwargs,
         )
-
-        _api_key = api_key or os.environ.get("GWENLAKE_API_KEY")
-        if os.environ.get('OPENAI_ORG_ID'):
-            openai.organization = os.environ.get('OPENAI_ORG_ID')
-        if os.environ.get('GWENLAKE_ORGANIZATION'):
-            openai.organization = os.environ.get('GWENLAKE_ORGANIZATION')
 
         self.client = openai.OpenAI(api_key=_api_key, base_url="https://api.gwenlake.com/v1")
