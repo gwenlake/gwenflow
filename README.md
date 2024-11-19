@@ -128,6 +128,7 @@ for query in queries:
     print("A:", task.run())
 ```
 
+
 ```
 Q: Find the capital city of France?
 A: The capital city of France is Paris.
@@ -146,6 +147,52 @@ A: The exchange rate of the Chinese Yuan (CNY) is 7.23 as of November 12, 2024.
 
 Q: What's the exchange rate of the Tonga?
 A: The current exchange rate for the Tongan paʻanga (TOP) is 2.3662, as of November 12, 2024.
+```
+
+## Automated Flows, Agents with Langchain Tools
+
+Run an agent with Langchain tools. Requires langchain and pip install langchain-experimental
+```
+pip install langchain
+pip install langchain-experimental
+```
+
+> [!CAUTION]  
+> Python REPL can execute arbitrary code on the host machine (e.g., delete files, make network requests). Use with caution.
+> For more information general security guidelines, please see https://python.langchain.com/docs/security/.
+
+```python
+import dotenv
+from gwenflow import ChatOpenAI, Tool, AutoFlow
+
+import langchain.agents
+from langchain_experimental.utilities import PythonREPL
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
+
+# Load API key from .env file
+dotenv.load_dotenv(override=True)
+
+python_repl = PythonREPL()
+python_repl_tool = langchain.agents.Tool(
+    name="python_repl",
+    description="This tool can execute python code and shell commands (pip commands to modules installation) Use with caution",
+    func=python_repl.run,
+)
+
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=5000)
+wikipedia   = WikipediaQueryRun(api_wrapper=api_wrapper)
+
+tool_python    = Tool.from_langchain( python_repl_tool )
+tool_wikipedia = Tool.from_langchain( wikipedia )
+
+
+llm = ChatOpenAI(model="gpt-4o")
+
+flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia])
+flow.generate_tasks(objective="Tell me about the biography of Kamala Harris and produce a pptx name biography_auto.pptx")
+flow.run()
 ```
 
 ## Contributing to Gwenflow
