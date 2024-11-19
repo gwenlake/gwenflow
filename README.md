@@ -29,14 +29,28 @@ pip install -U git+https://github.com/gwenlake/gwenflow.git@main
 
 ## Usage
 
+Load your OpenAI api key from an environment variable:
+
 ```python
 import os
 from gwenflow import ChatOpenAI
 
 
-client = ChatOpenAI(
+llm = ChatOpenAI(
     api_key=os.environ.get("OPENAI_API_KEY"),  # This is the default and can be omitted
 )
+```
+
+or load your api key from a local .env file:
+
+```python
+import os
+import dotenv
+from gwenflow import ChatOpenAI
+
+dotenv.load_dotenv(override=True) # load you api key from .env
+
+llm = ChatOpenAI()
 ```
 
 ## Chat
@@ -45,10 +59,7 @@ client = ChatOpenAI(
 import os
 from gwenflow import ChatOpenAI
 
-
-client = ChatOpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),  # This is the default and can be omitted
-)
+dotenv.load_dotenv(override=True) # load you api key from .env
 
 messages = [
     {
@@ -58,8 +69,7 @@ messages = [
 ]
 
 llm = ChatOpenAI(model="gpt-4o-mini")
-response = llm.invoke(messages=messages)
-print(response)
+print( llm.invoke(messages=messages) )
 ```
 
 ## Agents with Tools
@@ -72,13 +82,10 @@ import dotenv
 from gwenflow import ChatOpenAI, Agent, Task
 
 
-# --- load you api key from .env
-
-dotenv.load_dotenv(override=True)
+dotenv.load_dotenv(override=True) # load you api key from .env
 
 
-# --- tool to get fx
-
+# Tool to get current exchange rate from floatrates.com
 def getfx(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
     try:
@@ -90,8 +97,7 @@ def getfx(currency_iso: str) -> str:
     return "Currency not found"
 
 
-# --- llm, agent and task
-
+# LLM and Agent
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 agentfx = Agent(
@@ -101,6 +107,7 @@ agentfx = Agent(
     tools=[getfx],
 )
 
+# Loop on a list of tasks
 queries = [
     "Find the capital city of France?",
     "What's the exchange rate of the Brazilian real?",
