@@ -84,9 +84,8 @@ from gwenflow import ChatOpenAI, Agent, Task
 
 dotenv.load_dotenv(override=True) # load you api key from .env
 
-
-# Tool to get current exchange rate from floatrates.com
-def getfx(currency_iso: str) -> str:
+# tool to get fx
+def get_exchange_rate(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
     try:
         response = requests.get("http://www.floatrates.com/daily/usd.json").json()
@@ -96,15 +95,16 @@ def getfx(currency_iso: str) -> str:
         print(f"Currency not found: {currency_iso}")
     return "Currency not found"
 
+tool_get_exchange_rate = Tool.from_function(get_exchange_rate)
 
-# LLM and Agent
+# llm, agent and task
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 agentfx = Agent(
     role="Fx Analyst",
     instructions="Get recent exchange rates data.",
     llm=llm,
-    tools=[getfx],
+    tools=[tool_get_exchange_rate],
 )
 
 # Loop on a list of tasks
