@@ -79,7 +79,7 @@ import requests
 import json
 import dotenv
 
-from gwenflow import ChatOpenAI, Agent, Task
+from gwenflow import ChatOpenAI, Agent, Task, Tool
 
 
 dotenv.load_dotenv(override=True) # load you api key from .env
