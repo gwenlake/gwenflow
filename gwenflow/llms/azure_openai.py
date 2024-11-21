@@ -32,7 +32,12 @@ class ChatAzureOpenAI(ChatOpenAI):
         azure_deployment: Optional[str] = None,
         **kwargs,
         ):
-    
+
+        _api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        _azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+        _azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        _api_version = api_version or os.environ.get("AZURE_OPENAI_API_VERSION")
+
         super().__init__(
             model = model,
             timeout = timeout,
@@ -51,11 +56,7 @@ class ChatAzureOpenAI(ChatOpenAI):
             top_logprobs = top_logprobs,
             **kwargs,
         )
-        
-        _api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-        _azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-        _azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-        _api_version = api_version or os.environ.get("AZURE_OPENAI_API_VERSION")
+
 
         self.client = openai.AzureOpenAI(
             azure_endpoint=_azure_endpoint,
