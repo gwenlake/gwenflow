@@ -32,7 +32,8 @@ class ChatAzureOpenAI(ChatOpenAI):
         azure_deployment: Optional[str] = None,
         **kwargs,
         ):
-
+        
+        # init variables before super().__init__
         _api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         _azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
         _azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
