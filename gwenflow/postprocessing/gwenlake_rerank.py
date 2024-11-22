@@ -93,4 +93,4 @@ class GwenlakeRerank(BaseModel):
             reranked_documents = [x["text"] for x in reranked_documents]
             return reranked_documents[:self.top_k]
 
-        return None
+        return []
