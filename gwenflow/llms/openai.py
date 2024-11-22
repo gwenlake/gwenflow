@@ -152,10 +152,11 @@ class ChatOpenAI(ChatBase):
 
         content = ""
         for chunk in response:
-            if chunk.choices[0].finish_reason == "stop":
-                break
-            content += chunk.choices[0].delta.content
-            if parse_response:
-                chunk = self._parse_response(chunk, tools)
-            yield chunk
+            if len(chunk.choices) > 0:
+                if chunk.choices[0].finish_reason == "stop":
+                    break
+                content += chunk.choices[0].delta.content
+                if parse_response:
+                    chunk = self._parse_response(chunk, tools)
+                yield chunk
  
