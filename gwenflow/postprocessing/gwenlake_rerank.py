@@ -9,6 +9,7 @@ class GwenlakeRerank(BaseModel):
 
     model: str
     top_k: int
+    threshold: float = None
 
     api_base: str = "https://api.gwenlake.com/v1/rerank"
     api_key: Optional[SecretStr] = None
@@ -82,6 +83,13 @@ class GwenlakeRerank(BaseModel):
         except Exception as e:
             print(repr(e))
             return None
+
+        # filter if threshold
+        if self.threshold:
+            for i,x in enumerate(reranked_documents):
+                if x["relevance_score"] < self.threshold:
+                    del reranked_documents[i]
+
         reranked_documents = sorted(reranked_documents, key=lambda d: d['relevance_score'], reverse=True)
         reranked_documents = [x["text"] for x in reranked_documents]
         return reranked_documents[:self.top_k]
