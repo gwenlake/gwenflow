@@ -55,6 +55,7 @@ class ChatAzureOpenAI(ChatOpenAI):
             seed = seed,
             logprobs = logprobs,
             top_logprobs = top_logprobs,
+            api_key = _api_key,
             **kwargs,
         )
 
