@@ -28,7 +28,7 @@ class Qdrant(VectorStoreBase):
         embedding_model_dims: int,
         client: QdrantClient = None,
         host: str = None,
-        port: int = None,
+        port: int = 6333,
         path: str = None,
         url: str = None,
         api_key: str = None,
