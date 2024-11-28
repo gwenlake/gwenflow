@@ -290,36 +290,42 @@ class Agent(BaseModel):
 
             completion = self.invoke(stream=stream)
 
+            message = ""
+
             if stream:
                 for chunk in completion:
-                    print(chunk.choices[0].delta.content, end="")
-
+                    print(chunk.choices[0].delta.content)
+                    message += chunk.choices[0].delta.content
+                    # print(chunk.choices[0].delta.content, end="")
             else:
                 message = completion.choices[0].message
-                message.sender = self.role
 
-                self.messages.append(json.loads(message.model_dump_json()))  # to avoid OpenAI types (?)
+            message.sender = self.role
 
-                # check if done
-                if not message.tool_calls:
-                    logging.debug("Task done.")
-                    return Response(
-                        output=self.messages[-1]["content"],
-                        messages=self.messages[init_len:],
-                        agent=self,
-                        # context_variables=context_variables,
-                    )
+            self.messages.append(json.loads(message.model_dump_json()))  # to avoid OpenAI types (?)
 
-                # handle function calls, updating context_variables
-                # partial_response = self.handle_tool_calls(message.tool_calls, self.tools, context_variables)
-                partial_response = self.handle_tool_calls(message.tool_calls, self.tools)
-                self.messages.extend(partial_response.messages)
-                context_variables.update(partial_response.context_variables)
+            # check if done
+            if not message.tool_calls:
+                logging.debug("Task done.")
+                # deque(reason_generator, maxlen=0)
+                return Response(
+                    output=self.messages[-1]["content"],
+                    messages=self.messages[init_len:],
+                    agent=self,
+                    # con
+                    # text_variables=context_variables,
+                )
 
-                # switching agent?
-                if partial_response.agent:
-                    logging.debug(f"Task transfered to Agent[{ partial_response.agent.name }].")
-                    return partial_response.agent
+            # handle function calls, updating context_variables
+            # partial_response = self.handle_tool_calls(message.tool_calls, self.tools, context_variables)
+            partial_response = self.handle_tool_calls(message.tool_calls, self.tools)
+            self.messages.extend(partial_response.messages)
+            context_variables.update(partial_response.context_variables)
+
+            # switching agent?
+            if partial_response.agent:
+                logging.debug(f"Task transfered to Agent[{ partial_response.agent.name }].")
+                return partial_response.agent
 
         logging.debug(f"Task failed")
         return None
