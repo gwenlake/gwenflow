@@ -3,7 +3,7 @@ import json
 from typing import List, Callable, Union, Any
 
 from gwenflow.agents.agent import Agent, RunResponse
-from gwenflow.agents.prompts import CONTEXT, EXPECTED_OUTPUT
+from gwenflow.tasks.prompts import CONTEXT, EXPECTED_OUTPUT
 
 
 MAX_LOOPS = 10
