@@ -3,7 +3,7 @@ import os
 import shutil
 import subprocess
 from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload
-from collections import defaultdict
+from collections import defaultdict, deque
 from pydantic import BaseModel
 import logging
 import json
@@ -143,122 +143,13 @@ class Agent(BaseModel):
 
     def stream(
         self,
-        context_variables: dict = {},
-        max_turns: int = float("inf"),
-    ):
-
-        task_prompt = self.prompt()
-        messages = [{"role": "user", "content": task_prompt}]
-
-        init_len = len(messages)
-
-        active_agent = self.agent
-
-        while len(messages) - init_len < max_turns:
-
-            message = {
-                "content": "",
-                "sender": self.agent.role,
-                "role": "assistant",
-                "function_call": None,
-                "tool_calls": defaultdict(
-                    lambda: {
-                        "function": {"arguments": "", "name": ""},
-                        "id": "",
-                        "type": "",
-                    }
-                ),
-            }
-
-            # get completion with current history, agent
-            completion = active_agent.invoke(
-                messages=messages,
-                context_variables=context_variables,
-                stream=True,
-            )
-
-            yield {"delim": "start"}
-            for chunk in completion:
-                delta = json.loads(chunk.choices[0].delta.json())
-                if delta["role"] == "assistant":
-                    delta["sender"] = active_agent.name
-                yield delta
-                delta.pop("role", None)
-                delta.pop("sender", None)
-                merge_chunk(message, delta)
-            yield {"delim": "end"}
-
-            message["tool_calls"] = list(
-                message.get("tool_calls", {}).values())
-            if not message["tool_calls"]:
-                message["tool_calls"] = None
-            logging.debug("Received completion:", message)
-            messages.append(message)
-
-            if not message["tool_calls"]:
-                logging.debug("Ending turn.")
-                break
-
-            # convert tool_calls to objects
-            tool_calls = []
-            for tool_call in message["tool_calls"]:
-                function = Function(
-                    arguments=tool_call["function"]["arguments"],
-                    name=tool_call["function"]["name"],
-                )
-                tool_call_object = ChatCompletionMessageToolCall(
-                    id=tool_call["id"], function=function, type=tool_call["type"]
-                )
-                tool_calls.append(tool_call_object)
-
-            # handle function calls, updating context_variables, and switching agents
-            partial_response = self.handle_tool_calls(tool_calls, active_agent.tools, context_variables)
-            messages.extend(partial_response.messages)
-            context_variables.update(partial_response.context_variables)
-            if partial_response.agent:
-                active_agent = partial_response.agent
-
-        yield {
-            "response": Response(
-                output=messages[init_len]["content"],
-                messages=messages[init_len:],
-                agent=active_agent,
-                context_variables=context_variables,
-            )
-        }
-
-    @overload
-    def run(
-        self,
         message: Optional[Union[List, Dict, str]] = None,
         *,
-        stream: Literal[False] = False,
-        context: Optional[str] = None,
-        context_variables: Optional[dict] = None,
-        **kwargs: Any,
-    ) -> Response: ...
-
-    @overload
-    def run(
-        self,
-        message: Optional[Union[List, Dict, str]] = None,
-        *,
-        stream: Literal[True] = True,
-        context: Optional[str] = None,
-        context_variables: Optional[dict] = None,
-        **kwargs: Any,
-    ) -> Iterator[Response]: ...
-
-    def run(
-        self,
-        message: Optional[Union[List, Dict, str]] = None,
-        *,
-        stream: bool = False,
         context: Optional[str] = None,
         context_variables: Optional[dict] = None,
         # tools: Optional[List[BaseTool]] = None,
         **kwargs: Any,
-    ) ->  Union[Response, Iterator[Response]]:
+    ) ->  Iterator[Response]:
 
         # if context_variables:
         #     context_variables = defaultdict(str, context_variables)
@@ -271,7 +162,93 @@ class Agent(BaseModel):
 
         instructions = self.instructions
 
-        # TODO: add context to task prompt if any
+        # prepare messages
+        if isinstance(message, str):
+            message = { "role": "user", "content": message }
+        elif isinstance(message, dict):
+            message = { "role": "user", "content": message.get("content") }
+
+        self.messages = [ { "role": "system", "content": instructions }, message, ]
+
+        init_len = len(self.messages)
+        while len(self.messages) - init_len < MAX_TURNS:
+
+            message = {
+                "content": "",
+                "sender": self.role,
+                "role": "assistant",
+                "function_call": None,
+                "tool_calls": defaultdict(
+                    lambda: {
+                        "function": {"arguments": "", "name": ""},
+                        "id": "",
+                        "type": "",
+                    }
+                ),
+            }
+
+            completion = self.invoke(stream=True)
+
+            for chunk in completion:
+                if len(chunk.choices) > 0:
+                    delta = json.loads(chunk.choices[0].delta.json())
+                    if delta["role"] == "assistant":
+                        delta["sender"] = self.role
+                    if delta["content"]:
+                        yield delta
+                    delta.pop("role", None)
+                    delta.pop("sender", None)
+                    merge_chunk(message, delta)
+
+            message["tool_calls"] = list(
+                message.get("tool_calls", {}).values())
+            if not message["tool_calls"]:
+                message["tool_calls"] = None
+
+            message = ChatCompletionMessage(**message)
+
+            self.messages.append(json.loads(message.model_dump_json()))
+
+            if not message.tool_calls:
+                logging.debug("Task done.")
+                break
+
+            # handle function calls, updating context_variables, and switching agents
+            partial_response = self.handle_tool_calls(message.tool_calls, self.tools)
+            self.messages.extend(partial_response.messages)
+            # context_variables.update(partial_response.context_variables)
+            if partial_response.agent:
+                return partial_response.agent
+
+        yield {
+            "response": Response(
+                output=self.messages[-1]["content"],
+                messages=self.messages[init_len:],
+                agent=self,
+                # context_variables=context_variables,
+            )
+        }
+
+    def run(
+        self,
+        message: Optional[Union[List, Dict, str]] = None,
+        *,
+        context: Optional[str] = None,
+        context_variables: Optional[dict] = None,
+        # tools: Optional[List[BaseTool]] = None,
+        **kwargs: Any,
+    ) ->  Response:
+
+        # if context_variables:
+        #     context_variables = defaultdict(str, context_variables)
+    
+        # instructions = (
+        #     self.instructions(context_variables)
+        #     if callable(self.instructions)
+        #     else self.instructions
+        # )
+
+        instructions = self.instructions
 
         # prepare messages
         if isinstance(message, str):
@@ -279,53 +256,39 @@ class Agent(BaseModel):
         elif isinstance(message, dict):
             message = { "role": "user", "content": message.get("content") }
 
-        self.messages = [
-            { "role": "system", "content": instructions },
-            message,
-        ]
+        self.messages = [ { "role": "system", "content": instructions }, message, ]
 
         # global loop
         init_len = len(self.messages)
         while len(self.messages) - init_len < MAX_TURNS:
 
-            completion = self.invoke(stream=stream)
+            completion = self.invoke()
 
-            message = ""
-
-            if stream:
-                for chunk in completion:
-                    print(chunk.choices[0].delta.content)
-                    message += chunk.choices[0].delta.content
-                    # print(chunk.choices[0].delta.content, end="")
-            else:
-                message = completion.choices[0].message
-
+            message = completion.choices[0].message
             message.sender = self.role
 
-            self.messages.append(json.loads(message.model_dump_json()))  # to avoid OpenAI types (?)
+            self.messages.append(json.loads(message.model_dump_json()))
 
             # check if done
             if not message.tool_calls:
                 logging.debug("Task done.")
-                # deque(reason_generator, maxlen=0)
-                return Response(
-                    output=self.messages[-1]["content"],
-                    messages=self.messages[init_len:],
-                    agent=self,
-                    # con
-                    # text_variables=context_variables,
-                )
+                break
 
             # handle function calls, updating context_variables
             # partial_response = self.handle_tool_calls(message.tool_calls, self.tools, context_variables)
             partial_response = self.handle_tool_calls(message.tool_calls, self.tools)
             self.messages.extend(partial_response.messages)
-            context_variables.update(partial_response.context_variables)
+            # context_variables.update(partial_response.context_variables)
 
             # switching agent?
             if partial_response.agent:
                 logging.debug(f"Task transfered to Agent[{ partial_response.agent.name }].")
                 return partial_response.agent
 
-        logging.debug(f"Task failed")
-        return None
+        return Response(
+            output=self.messages[-1]["content"],
+            messages=self.messages[init_len:],
+            agent=self,
+            # con
+            # text_variables=context_variables,
+        )
