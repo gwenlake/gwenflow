@@ -1,7 +1,7 @@
 
 from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload
 from collections import defaultdict
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 import logging
 import json
 from datetime import datetime
@@ -40,7 +40,7 @@ class Agent(BaseModel):
     prevent_prompt_leakage: bool = True
 
     # --- Agent Model and Tools
-    llm: Any
+    llm: Optional[Any] = None
     tools: List[Tool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     parallel_tool_calls: bool = True
@@ -48,6 +48,13 @@ class Agent(BaseModel):
     # --- Context and Memory
     context: Optional[str] = None
     # messages: List[Dict[str, str]] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Dict) -> Dict:
+        # if "llm" not in values:
+        #     values["model"] = "e5-base-v2"
+        return values
 
     def get_system_message(self):
         """Return the system message for the Agent."""
