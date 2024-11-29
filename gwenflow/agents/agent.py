@@ -1,6 +1,6 @@
 
 from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload
-from collections import defaultdict, deque
+from collections import defaultdict
 from pydantic import BaseModel
 import logging
 import json
@@ -8,11 +8,7 @@ from datetime import datetime
 
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import Tool
-from gwenflow.agents.types import (
-    AgentTool,
-    RunResponse,
-    Result,
-)
+from gwenflow.agents.run import RunResponse
 from gwenflow.agents.utils import merge_chunk
 
 
@@ -20,6 +16,14 @@ MAX_TURNS = 10
 
 
 logger = logging.getLogger(__name__)
+
+
+
+class Result(BaseModel):
+    """Encapsulates the possible return values for an agent function."""
+    value: str = ""
+    agent: Optional[Any] = None
+    context_variables: dict = {}
 
 
 class Agent(BaseModel):

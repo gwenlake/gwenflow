@@ -9,7 +9,7 @@ class GwenlakeRerank(BaseModel):
 
     model: str
     top_k: int
-    threshold: float
+    threshold: Optional[float] = None
 
     api_base: str = "https://api.gwenlake.com/v1/rerank"
     api_key: Optional[SecretStr] = None
@@ -61,7 +61,12 @@ class GwenlakeRerank(BaseModel):
         
         return reranking
 
-    def rerank_documents(self, query: str, texts: List[str]) -> List[List[float]]:
+    def rerank_documents(
+            self,
+            query: str,
+            texts: List[str],
+            parse_response: bool = True,
+        ) -> List[Any]:
         """Call out to Gwenlake's embedding endpoint.
 
         Args:
@@ -90,7 +95,8 @@ class GwenlakeRerank(BaseModel):
 
         if len(reranked_documents) > 0:
             reranked_documents = sorted(reranked_documents, key=lambda d: d['relevance_score'], reverse=True)
-            reranked_documents = [x["text"] for x in reranked_documents]
+            if parse_response:
+                reranked_documents = [x["text"] for x in reranked_documents]
             return reranked_documents[:self.top_k]
 
         return []
