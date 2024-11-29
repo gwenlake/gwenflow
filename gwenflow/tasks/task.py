@@ -1,10 +1,8 @@
 import logging
 import json
 from typing import List, Callable, Union, Any
-from collections import defaultdict
 
-from gwenflow.types import ChatCompletionMessageToolCall, Function
-from gwenflow.agents.agent import Agent, Response
+from gwenflow.agents.agent import Agent, RunResponse
 from gwenflow.agents.prompts import CONTEXT, EXPECTED_OUTPUT
 
 
@@ -36,7 +34,7 @@ class Task:
         return "\n\n".join(_prompt).strip()
 
 
-    def run(self, context: str = None, context_variables: dict = {}) -> str:
+    def run(self, context: str = None) -> str:
         
         task_prompt  = self.prompt(context)
         active_agent = self.agent
@@ -44,11 +42,11 @@ class Task:
         num_loops = 1
         while active_agent and num_loops < MAX_LOOPS:
 
-            response = active_agent.run(task_prompt, context_variables=context_variables)
+            response = active_agent.run(task_prompt, context=context)
             
             # task done
-            if isinstance(response, Response):
-                response = response.output
+            if isinstance(response, RunResponse):
+                response = response.content
                 break
 
             # task transfered to another agent

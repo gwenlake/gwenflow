@@ -1,16 +1,19 @@
 
-from typing import List, Callable, Union, Optional, Any
-from pydantic import BaseModel
+from typing import List, Dict, Callable, Union, Optional, Any
+from pydantic import BaseModel, Field
+from time import time
 
 
 AgentTool = Callable[[], Union[str, "Agent", dict]]
 
 
-class Response(BaseModel):
-    output: Any = None
-    messages: List = []
+class RunResponse(BaseModel):
+    content: Optional[Any] = None
+    content_type: str = "str"
+    messages: Optional[List] = None
     agent: Optional[Any] = None
-    context_variables: dict = {}
+    tools: Optional[List[Any]] = None
+    created_at: int = Field(default_factory=lambda: int(time()))
 
 
 class Result(BaseModel):

@@ -108,7 +108,7 @@ class AutoFlow(Flow):
 
             _agent = Agent(
                 role="Generic Agent.",
-                instructions="You are a helpful AI agent..",
+                description="You are a helpful AI agent..",
                 llm=self.llm,
                 tools=_tools,
             )
