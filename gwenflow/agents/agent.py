@@ -6,6 +6,7 @@ import logging
 import json
 from datetime import datetime
 
+from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import Tool
 from gwenflow.agents.run import RunResponse
@@ -52,8 +53,8 @@ class Agent(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
-        # if "llm" not in values:
-        #     values["model"] = "e5-base-v2"
+        if "llm" not in values:
+            values["llm"] = ChatOpenAI(model="gpt-4o-mini")
         return values
 
     def get_system_message(self):
