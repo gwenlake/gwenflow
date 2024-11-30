@@ -24,7 +24,7 @@ tool_python    = Tool.from_langchain( python_repl_tool )
 tool_wikipedia = Tool.from_langchain( wikipedia )
 
 
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOpenAI(model="gpt-4o-mini")
 
 flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia])
 flow.generate_tasks(objective="Tell me about the biography of Kamala Harris and produce a pptx name biography_auto.pptx")

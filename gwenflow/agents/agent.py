@@ -35,7 +35,7 @@ class Agent(BaseModel):
     # --- Settings for system message
     description: Optional[str] = "You are a helpful AI assistant."
     task: Optional[str] = None
-    instructions: Optional[List[str]] = []
+    instructions: Optional[Union[str, List[str]]] = []
     prevent_hallucinations: bool = False
     add_datetime_to_instructions: bool = True
     prevent_prompt_leakage: bool = True
@@ -55,6 +55,9 @@ class Agent(BaseModel):
     def validate_environment(cls, values: Dict) -> Dict:
         if "llm" not in values:
             values["llm"] = ChatOpenAI(model="gpt-4o-mini")
+        if "instructions" in values:
+            if isinstance(values["instructions"], str):
+                values["instructions"] = [values["instructions"]]
         return values
 
     def get_system_message(self):
