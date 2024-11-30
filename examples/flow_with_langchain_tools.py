@@ -24,11 +24,11 @@ wikipedia   = WikipediaQueryRun(api_wrapper=api_wrapper)
 tool_python    = Tool.from_langchain( python_repl_tool )
 tool_wikipedia = Tool.from_langchain( wikipedia )
 
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOpenAI(model="gpt-4o-mini")
 
 agent_bio = Agent(
     role="Biographer",
-    instructions="Grab some information from Wikipedia about the person being analysed. Please, proceed step by step.",
+    description="Grab some information from Wikipedia about the person being analysed. Please, proceed step by step.",
     llm=llm,
     tools=[tool_wikipedia],
 )

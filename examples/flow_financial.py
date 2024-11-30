@@ -42,7 +42,7 @@ tool_finance = Tool.from_langchain(aplha_vantage_tool)
 tool_search = Tool.from_langchain(search)
 
 # Set up language model
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOpenAI(model="gpt-4o-mini")
 
 # Define the flow with a financial objective
 flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia, tool_finance, tool_search])

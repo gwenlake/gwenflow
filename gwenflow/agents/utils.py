@@ -15,4 +15,3 @@ def merge_chunk(final_response: dict, delta: dict) -> None:
     if tool_calls and len(tool_calls) > 0:
         index = tool_calls[0].pop("index")
         merge_fields(final_response["tool_calls"][index], tool_calls[0])
-

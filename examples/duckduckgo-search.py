@@ -18,7 +18,7 @@ search = DuckDuckGoSearchRun()
 tool_search = Tool.from_langchain(search)
 
 # Set up language model
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOpenAI(model="gpt-4o-mini")
 
 python_repl = PythonREPL()
 
