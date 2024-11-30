@@ -72,6 +72,24 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 print( llm.invoke(messages=messages) )
 ```
 
+## Agent
+
+```python
+import os
+from gwenflow import Agent
+
+dotenv.load_dotenv(override=True) # load you OpenAI api key from .env
+
+# automatically use gpt-4o-mini for the Agent
+agent = Agent(
+    role="Agent",
+    description="You are a helpful agent.",
+)
+
+response = agent.run("how are you?")
+print(response.content)
+```
+
 ## Agents, Tasks and Tools
 
 ```python
