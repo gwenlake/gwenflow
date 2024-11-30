@@ -1,9 +1,10 @@
 
-from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload
-from collections import defaultdict
-from pydantic import BaseModel, model_validator
+import uuid
 import logging
 import json
+from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+from collections import defaultdict
+from pydantic import BaseModel, model_validator, field_validator, Field
 from datetime import datetime
 
 from gwenflow.llms import ChatOpenAI
@@ -30,7 +31,8 @@ class Result(BaseModel):
 class Agent(BaseModel):
 
     # --- Agent Settings
-    role: Optional[str] = None
+    id: Optional[str] = Field(None, validate_default=True)
+    name: Optional[str] = None
 
     # --- Settings for system message
     description: Optional[str] = "You are a helpful AI assistant."
@@ -39,9 +41,11 @@ class Agent(BaseModel):
     prevent_hallucinations: bool = False
     add_datetime_to_instructions: bool = True
     prevent_prompt_leakage: bool = True
+    markdown: bool = True
+    response_model: Optional[Type[BaseModel]] = Field(None)
 
     # --- Agent Model and Tools
-    llm: Optional[Any] = None
+    llm: Optional[Any] = Field(None, validate_default=True)
     tools: List[Tool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     parallel_tool_calls: bool = True
@@ -49,17 +53,29 @@ class Agent(BaseModel):
     # --- Context and Memory
     context: Optional[str] = None
     # messages: List[Dict[str, str]] = []
+    metadata: Optional[Dict[str, Any]] = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Dict) -> Dict:
-        if "llm" not in values:
-            values["llm"] = ChatOpenAI(model="gpt-4o-mini")
-        if "instructions" in values:
-            if isinstance(values["instructions"], str):
-                values["instructions"] = [values["instructions"]]
-        return values
+    # --- Team of agents
+    team: Optional[List["Agent"]] = None
+    role: Optional[str] = None
 
+
+    @field_validator("id", mode="before")
+    def set_id(cls, v: Optional[str]) -> str:
+        id = v or str(uuid.uuid4())
+        return id
+
+    @field_validator("instructions", mode="before")
+    def set_instructions(cls, v: Optional[Union[List, str]]) -> str:
+        if isinstance(v, str):
+            v = [v]
+        return v
+
+    @field_validator("llm", mode="before")
+    def set_llm(cls, v: Optional[Any]) -> str:
+        llm = v or ChatOpenAI(model="gpt-4o-mini")
+        return llm
+    
     def get_system_message(self):
         """Return the system message for the Agent."""
 
@@ -68,11 +84,14 @@ class Agent(BaseModel):
         if self.description is not None:
             system_message_lines.append(f"{self.description}\n")
 
-        if self.role is not None:
-            system_message_lines.append(f"Your role is: {self.role}\n")
+        if self.name is not None:
+            system_message_lines.append(f"Your name is: {self.name}.\n")
 
         if self.task is not None:
             system_message_lines.append(f"Your task is: {self.task}\n")
+
+        if self.role is not None:
+            system_message_lines.append(f"You are in a team and your role within the team is: {self.role}\n")
 
         # instructions
         instructions = self.instructions
@@ -82,6 +101,9 @@ class Agent(BaseModel):
                 "**Do not make up information:** If you don't know the answer or cannot determine from the context provided, say 'I don't know'."
             )
         
+        if self.markdown and self.response_model is None:
+            instructions.append("Use markdown to format your answers.")
+
         if self.context is not None:
             instructions.extend(
                 [
