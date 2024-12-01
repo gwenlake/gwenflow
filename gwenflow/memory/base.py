@@ -1,18 +1,20 @@
 
 import uuid
-from typing import Any
-from abc import ABC
+from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+from pydantic import BaseModel, model_validator, field_validator, Field
 
 from gwenflow.types import ChatMessage
 
 
-class BaseChatMemory(ABC):
+class BaseChatMemory(BaseModel):
  
     key: str = None
     messages: list[ChatMessage] = []
 
-    def __init__(self, key: str = None):
-        self.key = key if key else uuid.uuid4()
+    @field_validator("key", mode="before")
+    def set_id(cls, v: Optional[str]) -> str:
+        key = v or str(uuid.uuid4())
+        return key
 
     def to_string(self) -> str:
         """Convert memory to string."""
