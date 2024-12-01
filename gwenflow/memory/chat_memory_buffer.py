@@ -6,17 +6,22 @@ from gwenflow.types import ChatMessage
 from gwenflow.memory.base import BaseChatMemory
 
 
+DEFAULT_TOKEN_LIMIT = 8192
 DEFAULT_TOKEN_LIMIT_RATIO = 0.75
-DEFAULT_TOKEN_LIMIT = 3000
 
 
 class ChatMemoryBuffer(BaseChatMemory):
  
-    token_limit: int
+    token_limit: Optional[int] = Field(None, validate_default=True)
     tokenizer_fn: Optional[Callable] = Field(None, validate_default=True)
 
+    @field_validator("token_limit", mode="before")
+    def set_token_limit(cls, v: Optional[int]) -> int:
+        token_limit = v or int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
+        return token_limit
+    
     @field_validator("tokenizer_fn", mode="before")
-    def set_tokenizer_fn(cls, v: Optional[str]) -> str:
+    def set_tokenizer_fn(cls, v: Optional[Callable]) -> Callable:
         fn = v or num_tokens_from_string
         return fn
     
