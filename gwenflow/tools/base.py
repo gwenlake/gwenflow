@@ -7,6 +7,7 @@ from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from gwenflow.tools.utils import function_to_json
+from gwenflow.utils import logger
 
 
 class BaseTool(BaseModel, ABC):
@@ -45,7 +46,6 @@ class BaseTool(BaseModel, ABC):
     #     )
 
     def run(self, **kwargs: Any) -> Any:
-        print(f"Using Tool: {self.name}")
         return self._run(**kwargs)
 
     @abstractmethod
