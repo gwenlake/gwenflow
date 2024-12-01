@@ -1,4 +1,5 @@
 from typing import Any, Callable, Dict, List, Optional
+from pydantic import BaseModel, model_validator, field_validator, Field
 
 from gwenflow.utils.tokens import num_tokens_from_string
 from gwenflow.types import ChatMessage
@@ -12,12 +13,13 @@ DEFAULT_TOKEN_LIMIT = 3000
 class ChatMemoryBuffer(BaseChatMemory):
  
     token_limit: int
+    tokenizer_fn: Optional[Callable] = Field(None, validate_default=True)
 
-    def __init__(self, token_limit, key: str = None):
-        super().__init__(key)
-        self.token_limit = token_limit
-        self.tokenizer_fn = num_tokens_from_string
-
+    @field_validator("tokenizer_fn", mode="before")
+    def set_tokenizer_fn(cls, v: Optional[str]) -> str:
+        fn = v or num_tokens_from_string
+        return fn
+    
     def get(self, initial_token_count: int = 0):
 
         chat_history = self.get_all()

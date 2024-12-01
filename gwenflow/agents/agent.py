@@ -38,17 +38,16 @@ class Agent(BaseModel):
     add_datetime_to_instructions: bool = True
     markdown: bool = True
     response_model: Optional[Type[BaseModel]] = Field(None)
-
+ 
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
     tools: List[Tool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    parallel_tool_calls: bool = True
 
     # --- Context and Memory
     context: Optional[str] = None
-    # messages: List[Dict[str, str]] = []
     memory: Optional[ChatMemoryBuffer] = None
+    keep_history: bool = False
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team of agents
@@ -64,13 +63,21 @@ class Agent(BaseModel):
     @field_validator("instructions", mode="before")
     def set_instructions(cls, v: Optional[Union[List, str]]) -> str:
         if isinstance(v, str):
-            v = [v]
+            instructions = [v]
+            return instructions
         return v
 
     @field_validator("llm", mode="before")
     def set_llm(cls, v: Optional[Any]) -> str:
         llm = v or ChatOpenAI(model="gpt-4o-mini")
         return llm
+
+    @model_validator(mode="after")
+    def check_memory(self) -> Any:
+        if self.memory is None and self.llm is not None:
+             token_limit = self.llm.get_context_window_size()
+             self.memory = ChatMemoryBuffer(token_limit=token_limit)
+        return self
     
     def get_system_message(self):
         """Return the system message for the Agent."""
@@ -134,6 +141,13 @@ class Agent(BaseModel):
         return { "role": "user", "content": user_prompt }
 
 
+    
+    def get_tools_openai_schema(self, tools: List[Tool]):
+        return [tool.openai_schema for tool in tools]
+
+    def get_tools_map(self, tools: List[Tool]):
+        return {tool.name: tool for tool in tools}
+
     def handle_function_result(self, result) -> Result:
         match result:
             case Result() as result:
@@ -151,12 +165,6 @@ class Agent(BaseModel):
                     error_message = f"Failed to cast response to string: {result}. Make sure agent functions return a string or Result object. Error: {str(e)}"
                     logger.error(error_message)
                     raise TypeError(error_message)
-    
-    def get_tools_openai_schema(self, tools: List[Tool]):
-        return [tool.openai_schema for tool in tools]
-
-    def get_tools_map(self, tools: List[Tool]):
-        return {tool.name: tool for tool in tools}
 
     def handle_tool_calls(
         self,
@@ -217,9 +225,6 @@ class Agent(BaseModel):
             "parse_response": False,
         }
 
-        if tools:
-            params["parallel_tool_calls"] = self.parallel_tool_calls
-
         if stream:
             return self.llm.stream(**params)
         
@@ -244,9 +249,15 @@ class Agent(BaseModel):
         if system_message:
             messages_for_model.append(system_message)
 
+        if self.keep_history:
+            if len(self.memory.get())>0:
+                messages_for_model.extend(self.memory.get())
+
         user_message = self.get_user_message(message)
         if user_message:
             messages_for_model.append(user_message)
+            if self.memory and self.keep_history:
+                self.memory.add_message(user_message)
 
         # global loop
         init_len = len(messages_for_model)
@@ -289,12 +300,11 @@ class Agent(BaseModel):
                 message.sender = self.role
 
             # add messages to the current message stack
-            messages_for_model.append(json.loads(message.model_dump_json()))
-
-            # add messages to memory
-            # self.memory.add_messages(messages_for_model)
+            message_dict = json.loads(message.model_dump_json())
+            messages_for_model.append(message_dict)
 
             if not message.tool_calls:
+                self.memory.add_message(message_dict)
                 logger.debug("Task done.")
                 break
 

@@ -8,13 +8,13 @@ from gwenflow.types import ChatMessage
 
 class BaseChatMemory(BaseModel):
  
-    key: str = None
+    id: Optional[str] = Field(None, validate_default=True)
     messages: list[ChatMessage] = []
 
-    @field_validator("key", mode="before")
+    @field_validator("id", mode="before")
     def set_id(cls, v: Optional[str]) -> str:
-        key = v or str(uuid.uuid4())
-        return key
+        id = v or str(uuid.uuid4())
+        return id
 
     def to_string(self) -> str:
         """Convert memory to string."""
