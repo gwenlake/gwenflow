@@ -112,6 +112,8 @@ class ChatOpenAI(ChatBase):
 
         if response_format:
             params["response_format"] = response_format
+        else:
+            params["response_format"] = None
 
         if tools:
             params["tools"] = tools
@@ -140,13 +142,16 @@ class ChatOpenAI(ChatBase):
 
         if response_format:
             params["response_format"] = response_format
+        else:
+            params["response_format"] = None
 
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
             if parallel_tool_calls:
                 params["parallel_tool_calls"] = parallel_tool_calls
-
+        else:
+            params["tools"] = None
 
         response = self.client.chat.completions.create(**params)
 
