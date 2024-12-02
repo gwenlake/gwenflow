@@ -1,22 +1,15 @@
 
-from typing import List, Callable, Union, Optional, Any, Dict
+from typing import List
 from pydantic import BaseModel
-import logging
 
-from gwenflow.tools import Tool
-from gwenflow.tasks import Task
-
-
-logger = logging.getLogger(__name__)
+from gwenflow.agents import Agent
+from gwenflow.utils import logger
 
 
 
 class Flow(BaseModel):
 
-    instructions: str = "You are a helpful AI system that can run a complex list of tasks."
-    llm: Any = None
-    tools: List[Tool] = []
-    tasks: List[Any] = []
+    agents: List[Agent] = []
     flow_type: str = "sequence"
 
 
@@ -24,21 +17,16 @@ class Flow(BaseModel):
 
         context = None
 
-        for task in self.tasks:
+        for agent in self.team_agents:
 
-            tools = [ tool.name for tool in task.agent.tools ]
-            tools = ",".join(tools)
+            logger.debug("")
+            logger.debug("------------------------------------------")
+            logger.debug(f"Agent: { agent.agents }")
+            logger.debug("------------------------------------------")
 
-            print("")
-            print("------------------------------------------")
-            print(f"Task : { task.description }")
-            print(f"Agent: { task.agent.role }")
-            print(f"Tools: { tools }")
-            print("------------------------------------------")
+            context = agent.run(message=agent.task, context=context)
 
-            context = task.run(context=context)
-
-            print(f"{ context }")
+            logger.debug(f"{ context }")
         
         return context
     

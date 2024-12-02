@@ -30,6 +30,7 @@ class Agent(BaseModel):
     # --- Agent Settings
     id: Optional[str] = Field(None, validate_default=True)
     name: Optional[str] = None
+    role: Optional[str] = None
 
     # --- Settings for system message
     description: Optional[str] = "You are a helpful AI assistant."
@@ -52,7 +53,6 @@ class Agent(BaseModel):
 
     # --- Team of agents
     team: Optional[List["Agent"]] = None
-    role: Optional[str] = None
 
 
     @field_validator("id", mode="before")

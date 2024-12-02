@@ -4,10 +4,10 @@ from pydantic import BaseModel
 import logging
 import json
 
-# from gwenflow.tools import Tool
 from gwenflow.agents import Agent
 from gwenflow.tasks import Task
 from gwenflow.flows import Flow
+from gwenflow.tools import Tool
 from gwenflow.utils.json import parse_json_markdown
 
 
@@ -86,11 +86,15 @@ Task list:
 
 class AutoFlow(Flow):
 
-    
+    manager: List[Agent] = []
+    instructions: str = "You are a helpful AI system that can run a complex list of tasks."
+    llm: Any = None
+    tools: List[Tool] = []
+
     def generate_tasks(self, objective: str):
 
         tools = [ tool.name for tool in self.tools ]
-        tools = ",".join(tools)
+        tools = ", ".join(tools)
 
         task_prompt = TASK_GENERATOR.format(objective=objective, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
         tasks = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
