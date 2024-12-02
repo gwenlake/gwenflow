@@ -13,18 +13,28 @@ class Flow(BaseModel):
     flow_type: str = "sequence"
 
 
-    def run(self) -> str:
+    def run(self, message: str) -> str:
 
         context = None
 
-        for agent in self.team_agents:
+        first_agent = True
+
+        for agent in self.agents:
 
             logger.debug("")
             logger.debug("------------------------------------------")
-            logger.debug(f"Agent: { agent.agents }")
+            logger.debug(f"Agent: { agent.role }")
             logger.debug("------------------------------------------")
 
-            context = agent.run(message=agent.task, context=context)
+            if first_agent:
+                response = agent.run(message, context=context)
+                first_agent = False
+
+            else:
+                response = agent.run(context=context)
+
+            if response.content:
+                context = response.content
 
             logger.debug(f"{ context }")
         

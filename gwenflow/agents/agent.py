@@ -38,7 +38,7 @@ class Agent(BaseModel):
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = True
-    response_model: Optional[Type[BaseModel]] = Field(None)
+    response_model: Optional[str] = None
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
@@ -46,7 +46,7 @@ class Agent(BaseModel):
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Context and Memory
-    context: Optional[str] = None
+    context: Optional[Any] = None
     memory: Optional[ChatMemoryBuffer] = None
     keep_history: bool = False
     metadata: Optional[Dict[str, Any]] = None
@@ -73,10 +73,12 @@ class Agent(BaseModel):
         return llm
 
     @model_validator(mode="after")
-    def check_memory(self) -> Any:
+    def model_valid(self) -> Any:
+
         if self.memory is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
+
         return self
     
     def get_system_message(self):
@@ -94,7 +96,7 @@ class Agent(BaseModel):
             system_message_lines.append(f"Your task is: {self.task}\n")
 
         if self.role is not None:
-            system_message_lines.append(f"You are in a team and your role within the team is: {self.role}\n")
+            system_message_lines.append(f"Your role is: {self.role}\n")
 
         # instructions
         instructions = self.instructions
@@ -105,6 +107,9 @@ class Agent(BaseModel):
         if self.markdown and self.response_model is None:
             instructions.append("Use markdown to format your answers.")
 
+        if self.response_model:
+             instructions.append("Use JSON to format your answers.")
+
         if self.context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
             
@@ -112,34 +117,48 @@ class Agent(BaseModel):
             system_message_lines.append("# Instructions")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
-        
+
+        if self.response_model:
+            system_message_lines.append("# Provide your output using the following JSON schema:")
+            if isinstance(self.response_model, str):
+                system_message_lines.append("<json_fields>")
+                system_message_lines.append(f"{ self.response_model.strip() }")
+                system_message_lines.append("</json_fields>\n\n")
+
         # final system prompt
         if len(system_message_lines) > 0:
             return dict(role="system", content=("\n".join(system_message_lines)).strip())
         
         return None
 
-    def get_user_message(self, message: Union[str, dict]):
+    def get_user_message(self, user_prompt: Optional[str] = None):
         """Return the user message for the Agent."""
 
-        if message is None:
-            return None
-
-        user_prompt = ""
+        prompt = ""
 
         if self.context:
-            user_prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
-            user_prompt += "<context>\n"
-            user_prompt += self.context + "\n"
-            user_prompt += "</context>\n\n"
 
-        if isinstance(message, str):
-            user_prompt += message
-        elif isinstance(message, dict):
-            user_prompt += message["content"]
+            prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
+            prompt += "<context>\n"
+
+            if isinstance(self.context, str):
+                prompt += self.context + "\n"
+
+            elif isinstance(self.context, dict):
+                for key in self.context.keys():
+                    prompt += f"<{key}>\n"
+                    prompt += self.context.get(key) + "\n"
+                    prompt += f"</{key}>\n\n"
+
+            prompt += "</context>\n\n"
         
-        return { "role": "user", "content": user_prompt }
-
+        if user_prompt:
+            if isinstance(user_prompt, str):
+                prompt += user_prompt
+            elif isinstance(user_prompt, dict):
+                prompt += user_prompt["content"]
+        
+        return { "role": "user", "content": prompt }
 
     
     def get_tools_openai_schema(self, tools: List[Tool]):
@@ -225,17 +244,21 @@ class Agent(BaseModel):
             "parse_response": False,
         }
 
+        response_format = None
+        if self.response_model:
+            response_format = {"type": "json_object"}
+
         if stream:
-            return self.llm.stream(**params)
+            return self.llm.stream(**params, response_format=response_format)
         
-        return self.llm.invoke(**params)
+        return self.llm.invoke(**params, response_format=response_format)
 
 
     def _run(
         self,
-        message: Optional[Union[List, Dict, str]] = None,
+        user_prompt: Optional[str] = None,
         *,
-        context: Optional[str] = None,
+        context: Optional[Any] = None,
         stream: Optional[bool] = False,
         **kwargs: Any,
     ) ->  Iterator[RunResponse]:
@@ -253,12 +276,12 @@ class Agent(BaseModel):
             if len(self.memory.get())>0:
                 messages_for_model.extend(self.memory.get())
 
-        user_message = self.get_user_message(message)
+        user_message = self.get_user_message(user_prompt)
         if user_message:
             messages_for_model.append(user_message)
             if self.memory and self.keep_history:
                 self.memory.add_message(user_message)
-
+                
         # global loop
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
@@ -305,7 +328,6 @@ class Agent(BaseModel):
 
             if not message.tool_calls:
                 self.memory.add_message(message_dict)
-                logger.debug("Task done.")
                 break
 
             # handle tool calls and switching agents
@@ -314,8 +336,12 @@ class Agent(BaseModel):
             if partial_response.agent:
                 return partial_response.agent
 
+        content = messages_for_model[-1]["content"]
+        if self.response_model:
+            content = json.loads(content)
+
         yield RunResponse(
-            content=messages_for_model[-1]["content"],
+            content=content,
             messages=messages_for_model[init_len:],
             agent=self,
             tools=self.tools,
@@ -324,16 +350,16 @@ class Agent(BaseModel):
 
     def run(
         self,
-        message: Optional[Union[List, Dict, str]] = None,
+        user_prompt: Optional[str] = None,
         *,
-        context: Optional[str] = None,
+        context: Optional[Any] = None,
         stream: Optional[bool] = False,
         **kwargs: Any,
     ) ->  Union[RunResponse, Iterator[RunResponse]]:
 
         if stream:
             response = self._run(
-                message=message,
+                user_prompt=user_prompt,
                 context=context,
                 stream=True,
                 **kwargs,
@@ -342,7 +368,7 @@ class Agent(BaseModel):
     
         else:
             response = self._run(
-                message=message,
+                user_prompt=user_prompt,
                 context=context,
                 stream=False,
                 **kwargs,
