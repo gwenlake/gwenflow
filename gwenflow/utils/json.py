@@ -37,3 +37,15 @@ def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict:
                 f"to be present, but got {json_obj}"
             )
     return json_obj
+
+from datetime import date, datetime
+
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError ("Type %s not serializable" % type(obj))
+
+def to_json(obj):
+    return json.dumps(obj, default=json_serial)

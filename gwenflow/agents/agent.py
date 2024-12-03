@@ -390,7 +390,7 @@ class Agent(BaseModel):
                 with open(output_file, "a") as file:
                     name = self.name or self.role or self.id
                     file.write("\n")
-                    file.write("---\n")
+                    file.write("---\n\n")
                     file.write(f"# Agent: { name }\n")
                     if self.task:
                         file.write(f"{ self.task }\n")
