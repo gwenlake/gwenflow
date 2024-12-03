@@ -354,6 +354,7 @@ class Agent(BaseModel):
         *,
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
+        output_file: Optional[str] = None,
         **kwargs: Any,
     ) ->  Union[RunResponse, Iterator[RunResponse]]:
 
@@ -376,10 +377,24 @@ class Agent(BaseModel):
             return response
     
         else:
+
             response = self._run(
                 user_prompt=user_prompt,
                 context=context,
                 stream=False,
                 **kwargs,
             )
-            return next(response)
+            response = next(response)
+
+            if output_file:
+                with open(output_file, "a") as file:
+                    name = self.name or self.role or self.id
+                    file.write("\n")
+                    file.write("---\n")
+                    file.write(f"# Agent: { name }\n")
+                    if self.task:
+                        file.write(f"{ self.task }\n")
+                    file.write("\n")
+                    file.write(response.content)
+
+            return response
