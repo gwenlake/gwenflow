@@ -357,6 +357,15 @@ class Agent(BaseModel):
         **kwargs: Any,
     ) ->  Union[RunResponse, Iterator[RunResponse]]:
 
+
+        agent_id = self.name or self.role or self.id
+
+        logger.debug("")
+        logger.debug("------------------------------------------")
+        logger.debug(f"Running Agent: { agent_id }")
+        logger.debug("------------------------------------------")
+        logger.debug("")
+
         if stream:
             response = self._run(
                 user_prompt=user_prompt,

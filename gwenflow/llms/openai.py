@@ -120,6 +120,9 @@ class ChatOpenAI(ChatBase):
             params["tool_choice"] = tool_choice
             if parallel_tool_calls:
                 params["parallel_tool_calls"] = parallel_tool_calls
+        else:
+            params["tools"] = None
+            params["tool_choice"] = None
 
         response = self.client.chat.completions.create(**params)
         if parse_response:
@@ -132,7 +135,6 @@ class ChatOpenAI(ChatBase):
         response_format: Optional[Any] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: str = "auto",
-        parallel_tool_calls: Optional[bool] = None,
         parse_response: bool = True,
     ):
 
@@ -148,10 +150,9 @@ class ChatOpenAI(ChatBase):
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
-            if parallel_tool_calls:
-                params["parallel_tool_calls"] = parallel_tool_calls
         else:
             params["tools"] = None
+            params["tool_choice"] = None
 
         response = self.client.chat.completions.create(**params)
 
