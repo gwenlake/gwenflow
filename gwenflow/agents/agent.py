@@ -37,7 +37,7 @@ class Agent(BaseModel):
     task: Optional[str] = None
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
-    markdown: bool = True
+    markdown: bool = False
     response_model: Optional[str] = None
  
     # --- Agent Model and Tools
