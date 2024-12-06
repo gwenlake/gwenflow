@@ -52,11 +52,6 @@ class Flow(BaseModel):
 
         for agent in self.agents:
 
-            logger.debug("")
-            logger.debug("------------------------------------------")
-            logger.debug(f"Agent: { agent.role }")
-            logger.debug("------------------------------------------")
-
             if first_agent:
                 response = agent.run(message, context=context)
                 first_agent = False

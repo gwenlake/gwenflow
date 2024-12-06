@@ -8,6 +8,7 @@ from gwenflow.utils.tokens import (
     num_tokens_from_string,
     num_tokens_from_messages,
 )
+from gwenflow.utils.json import to_json
 
 __all__ = [
     "logger",
@@ -16,4 +17,5 @@ __all__ = [
     "bytes_to_b64_str",
     "num_tokens_from_string",
     "num_tokens_from_messages",
+    "to_json",
 ]
