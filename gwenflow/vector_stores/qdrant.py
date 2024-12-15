@@ -128,9 +128,11 @@ class Qdrant(VectorStoreBase):
             if not text_for_id:
                 text_for_id = document.content
             _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
-            _embeddings = self.embeddings.embed_documents([document.content])[0]
+            chunk = document.chunk or document.content
+            _embeddings = self.embeddings.embed_documents([chunk])[0]
             _payload = document.metadata
             _payload["content"] = document.content
+            _payload["chunk"] = document.chunk
             points.append(
                 PointStruct(
                     id=_id,

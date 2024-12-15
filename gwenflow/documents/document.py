@@ -9,6 +9,7 @@ class Document(BaseModel):
 
     id: Optional[str] = Field(None, validate_default=True)
     content: str
+    chunk: Optional[str] = None
     metadata: Dict[str, Any] = {}
     score: Optional[float] = None
 
@@ -21,7 +22,7 @@ class Document(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns a dictionary representation of the document"""
-        return self.model_dump(include={"id", "name", "content", "metadata"}, exclude_none=True)
+        return self.model_dump(include={"id", "name", "content", "chunk", "metadata"}, exclude_none=True)
 
     @classmethod
     def from_dict(cls, document: Dict[str, Any]) -> "Document":
