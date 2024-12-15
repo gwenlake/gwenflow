@@ -115,12 +115,10 @@ class Qdrant(VectorStoreBase):
 
     def insert(self, documents: list[Document]):
         """
-        Insert vectors into a collection.
+        Insert documents into a collection.
 
         Args:
-            vectors (list): List of vectors to insert.
-            payloads (list, optional): List of payloads corresponding to vectors. Defaults to None.
-            ids (list, optional): List of IDs corresponding to vectors. Defaults to None.
+            documents (list): List of documents to insert.
         """
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
 
@@ -132,7 +130,6 @@ class Qdrant(VectorStoreBase):
             _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
             _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
-            _payload["name"] = document.name
             _payload["content"] = document.content
             points.append(
                 PointStruct(
