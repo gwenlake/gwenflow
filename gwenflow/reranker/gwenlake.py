@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, cast
 import os
 import requests
 
-from gwenflow.types import Document
+from gwenflow.documents import Document
 from gwenflow.reranker.base import Reranker
 
 
@@ -73,7 +73,10 @@ class GwenlakeReranker(Reranker):
                 batch = documents[i:i_end]
                 batch_processed = []
                 for document in batch:
-                    batch_processed.append(document.content)
+                    if document.chunk:
+                        batch_processed.append(document.chunk)
+                    else:
+                        batch_processed.append(document.content)
                 reranked_documents += self._rerank(query=query, input=batch_processed)
         except Exception as e:
             print(repr(e))
