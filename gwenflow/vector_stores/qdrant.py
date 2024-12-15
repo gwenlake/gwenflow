@@ -1,6 +1,5 @@
 import logging
 import hashlib
-from typing import List, Optional, Dict, Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -16,8 +15,7 @@ from qdrant_client.models import (
 
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
-from gwenflow.reranker import Reranker
-from gwenflow.types import Document
+from gwenflow.documents import Document
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +34,6 @@ class Qdrant(VectorStoreBase):
         path: str = None,
         url: str = None,
         api_key: str = None,
-        reranker: Optional[Reranker] = None,
     ):
         """
         Initialize the Qdrant vector store.
@@ -56,9 +53,6 @@ class Qdrant(VectorStoreBase):
 
         # Distance metric
         self.distance = distance
-
-        # reranker
-        self.reranker = reranker
 
         if client:
             self.client = client
@@ -98,7 +92,7 @@ class Qdrant(VectorStoreBase):
                 return
 
         self.client.create_collection(
-            collection_name=self.collection,
+            collection=self.collection,
             vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance),
         )
 
@@ -121,21 +115,24 @@ class Qdrant(VectorStoreBase):
 
     def insert(self, documents: list[Document]):
         """
-        Insert documents into a collection.
+        Insert vectors into a collection.
 
         Args:
-            documents (list): List of documents to insert.
+            vectors (list): List of vectors to insert.
+            payloads (list, optional): List of payloads corresponding to vectors. Defaults to None.
+            ids (list, optional): List of IDs corresponding to vectors. Defaults to None.
         """
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
 
         points = []
         for document in documents:
             text_for_id = document.id
-            if text_for_id is None:
+            if not text_for_id:
                 text_for_id = document.content
             _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
             _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
+            _payload["name"] = document.name
             _payload["content"] = document.content
             points.append(
                 PointStruct(
@@ -196,28 +193,19 @@ class Qdrant(VectorStoreBase):
 
         documents = []
         for d in hits:
-
             if d.payload is None:
                 continue
-
-            content = None
-            if "content" in d.payload:
+            if d.payload.get("content"):
                 content = d.payload.pop("content")
-            elif "chunk" in d.payload:
+            elif d.payload.get("chunk"):
                 content = d.payload.pop("chunk")
-
-            documents.append(
-                Document(
-                    id=d.id,
-                    content=content,
-                    metadata=d.payload,
-                    score=1-d.score,
-                )
-            )
+            doc = Document(id=d.id, content=content)
+            if d.payload.get("name"):
+                doc.name = d.payload.pop("name")
+            doc.metadata = d.payload
+            doc.score = 1 - d.score
+            documents.append(doc)
     
-        if self.reranker:
-            documents = self.reranker.rerank(query=query, documents=documents)
-
         return documents
 
     def delete(self, id: int):

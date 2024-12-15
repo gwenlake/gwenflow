@@ -13,7 +13,6 @@ from gwenflow.agents import Agent
 from gwenflow.tasks import Task
 from gwenflow.tools import Tool
 from gwenflow.flows import Flow, AutoFlow
-from gwenflow.types import Document
 
 
 __all__ = [
@@ -21,7 +20,6 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatOllama",
-    "Document",
     "SimpleDirectoryReader",
     "Agent",
     "Task",

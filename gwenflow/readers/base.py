@@ -1,56 +1,160 @@
-from typing import Any, List
-from pydantic import BaseModel, Field, ConfigDict
 
-import io
-import requests
-from typing import List
-from pathlib import Path
+from abc import ABC
+from typing import cast
+from pathlib import Path, PurePosixPath
 
-from gwenflow.utils import logger
-from gwenflow.types import Document
-from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_uri_to_bucket_key
+import fsspec
+from fsspec.implementations.local import LocalFileSystem
+from tqdm import tqdm
+
+from gwenflow.documents import Document
+from gwenflow.readers.json import JSONReader
+from gwenflow.readers.pdf import PDFReader
+
+default_file_reader_cls = {
+    ".json": JSONReader,
+    ".pdf": PDFReader,
+}
 
 
-class Reader(BaseModel):
+def get_default_fs() -> fsspec.AbstractFileSystem:
+    return LocalFileSystem()
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def read(self, obj: Any) -> List[Document]:
-        raise NotImplementedError
+class SimpleDirectoryReader(ABC):
+    """SimpleDirectoryReader"""
 
-    def get_file_name(self, file: Path):
-        if not isinstance(file, Path):
-            return str(Path(file))
-        return str(file)
+    def __init__(
+        self,
+        input_dir: str | None = None,
+        input_files: list | None = None,
+        exclude: list | None = None,
+        exclude_hidden: bool = True,
+        errors: str = "ignore",
+        recursive: bool = True,
+        encoding: str = "utf-8",
+        filename_as_id: bool = False,
+        required_exts: list[str] | None = None,
+        raise_on_error: bool = False,
+    ) -> None:
 
-    def get_file_content(self, file: Path, text_mode: bool=False):
+        if not input_dir and not input_files:
+            raise ValueError("Must provide either `input_dir` or `input_files`.")
 
-        try:
+        self.fs = get_default_fs()
 
-            filename = str(file)
+        self.exclude = exclude
+        self.exclude_hidden = exclude_hidden
+        self.errors = errors
+        self.recursive = recursive
+        self.encoding = encoding
+        self.filename_as_id = filename_as_id
+        self.required_exts = required_exts
+        self.raise_on_error = raise_on_error
 
-            if filename.startswith("s3://"):
-                bucket, key = aws_s3_uri_to_bucket_key(file)
-                if text_mode:
-                    return aws_s3_read_text_file(bucket, key)
-                return aws_s3_read_file(bucket, key)
+        if input_files:
+            self.input_files = []
+            for path in input_files:
+                if not self.fs.isfile(path):
+                    raise ValueError(f"File {path} does not exist.")
+                input_file = Path(path)
+                self.input_files.append(input_file)
 
-            elif filename.startswith("http://") or filename.startswith("https://"):
-                response = requests.get(str(file))
-                if text_mode:
-                    return response.text
-                return io.BytesIO(response.content)
-            
+        elif input_dir:
+            if not self.fs.isdir(input_dir):
+                raise ValueError(f"Directory {input_dir} does not exist.")
+            self.input_dir = Path(input_dir)
+            self.exclude = exclude
+            self.input_files = self._add_files(self.input_dir)
+
+
+    def _add_files(self, input_dir: Path | PurePosixPath) -> list[Path | PurePosixPath]:
+
+        all_files = []
+
+        if self.recursive:
+            list_files = input_dir.rglob("*")
+        else:
+            list_files = input_dir.glob("*")
+        
+        # only keep required_exts
+        for file in list_files:
+            if self.required_exts:
+                if file.suffix.lower() in self.required_exts:
+                    all_files.append(file)
             else:
-                if not isinstance(file, Path):
-                    file = Path(file)
-                if not file.exists():
-                    raise FileNotFoundError(f"Could not find file: {file}")
-                if text_mode:
-                    return file.read_text("utf-8")
-                return io.BytesIO(file.read_bytes())
+                all_files.append(file)
+
+        return list(set(all_files)) # remove duplicates
+
+    
+    def load_data(self, show_progress: bool = False) -> list[Document]:
+
+        documents = []
+
+        files_to_process = self.input_files
+
+        if show_progress:
+            files_to_process = tqdm(self.input_files, desc="Loading files", unit="file")
+
+        for input_file in files_to_process:
+            if SimpleDirectoryReader.is_hidden(input_file):
+                continue
+            documents.extend(
+                SimpleDirectoryReader.load_file(
+                    input_file=input_file,
+                    filename_as_id=self.filename_as_id,
+                    encoding=self.encoding,
+                    errors=self.errors,
+                    raise_on_error=self.raise_on_error,
+                )
+            )
+        return documents
+
+    @staticmethod
+    def is_hidden(path: Path | PurePosixPath) -> bool:
+        return any(
+            part.startswith(".") and part not in [".", ".."] for part in path.parts
+        )
+    
+    @staticmethod
+    def load_file(
+        input_file: Path | PurePosixPath,
+        filename_as_id: bool = False,
+        encoding: str = "utf-8",
+        errors: str = "ignore",
+        raise_on_error: bool = False,
+    ) -> list[Document]:
         
-        except Exception as e:
-            logger.error(f"Error reading file: {e}")
+        documents = []
+
+        file_suffix = input_file.suffix.lower()
+        if not file_suffix:
+            return []
         
-        return None
+        # supported formats
+        supported_suffix = list(default_file_reader_cls.keys())
+        if file_suffix in supported_suffix:
+            try:
+                reader = default_file_reader_cls[file_suffix]()
+                documents = reader.load_data(file=input_file)
+            except Exception as e:
+                if raise_on_error:
+                    raise Exception("Error loading file") from e
+                print(f"Failed to load file {input_file} with error: {e}. Skipping...", flush=True)
+                return []
+        
+        # other formats
+        else:
+            fs = get_default_fs()
+            with fs.open(input_file, errors=errors, encoding=encoding) as f:
+                content = cast(bytes, f.read()).decode(encoding, errors=errors)
+
+            doc = Document(content=content, name=str(input_file))  # type: ignore
+
+            if filename_as_id:
+                doc.id = str(input_file)
+
+            documents.append(doc)
+
+        return documents

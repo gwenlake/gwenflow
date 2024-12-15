@@ -1,38 +1,32 @@
 
 import json
+from abc import ABC
 from typing import List
-from pathlib import Path
 
-from gwenflow.types import Document
-from gwenflow.readers.base import Reader
-from gwenflow.utils import logger
+from gwenflow.documents import Document
 
 
-class JSONReader(Reader):
+class JSONReader(ABC):
 
-    def read(self, file: Path) -> List[Document]:
+    def load_data(self, file: str) -> List[Document]:
 
-        try:
+        documents = []
 
-            filename = self.get_file_name(file)
-            content  = self.get_file_content(file, text_mode=True)
+        with open(file, encoding="utf-8") as f:
 
-            json_content = json.loads(content)
+            metadata = json.load(f)
 
-            if isinstance(json_content, dict):
-                json_content = [json_content]
+            if "content" not in metadata:
+                raise ValueError(f"JSON file without content: { str(file) }.")
 
-            documents = [
+            content = metadata.pop("content")
+            metadata["filename"] = str(file)
+
+            documents.append(
                 Document(
-                    id=f"{filename}_{page_num}",
-                    content=json.dumps(page_content),
-                    metadata={"filename": filename, "page": page_num},
+                    content=content,
+                    metadata=metadata
                 )
-                for page_num, page_content in enumerate(json_content, start=1)
-            ]
-    
-        except Exception as e:
-            logger.error(f"Error reading file: {e}")
-            return []
+            )
 
         return documents
