@@ -92,7 +92,7 @@ class Qdrant(VectorStoreBase):
                 return
 
         self.client.create_collection(
-            collection=self.collection,
+            collection_name=self.collection,
             vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance),
         )
 
