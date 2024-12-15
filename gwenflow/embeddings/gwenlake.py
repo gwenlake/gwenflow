@@ -1,27 +1,26 @@
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from typing import Any, Dict, List, Optional, cast
 import os
+import re
 import requests
 
+from gwenflow.embeddings.base import Embeddings
 
-class GwenlakeEmbeddings(BaseModel):
+
+class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
 
-    model: str
     api_base: str = "https://api.gwenlake.com/v1/embeddings"
     api_key: Optional[SecretStr] = None
     
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-
-
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
         values["api_key"] = os.getenv("GWENLAKE_API_KEY")
         if "model" not in values:
             values["model"] = "e5-base-v2"
+        if values["model"] in ["e5-base-v2", "multilingual-e5-base"]:
+            values["dimensions"] = 768
         return values
 
     def _embed(self, input: List[str]) -> List[List[float]]:
@@ -75,8 +74,10 @@ class GwenlakeEmbeddings(BaseModel):
                 batch = texts[i:i_end]
                 batch_processed = []
                 for text in batch:
-                    text = text.strip().replace("\n", " ")
-                    if self.model == "e5-base-v2" and not text.startswith("passage: "):
+                    text = text.replace("\n", " ")
+                    text = re.sub(' +', ' ', text)
+                    text = text.strip()
+                    if self.model in ["e5-base-v2", "multilingual-e5-base"] and not text.startswith("passage: "):
                         text = "passage: " + text
                     batch_processed.append(text)
                 embeddings += self._embed(batch_processed)
@@ -94,7 +95,9 @@ class GwenlakeEmbeddings(BaseModel):
         Returns:
             Embeddings for the text.
         """
-        text = text.strip().replace("\n", " ")
-        if self.model == "e5-base-v2" and not text.startswith("query: "):
+        text = text.replace("\n", " ")
+        text = re.sub(' +', ' ', text)
+        text = text.strip()
+        if self.model in ["e5-base-v2", "multilingual-e5-base"] and not text.startswith("query: "):
             text = "query: " + text
         return self._embed([text])[0]

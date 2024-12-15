@@ -8,6 +8,7 @@ except importlib.metadata.PackageNotFoundError:
 
 
 from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
+from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.agents import Agent
 from gwenflow.tasks import Task
 from gwenflow.tools import Tool
@@ -19,6 +20,7 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatOllama",
+    "SimpleDirectoryReader",
     "Agent",
     "Task",
     "Tool",

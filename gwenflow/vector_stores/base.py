@@ -1,17 +1,9 @@
 from abc import ABC, abstractmethod
 
+from gwenflow.documents import Document
+
 
 class VectorStoreBase(ABC):
-
-    @abstractmethod
-    def create_collection(self, name, vector_size, distance):
-        """Create a new collection."""
-        pass
-
-    @abstractmethod
-    def delete_collection(self, name):
-        """Delete a collection."""
-        pass
 
     @abstractmethod
     def get_collections(self):
@@ -19,31 +11,41 @@ class VectorStoreBase(ABC):
         pass
 
     @abstractmethod
-    def collection_info(self, name):
-        """Get information about a collection."""
+    def create(self):
+        """Create collection."""
         pass
 
     @abstractmethod
-    def insert(self, name, vectors, payloads=None, ids=None):
-        """Insert vectors into a collection."""
+    def drop(self):
+        """Delete collection."""
         pass
 
     @abstractmethod
-    def search(self, name, query, limit=5, filters=None):
+    def count(self) -> int:
+        """Count points in collection."""
+        pass
+
+    @abstractmethod
+    def info(self):
+        """Get information about collection."""
+        pass
+
+    @abstractmethod
+    def insert(self, documents: list[Document]):
+        """Insert documents into collection."""
+        pass
+
+    @abstractmethod
+    def search(self, query, limit=5, filters=None) -> list[Document]:
         """Search for similar vectors."""
         pass
 
     @abstractmethod
-    def delete(self, name, vector_id):
+    def delete(self, id):
         """Delete a vector by ID."""
         pass
 
     @abstractmethod
-    def update(self, name, vector_id, vector=None, payload=None):
-        """Update a vector and its payload."""
-        pass
-
-    @abstractmethod
-    def get(self, name, vector_id):
+    def get(self, id):
         """Retrieve a vector by ID."""
         pass
