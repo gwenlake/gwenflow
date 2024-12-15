@@ -1,5 +1,6 @@
 import logging
 import hashlib
+from typing import List, Optional, Dict, Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -15,6 +16,7 @@ from qdrant_client.models import (
 
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.reranker import Reranker
 from gwenflow.documents import Document
 
 
@@ -34,6 +36,7 @@ class Qdrant(VectorStoreBase):
         path: str = None,
         url: str = None,
         api_key: str = None,
+        reranker: Optional[Reranker] = None,
     ):
         """
         Initialize the Qdrant vector store.
@@ -53,6 +56,9 @@ class Qdrant(VectorStoreBase):
 
         # Distance metric
         self.distance = distance
+
+        # reranker
+        self.reranker = reranker
 
         if client:
             self.client = client
@@ -205,6 +211,9 @@ class Qdrant(VectorStoreBase):
             doc.score = 1 - d.score
             documents.append(doc)
     
+        if self.reranker:
+            documents = self.reranker.rerank(query=query, documents=documents)
+
         return documents
 
     def delete(self, id: int):

@@ -3,13 +3,12 @@ from typing import Any, Dict, List, Optional, cast
 import os
 import requests
 
+from gwenflow.documents import Document
+from gwenflow.reranker.base import Reranker
 
-class GwenlakeRerank(BaseModel):
-    """Gwenlake reranking models."""
 
-    model: str
-    top_k: int
-    threshold: Optional[float] = None
+class GwenlakeReranker(Reranker):
+    """Gwenlake reranker."""
 
     api_base: str = "https://api.gwenlake.com/v1/rerank"
     api_key: Optional[SecretStr] = None
@@ -61,42 +60,47 @@ class GwenlakeRerank(BaseModel):
         
         return reranking
 
-    def rerank_documents(
-            self,
-            query: str,
-            texts: List[str],
-            parse_response: bool = True,
-        ) -> List[Any]:
-        """Call out to Gwenlake's embedding endpoint.
+    def rerank(self, query: str, documents: List[Document]) -> List[Document]:
 
-        Args:
-            texts: The list of texts to embed.
-
-        Returns:
-            List of embeddings, one for each text.
-        """
+        if not documents:
+            return []
+        
         batch_size = 100
         reranked_documents = []
         try:
-            for i in range(0, len(texts), batch_size):
-                i_end = min(len(texts), i+batch_size)
-                batch = texts[i:i_end]
+            for i in range(0, len(documents), batch_size):
+                i_end = min(len(documents), i+batch_size)
+                batch = documents[i:i_end]
                 batch_processed = []
-                for text in batch:
-                    batch_processed.append(text)
+                for document in batch:
+                    if document.chunk:
+                        batch_processed.append(document.chunk)
+                    else:
+                        batch_processed.append(document.content)
                 reranked_documents += self._rerank(query=query, input=batch_processed)
         except Exception as e:
             print(repr(e))
             return None
 
-        # filter if threshold
-        if self.threshold is not None:
-            reranked_documents = [doc for doc in reranked_documents if doc["relevance_score"] > self.threshold]
-
         if len(reranked_documents) > 0:
-            reranked_documents = sorted(reranked_documents, key=lambda d: d['relevance_score'], reverse=True)
-            if parse_response:
-                reranked_documents = [x["text"] for x in reranked_documents]
-            return reranked_documents[:self.top_k]
+
+            compressed_documents = documents.copy()
+
+            for i, _ in enumerate(compressed_documents):
+                compressed_documents[i].score = reranked_documents[i]["relevance_score"]
+
+            # Order by relevance score
+            compressed_documents.sort(
+                key=lambda x: x.score if x.score is not None else float("-inf"),
+                reverse=True,
+            )
+
+            if self.top_k is not None:
+                compressed_documents = compressed_documents[:self.top_k]
+
+            if self.threshold is not None:
+                compressed_documents = [d for d in compressed_documents if d.score > self.threshold]
+
+            return compressed_documents
 
         return []
