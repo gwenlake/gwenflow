@@ -6,6 +6,15 @@ import requests
 
 from gwenflow.embeddings.base import Embeddings
 
+EMBEDDING_DIMS = {
+    "e5-base-v2": 768,
+    "e5-large-v2": 1024,
+    "multilingual-e5-base": 768,
+    "multilingual-e5-large": 1024,
+}
+
+EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
+
 
 class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
@@ -19,8 +28,7 @@ class GwenlakeEmbeddings(Embeddings):
         values["api_key"] = os.getenv("GWENLAKE_API_KEY")
         if "model" not in values:
             values["model"] = "e5-base-v2"
-        if values["model"] in ["e5-base-v2", "multilingual-e5-base"]:
-            values["dimensions"] = 768
+        values["dimensions"] = EMBEDDING_DIMS[ values["model"] ]
         return values
 
     def _embed(self, input: List[str]) -> List[List[float]]:
@@ -77,7 +85,7 @@ class GwenlakeEmbeddings(Embeddings):
                     text = text.replace("\n", " ")
                     text = re.sub(' +', ' ', text)
                     text = text.strip()
-                    if self.model in ["e5-base-v2", "multilingual-e5-base"] and not text.startswith("passage: "):
+                    if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("passage: "):
                         text = "passage: " + text
                     batch_processed.append(text)
                 embeddings += self._embed(batch_processed)
@@ -98,6 +106,6 @@ class GwenlakeEmbeddings(Embeddings):
         text = text.replace("\n", " ")
         text = re.sub(' +', ' ', text)
         text = text.strip()
-        if self.model in ["e5-base-v2", "multilingual-e5-base"] and not text.startswith("query: "):
+        if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("query: "):
             text = "query: " + text
         return self._embed([text])[0]
