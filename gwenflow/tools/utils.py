@@ -1,6 +1,7 @@
 import inspect
+from pydantic import Field
 
-def function_to_json(func) -> dict:
+def function_to_json(func, name: str = None, description: str = None) -> dict:
     """
     Converts a Python function into a JSON-serializable dictionary
     that describes the function's signature, including its name,
@@ -37,7 +38,14 @@ def function_to_json(func) -> dict:
             raise KeyError(
                 f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
             )
-        parameters[param.name] = {"type": param_type}
+
+        if hasattr(param.default, "description"):
+            parameters[param.name] = {
+                "description": param.default.description,
+                "type": param_type,
+            }
+        else:
+            parameters[param.name] = {"type": param_type}
 
     required = [
         param.name
@@ -48,8 +56,8 @@ def function_to_json(func) -> dict:
     return {
         "type": "function",
         "function": {
-            "name": func.__name__,
-            "description": func.__doc__ or "",
+            "name": name or func.__name__,
+            "description": description or func.__doc__ or "",
             "parameters": {
                 "type": "object",
                 "properties": parameters,

@@ -16,10 +16,10 @@ class JSONReader(ABC):
 
             metadata = json.load(f)
 
-            if "content" not in metadata:
-                raise ValueError(f"JSON file without content: { str(file) }.")
-
-            content = metadata.pop("content")
+            content = None
+            if "content" in metadata:
+                content = metadata.pop("content")
+            
             metadata["filename"] = str(file)
 
             documents.append(
