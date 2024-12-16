@@ -8,7 +8,7 @@ from datetime import datetime
 
 from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.run import RunResponse
 from gwenflow.agents.utils import merge_chunk
@@ -42,7 +42,7 @@ class Agent(BaseModel):
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
-    tools: List[Tool] = []
+    tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Context and Memory
@@ -161,10 +161,10 @@ class Agent(BaseModel):
         return { "role": "user", "content": prompt }
 
     
-    def get_tools_openai_schema(self, tools: List[Tool]):
+    def get_tools_openai_schema(self, tools: List[BaseTool]):
         return [tool.openai_schema for tool in tools]
 
-    def get_tools_map(self, tools: List[Tool]):
+    def get_tools_map(self, tools: List[BaseTool]):
         return {tool.name: tool for tool in tools}
 
     def handle_function_result(self, result) -> Result:
@@ -188,7 +188,7 @@ class Agent(BaseModel):
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-        tools: List[Tool],
+        tools: List[BaseTool],
     ) -> RunResponse:
         
         tool_map = self.get_tools_map(self.tools)

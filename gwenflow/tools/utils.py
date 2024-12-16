@@ -1,4 +1,5 @@
 import inspect
+from pydantic import Field
 
 def function_to_json(func, name: str = None, description: str = None) -> dict:
     """
