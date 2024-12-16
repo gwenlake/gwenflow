@@ -9,7 +9,6 @@ class Document(BaseModel):
 
     id: Optional[str] = Field(None, validate_default=True)
     content: str
-    chunk: Optional[str] = None
     metadata: Dict[str, Any] = {}
     score: Optional[float] = None
 

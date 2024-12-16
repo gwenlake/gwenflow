@@ -130,15 +130,10 @@ class Qdrant(VectorStoreBase):
 
         points = []
         for document in documents:
-            text_for_id = document.id
-            if not text_for_id:
-                text_for_id = document.content
-            _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
-            chunk = document.chunk or document.content
-            _embeddings = self.embeddings.embed_documents([chunk])[0]
+            _embeddings = self.embeddings.embed_documents([document.content])[0]
+            _id = hashlib.md5(document.id.encode(), usedforsecurity=False).hexdigest()
             _payload = document.metadata
             _payload["content"] = document.content
-            _payload["chunk"] = document.chunk
             points.append(
                 PointStruct(
                     id=_id,
@@ -200,13 +195,7 @@ class Qdrant(VectorStoreBase):
         for d in hits:
             if d.payload is None:
                 continue
-            if d.payload.get("content"):
-                content = d.payload.pop("content")
-            elif d.payload.get("chunk"):
-                content = d.payload.pop("chunk")
-            doc = Document(id=d.id, content=content)
-            if d.payload.get("name"):
-                doc.name = d.payload.pop("name")
+            doc = Document(id=d.id, content=d.payload.pop("content"))
             doc.metadata = d.payload
             doc.score = 1 - d.score
             documents.append(doc)
