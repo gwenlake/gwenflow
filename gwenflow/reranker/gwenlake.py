@@ -73,10 +73,7 @@ class GwenlakeReranker(Reranker):
                 batch = documents[i:i_end]
                 batch_processed = []
                 for document in batch:
-                    if document.chunk:
-                        batch_processed.append(document.chunk)
-                    else:
-                        batch_processed.append(document.content)
+                    batch_processed.append(document.content)
                 reranked_documents += self._rerank(query=query, input=batch_processed)
         except Exception as e:
             print(repr(e))
