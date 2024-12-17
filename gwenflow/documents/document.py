@@ -8,7 +8,7 @@ class Document(BaseModel):
     """Base class for Documents"""
 
     id: Optional[str] = Field(None, validate_default=True)
-    content: Optional[str] = None
+    content: str
     metadata: Dict[str, Any] = {}
     score: Optional[float] = None
 

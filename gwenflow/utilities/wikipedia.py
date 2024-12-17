@@ -9,11 +9,10 @@ WIKIPEDIA_MAX_QUERY_LENGTH = 300
 
 class WikipediaWrapper(BaseModel):
 
-    wiki_client: Any
+    client: Any
     lang: str = "en"
     top_k_results: int = 5
     doc_content_chars_max: int = 4000
-
 
     @model_validator(mode="before")
     @classmethod
@@ -23,7 +22,7 @@ class WikipediaWrapper(BaseModel):
             import wikipedia
             lang = values.get("lang", "en")
             wikipedia.set_lang(lang)
-            values["wiki_client"] = wikipedia
+            values["client"] = wikipedia
         except ImportError:
             raise ImportError(
                 "Could not import wikipedia python package. "
@@ -31,23 +30,16 @@ class WikipediaWrapper(BaseModel):
             )
         return values
 
-    def run(self, query: str) -> str:
-        try:
-            import wikipedia  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "The `wikipedia` package is not installed. " "Please install it via `pip install wikipedia`."
-            )
-
-        page_titles = self.wiki_client.search(
+    def summary(self, query: str) -> str:
+        page_titles = self.client.search(
             query[:WIKIPEDIA_MAX_QUERY_LENGTH], results=self.top_k_results
         )
 
         summaries = []
         for page_title in page_titles[: self.top_k_results]:
             try:
-                wiki_page = self.wiki_client.page(title=page_title, auto_suggest=False)
-                summary = f"Page: {page_title}\nSummary: {wiki_page.summary}"
+                page = self.client.page(title=page_title, auto_suggest=False)
+                summary = f"Page: {page_title}\nSummary: {page.summary}"
                 summaries.append(summary)
             except Exception as e:
                 pass
