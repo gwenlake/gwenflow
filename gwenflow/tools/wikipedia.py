@@ -15,4 +15,4 @@ class Wikipedia(BaseTool):
     )
 
     def _run(self, query: str = Field(description="query to look up on wikipedia")):
-        return WikipediaWrapper().run(query)
+        return WikipediaWrapper().summary(query)
