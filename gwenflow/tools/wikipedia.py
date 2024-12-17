@@ -1,9 +1,7 @@
-import json
 from pydantic import Field
 
-from gwenflow.documents import Document
 from gwenflow.tools import BaseTool
-from gwenflow.utils import logger
+from gwenflow.utilities.wikipedia import WikipediaWrapper
 
 
 class Wikipedia(BaseTool):
@@ -17,12 +15,4 @@ class Wikipedia(BaseTool):
     )
 
     def _run(self, query: str = Field(description="query to look up on wikipedia")):
-        try:
-            import wikipedia  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "The `wikipedia` package is not installed. " "Please install it via `pip install wikipedia`."
-            )
-
-        logger.info(f"Searching wikipedia for: {query}")
-        return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        return WikipediaWrapper().run(query)
