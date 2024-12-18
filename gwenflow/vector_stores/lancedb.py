@@ -18,7 +18,7 @@ except ImportError:
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.reranker import Reranker
-from gwenflow.types import Document
+from gwenflow.documents import Document
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class LanceDB(VectorStoreBase):
         self,
         uri: lancedb.URI,
         collection: str = "default",
-        client: Optional[lancedb.DBConnection] = None,
+        connection: Optional[lancedb.DBConnection] = None,
         embeddings: Embeddings = GwenlakeEmbeddings(),
         reranker: Optional[Reranker] = None,
         api_key: str = None,
@@ -47,7 +47,7 @@ class LanceDB(VectorStoreBase):
         self.uri: lancedb.URI = uri
         self.table: lancedb.db.LanceTable = None
 
-        self.client: lancedb.DBConnection = client or lancedb.connect(uri=self.uri, api_key=api_key)
+        self.client: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.create()
 
     def create(self):
@@ -60,7 +60,6 @@ class LanceDB(VectorStoreBase):
 
             logger.debug(f"Creating collection: {self.collection}")
             self.table = self.client.create_table(self.collection, schema=schema, mode="overwrite", exist_ok=True)
-            # self.table.create_index(column='vector', index_type='IVF_PQ', metric="cosine", num_partitions=256, num_sub_vectors=32)
 
         elif self.table is None:
             self.table = self.client.open_table(self.collection)
@@ -113,7 +112,9 @@ class LanceDB(VectorStoreBase):
         results = self.table.search(
             query=query_embedding,
             vector_column_name="vector",
-        ).metric("cosine").limit(limit).to_list()
+        ).limit(limit)
+
+        results = results.to_list()
 
         documents = []
         for item in results:
@@ -135,8 +136,8 @@ class LanceDB(VectorStoreBase):
 
     def drop(self):
         if self.exists():
-            logger.debug(f"Deleting collection: {self.collection}")
-            self.client.drop_table(self.collection)
+            logger.debug(f"Deleting collection: {self.table_name}")
+            self.client.drop_table(self.table_name)
 
     def count(self) -> int:
         if self.exists():
