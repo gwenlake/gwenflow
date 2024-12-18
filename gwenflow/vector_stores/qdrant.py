@@ -206,11 +206,14 @@ class Qdrant(VectorStoreBase):
             elif "chunk" in d.payload:
                 content = d.payload.pop("chunk")
 
-            doc = Document(id=d.id, content=content)
-
-            doc.metadata = d.payload
-            doc.score = 1 - d.score
-            documents.append(doc)
+            documents.append(
+                Document(
+                    id=d.id,
+                    content=content,
+                    metadata=d.payload,
+                    score=1-d.score,
+                )
+            )
     
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
