@@ -30,7 +30,7 @@ class LanceDB(VectorStoreBase):
         self,
         uri: lancedb.URI,
         collection: str = "default",
-        connection: Optional[lancedb.DBConnection] = None,
+        client: Optional[lancedb.DBConnection] = None,
         embeddings: Embeddings = GwenlakeEmbeddings(),
         reranker: Optional[Reranker] = None,
         api_key: str = None,
@@ -47,7 +47,7 @@ class LanceDB(VectorStoreBase):
         self.uri: lancedb.URI = uri
         self.table: lancedb.db.LanceTable = None
 
-        self.client: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
+        self.client: lancedb.DBConnection = client or lancedb.connect(uri=self.uri, api_key=api_key)
         self.create()
 
     def create(self):
@@ -112,9 +112,7 @@ class LanceDB(VectorStoreBase):
         results = self.table.search(
             query=query_embedding,
             vector_column_name="vector",
-        ).limit(limit)
-
-        results = results.to_list()
+        ).metric("cosine").limit(limit).to_list()
 
         documents = []
         for item in results:
@@ -136,8 +134,8 @@ class LanceDB(VectorStoreBase):
 
     def drop(self):
         if self.exists():
-            logger.debug(f"Deleting collection: {self.table_name}")
-            self.client.drop_table(self.table_name)
+            logger.debug(f"Deleting collection: {self.collection}")
+            self.client.drop_table(self.collection)
 
     def count(self) -> int:
         if self.exists():
