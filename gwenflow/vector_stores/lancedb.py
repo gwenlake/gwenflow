@@ -60,6 +60,7 @@ class LanceDB(VectorStoreBase):
 
             logger.debug(f"Creating collection: {self.collection}")
             self.table = self.client.create_table(self.collection, schema=schema, mode="overwrite", exist_ok=True)
+            # self.table.create_index(column='vector', index_type='IVF_PQ', metric="cosine", num_partitions=256, num_sub_vectors=32)
 
         elif self.table is None:
             self.table = self.client.open_table(self.collection)
