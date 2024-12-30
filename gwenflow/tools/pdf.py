@@ -7,10 +7,10 @@ from gwenflow.readers.pdf import PDFReader
 
 class PDFTool(BaseTool):
 
-    name: str = "PDFTool"
+    name: str = "pdfreader"
     description: str = "This function reads a PDF and returns its content."
 
-    def _run(self, file: str = Field(description="The path of the PDf file to read.")) -> str:
+    def _run(self, file: str = Field(description="The path of the PDf file to read.")):
         reader = PDFReader()
         documents = reader.read(file)
         return json.dumps([doc.to_dict() for doc in documents])
