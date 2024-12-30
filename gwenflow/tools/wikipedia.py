@@ -4,7 +4,7 @@ from gwenflow.tools import BaseTool
 from gwenflow.utilities.wikipedia import WikipediaWrapper
 
 
-class Wikipedia(BaseTool):
+class WikipediaTool(BaseTool):
 
     name: str = "wikipedia"
     description: str = (

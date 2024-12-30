@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from gwenflow.documents import Document
+from gwenflow.types import Document
 
 
 class VectorStoreBase(ABC):
