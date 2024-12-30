@@ -1,43 +1,41 @@
 
-import re
-import fitz
-from abc import ABC
+import io
+import requests
 from typing import List
+from pathlib import Path
 
-from gwenflow.documents import Document
-from gwenflow.utils.aws import aws_s3_read_file, aws_s3_uri_to_bucket_key
+from gwenflow.types import Document
+from gwenflow.readers.base import Reader
+from gwenflow.utils import logger
 
 
-class PDFReader(ABC):
+class PDFReader(Reader):
 
-    def load_data(self, file: str) -> List[Document]:
-
-        documents = []
-
-        aws = False
-        if file.startswith("s3://"):
-            aws = True
+    def read(self, file: Path) -> List[Document]:
 
         try:
-            if aws:
-                bucket, key = aws_s3_uri_to_bucket_key(file)
-                data = aws_s3_read_file(bucket, key)
-                doc = fitz.open(stream=data, filetype="pdf")
-            else:
-                doc = fitz.open(file, filetype="pdf")
+            import pymupdf
+        except ImportError:
+            raise ImportError("PyMuPDF is not installed. Please install it with `pip install PyMuPDF`.")
+
+        try:
+            filename = self.get_file_name(file)
+            content  = self.get_file_content(file)
+
+            documents = []
+            for page in pymupdf.open(stream=content, filetype="pdf"):
+                text = page.get_text()
+                safe_text = text.encode('utf-8', errors='ignore').decode('utf-8')
+                tables = []
+                for table in page.find_tables():
+                    tables.append(table.extract())
+                filename = str(file)
+                metadata = dict(filename=filename, page=page.number+1, tables=tables, images=[])
+                doc = Document(id=f"{filename}_{page.number+1}", content=safe_text, metadata=metadata)
+                documents.append(doc)
 
         except Exception as e:
-            print(repr(e))
+            logger.error(f"Error reading file: {e}")
             return []
-
-        for page in doc:
-            text = page.get_text()
-            safe_text = text.encode('utf-8', errors='ignore').decode('utf-8')
-            tables = []
-            for table in page.find_tables():
-                tables.append(table.extract())
-            metadata = dict(filename=str(file), page=page.number+1, tables=tables, images=[])
-            doc = Document(content=safe_text, metadata=metadata)
-            documents.append(doc)
 
         return documents

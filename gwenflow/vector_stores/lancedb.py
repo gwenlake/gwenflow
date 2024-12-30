@@ -18,7 +18,7 @@ except ImportError:
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.reranker import Reranker
-from gwenflow.documents import Document
+from gwenflow.types import Document
 
 
 logger = logging.getLogger(__name__)

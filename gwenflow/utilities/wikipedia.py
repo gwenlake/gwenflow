@@ -47,4 +47,4 @@ class WikipediaWrapper(BaseModel):
         if not summaries:
             return "No good Wikipedia Search Result was found"
 
-        return "\n\n".join(summaries)[: self.doc_content_chars_max]
+        return "\n\n".join(summaries)[:self.doc_content_chars_max]

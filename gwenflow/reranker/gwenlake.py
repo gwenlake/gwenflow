@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, cast
 import os
 import requests
 
-from gwenflow.documents import Document
+from gwenflow.types import Document
 from gwenflow.reranker.base import Reranker
 
 

@@ -7,10 +7,10 @@ from gwenflow.readers.website import WebsiteReader
 
 class WebsiteTool(BaseTool):
 
-    name: str = "WebsiteTool"
-    description: str = "Fetches and returns the content of a given URL."
+    name: str = "website"
+    description: str = "This function reads a url and returns the content."
 
-    def _run(self, url: str = Field(description="The url of the website to read.")) -> str:
+    def _run(self, url: str = Field(description="The url of the website to read.")):
         reader = WebsiteReader(max_depth=1)
         documents = reader.read(url)
-        return json.dumps([doc.to_dict() for doc in documents])
+        return json.dumps([doc.model_dump() for doc in documents])
