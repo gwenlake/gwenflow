@@ -8,9 +8,9 @@ from gwenflow.readers.website import WebsiteReader
 class WebsiteTool(BaseTool):
 
     name: str = "website"
-    description: str = "This function reads a url and returns the content."
+    description: str = "Fetches and returns the content of a given URL."
 
-    def _run(self, url: str = Field(description="The url of the website to read.")):
+    def _run(self, url: str = Field(description="The url of the website to read.")) -> str:
         reader = WebsiteReader(max_depth=1)
         documents = reader.read(url)
         return json.dumps([doc.to_dict() for doc in documents])

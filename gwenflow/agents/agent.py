@@ -38,6 +38,7 @@ class Agent(BaseModel):
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
+    scrape_links: bool = True
     response_model: Optional[str] = None
  
     # --- Agent Model and Tools
@@ -107,12 +108,15 @@ class Agent(BaseModel):
         if self.markdown and self.response_model is None:
             instructions.append("Use markdown to format your answers.")
 
+        if self.scrape_links:
+            instructions.append("If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.")
+
         if self.response_model:
              instructions.append("Use JSON to format your answers.")
 
         if self.context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
-            
+
         if len(instructions) > 0:
             system_message_lines.append("# Instructions")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
