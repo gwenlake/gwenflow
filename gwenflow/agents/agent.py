@@ -47,6 +47,7 @@ class Agent(BaseModel):
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Context and Memory
+    context_vars: Optional[List[str]] = None
     context: Optional[Any] = None
     memory: Optional[ChatMemoryBuffer] = None
     keep_history: bool = False

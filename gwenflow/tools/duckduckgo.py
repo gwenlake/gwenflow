@@ -27,7 +27,7 @@ class DuckDuckGoBaseTool(BaseTool):
 
 class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
 
-    name: str = "duckduckgo-search"
+    name: str = "DuckDuckGoSearchTool"
     description: str = "Search for a query in DuckDuckGo and returns the content."
 
     def _run(self, query: str = Field(description="The search query.")):
@@ -46,7 +46,7 @@ class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
 
 class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
 
-    name: str = "duckduckgo-news"
+    name: str = "DuckDuckGoNewsTool"
     description: str = "Search for a query in DuckDuckGo News and returns the content."
 
     def _run(self, query: str = Field(description="The search query.")) -> str:
