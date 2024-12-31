@@ -34,7 +34,7 @@ class WikipediaBaseTool(BaseTool):
 
 class WikipediaTool(WikipediaBaseTool):
 
-    name: str = "wikipedia"
+    name: str = "WikipediaTool"
     description: str = (
         "A wrapper around Wikipedia. "
         "Useful for when you need to answer general questions about "
