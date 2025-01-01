@@ -1,12 +1,14 @@
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
+
 import yaml
+import time
 
 from gwenflow.agents import Agent
+from gwenflow.agents.run import RunResponse
 from gwenflow.tools import Tool
 from gwenflow.utils import logger
-
 
 
 class Flow(BaseModel):
@@ -33,13 +35,12 @@ class Flow(BaseModel):
                                 if t.name in _agent_tools:
                                     _tools.append(t)
 
-                        context_vars = None
+                        context_vars = []
                         if _values.get("context"):
                             context_vars = _values.get("context")
 
                         agent = Agent(
                             name=name,
-                            role=_values.get("role"),
                             task=_values.get("task"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
@@ -55,38 +56,36 @@ class Flow(BaseModel):
         for agent in self.agents:
             print("---")
             print(f"Agent  : {agent.name}")
-            print(f"Role   : {agent.role}")
+            if agent.task:
+                print(f"Task   : {agent.task}")
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
             if agent.tools:
                 available_tools = [ tool.name for tool in agent.tools ]
                 print(f"Tools  :", ",".join(available_tools))
 
-    def run(self, message: str) -> str:
 
-        context_vars = {}
+    def run(self, query: str) -> str:
 
-        first_agent = True
+        outputs = {}
 
-        for agent in self.agents:
+        while len(outputs) < len(self.agents):
 
-            # if agent.context_vars:
-            #     for context_var in agent.context_vars:
-            #         if 
-            
-            # else:
+            for agent in self.agents:
 
-            if first_agent:
-                response = agent.run(message, context=context)
-                first_agent = False
+                # check if already run
+                if agent.name in outputs.keys():
+                    continue
 
-            else:
-                response = agent.run(context=context)
+                # check agent dependancies
+                if any(outputs.get(var) is None for var in agent.context_vars):
+                    continue
 
-            if response.content:
-                context = response.content
+                # prepare context and run
+                context = None
+                if agent.context_vars:
+                    context = { f"{var}": outputs[var].content for var in agent.context_vars }
+                outputs[agent.name] = agent.run(user_prompt=query, context=context)
 
-            logger.debug(f"{ context }")
-        
-        return context
+        return outputs
     
