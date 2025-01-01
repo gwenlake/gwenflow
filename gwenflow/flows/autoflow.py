@@ -5,7 +5,7 @@ import json
 
 from gwenflow.agents import Agent
 from gwenflow.flows import Flow
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.utils.json import parse_json_markdown
 from gwenflow.utils import logger
 
@@ -70,7 +70,7 @@ class AutoFlow(Flow):
 
     manager: List[Agent] = []
     llm: Any = None
-    tools: List[Tool] = []
+    tools: List[BaseTool] = []
 
     def run(self, query: str) -> str:
 
@@ -81,7 +81,6 @@ class AutoFlow(Flow):
         
         agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
         agents_json = parse_json_markdown(agents_json)
-        print(agents_json)
 
         for agent_json in agents_json:
 
