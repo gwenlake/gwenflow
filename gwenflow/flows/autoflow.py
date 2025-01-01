@@ -81,7 +81,6 @@ class AutoFlow(Flow):
         
         agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
         agents_json = parse_json_markdown(agents_json)
-        print(agents_json)
 
         for agent_json in agents_json:
 
