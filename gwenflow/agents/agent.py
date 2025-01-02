@@ -38,6 +38,7 @@ class Agent(BaseModel):
     add_datetime_to_instructions: bool = True
     markdown: bool = False
     scrape_links: bool = True
+
     response_model: Optional[str] = None
  
     # --- Agent Model and Tools
@@ -383,7 +384,9 @@ class Agent(BaseModel):
 
             if output_file:
                 with open(output_file, "a") as file:
+
                     name = self.name or self.id
+
                     file.write("\n")
                     file.write("---\n\n")
                     file.write(f"# Agent: { name }\n")
