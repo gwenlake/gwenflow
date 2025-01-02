@@ -1,6 +1,6 @@
 
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator, field_validator, Field
 
 import yaml
 import time
@@ -11,12 +11,28 @@ from gwenflow.tools import Tool
 from gwenflow.utils import logger
 
 
+MAX_TRIALS=5
+
+
 class Flow(BaseModel):
 
     agents: List[Agent] = []
+    manager: Optional[Agent] = Field(None, validate_default=True)
     flow_type: str = "sequence"
 
-
+    @field_validator("manager", mode="before")
+    def set_manager(cls, v: Optional[str]) -> str:
+        manager = Agent(
+            name="Team Manager",
+            task="Manage the team to complete the task in the best way possible.",
+            instructions= [
+                "You are the leader of a team of AI Agents.",
+                "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
+                "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
+            ]
+        )
+        return manager
+    
     @classmethod
     def from_yaml(cls, file: str, tools: List[Tool]) -> "Flow":
         if cls == Flow:
@@ -81,11 +97,36 @@ class Flow(BaseModel):
                 if any(outputs.get(var) is None for var in agent.context_vars):
                     continue
 
-                # prepare context and run
-                context = None
-                if agent.context_vars:
-                    context = { f"{var}": outputs[var].content for var in agent.context_vars }
-                outputs[agent.name] = agent.run(user_prompt=query, context=context)
+                # validation by the manager
+                trials = 1
+                last_response = None
+                while trials < MAX_TRIALS:
+
+                    # prepare context and run
+                    context = None
+                    if agent.context_vars:
+                        context = { f"{var}": outputs[var].content for var in agent.context_vars }
+                    
+                    user_prompt = None
+                    if context is None:
+                        user_prompt = query # always keep query if no context
+
+                    if last_response:
+                        user_prompt = f"Query: {query}\n\nYour previous resonse this query was the following: {last_response}\n\n. Please, improve substantially the quality of this answer."
+
+                    agent_response = agent.run(user_prompt=user_prompt, context=context)
+
+                    manager_prompt = f"The task of the agent is: { agent.task }\n\nIf you validate the agent response simply answer 'Yes'."
+                    manager_response = self.manager.run(manager_prompt, context=agent_response.content)
+                    if manager_response.content == "Yes":
+                        outputs[agent.name] = agent_response
+                        break
+                    
+                    last_response = agent_response.content
+                    logger.debug(f"{agent.name}: {last_response}")
+
+                    trials += 1
+                
 
         return outputs
     
