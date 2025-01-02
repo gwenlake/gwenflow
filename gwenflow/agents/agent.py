@@ -8,7 +8,7 @@ from datetime import datetime
 
 from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.run import RunResponse
 from gwenflow.agents.utils import merge_chunk
@@ -29,8 +29,7 @@ class Agent(BaseModel):
 
     # --- Agent Settings
     id: Optional[str] = Field(None, validate_default=True)
-    name: Optional[str] = None
-    role: Optional[str] = None
+    name: str
 
     # --- Settings for system message
     description: Optional[str] = "You are a helpful AI assistant."
@@ -38,15 +37,17 @@ class Agent(BaseModel):
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
+    scrape_links: bool = True
+
     response_model: Optional[str] = None
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
-    tools: List[Tool] = []
+    tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Context and Memory
-    context: Optional[Any] = None
+    context_vars: Optional[List[str]] = []
     memory: Optional[ChatMemoryBuffer] = None
     keep_history: bool = False
     metadata: Optional[Dict[str, Any]] = None
@@ -74,14 +75,12 @@ class Agent(BaseModel):
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
-
         if self.memory is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
-
         return self
     
-    def get_system_message(self):
+    def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
         system_message_lines = []
@@ -95,9 +94,6 @@ class Agent(BaseModel):
         if self.task is not None:
             system_message_lines.append(f"Your task is: {self.task}\n")
 
-        if self.role is not None:
-            system_message_lines.append(f"Your role is: {self.role}\n")
-
         # instructions
         instructions = self.instructions
         
@@ -107,12 +103,15 @@ class Agent(BaseModel):
         if self.markdown and self.response_model is None:
             instructions.append("Use markdown to format your answers.")
 
+        if self.scrape_links:
+            instructions.append("If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.")
+
         if self.response_model:
              instructions.append("Use JSON to format your answers.")
 
-        if self.context is not None:
+        if context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
-            
+
         if len(instructions) > 0:
             system_message_lines.append("# Instructions")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
@@ -131,23 +130,23 @@ class Agent(BaseModel):
         
         return None
 
-    def get_user_message(self, user_prompt: Optional[str] = None):
+    def get_user_message(self, user_prompt: Optional[str] = None, context: Optional[Any] = None):
         """Return the user message for the Agent."""
 
         prompt = ""
 
-        if self.context:
+        if context is not None:
 
             prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
             prompt += "<context>\n"
 
-            if isinstance(self.context, str):
-                prompt += self.context + "\n"
+            if isinstance(context, str):
+                prompt += context + "\n"
 
-            elif isinstance(self.context, dict):
-                for key in self.context.keys():
+            elif isinstance(context, dict):
+                for key in context.keys():
                     prompt += f"<{key}>\n"
-                    prompt += self.context.get(key) + "\n"
+                    prompt += context.get(key) + "\n"
                     prompt += f"</{key}>\n\n"
 
             prompt += "</context>\n\n"
@@ -161,10 +160,10 @@ class Agent(BaseModel):
         return { "role": "user", "content": prompt }
 
     
-    def get_tools_openai_schema(self, tools: List[Tool]):
+    def get_tools_openai_schema(self, tools: List[BaseTool]):
         return [tool.openai_schema for tool in tools]
 
-    def get_tools_map(self, tools: List[Tool]):
+    def get_tools_map(self, tools: List[BaseTool]):
         return {tool.name: tool for tool in tools}
 
     def handle_function_result(self, result) -> Result:
@@ -174,7 +173,7 @@ class Agent(BaseModel):
 
             case Agent() as agent:
                 return Result(
-                    value=json.dumps({"assistant": self.role}),
+                    value=json.dumps({"assistant": self.name}),
                     agent=agent,
                 )
             case _:
@@ -188,7 +187,7 @@ class Agent(BaseModel):
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-        tools: List[Tool],
+        tools: List[BaseTool],
     ) -> RunResponse:
         
         tool_map = self.get_tools_map(self.tools)
@@ -263,12 +262,9 @@ class Agent(BaseModel):
         **kwargs: Any,
     ) ->  Iterator[RunResponse]:
 
-        # setup context
-        self.context = context
-
         # prepare messages
         messages_for_model = []
-        system_message = self.get_system_message()
+        system_message = self.get_system_message(context=context)
         if system_message:
             messages_for_model.append(system_message)
 
@@ -276,7 +272,7 @@ class Agent(BaseModel):
             if len(self.memory.get())>0:
                 messages_for_model.extend(self.memory.get())
 
-        user_message = self.get_user_message(user_prompt)
+        user_message = self.get_user_message(user_prompt, context=context)
         if user_message:
             messages_for_model.append(user_message)
             if self.memory and self.keep_history:
@@ -289,7 +285,7 @@ class Agent(BaseModel):
             if stream:
                 message = {
                     "content": "",
-                    "sender": self.role,
+                    "sender": self.name,
                     "role": "assistant",
                     "function_call": None,
                     "tool_calls": defaultdict(
@@ -307,7 +303,7 @@ class Agent(BaseModel):
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
                         if delta["role"] == "assistant":
-                            delta["sender"] = self.role
+                            delta["sender"] = self.name
                         if delta["content"]:
                             yield delta["content"]
                         delta.pop("role", None)
@@ -320,7 +316,7 @@ class Agent(BaseModel):
             else:
                 completion = self.invoke(messages=messages_for_model)
                 message = completion.choices[0].message
-                message.sender = self.role
+                message.sender = self.name
 
             # add messages to the current message stack
             message_dict = json.loads(message.model_dump_json())
@@ -359,7 +355,7 @@ class Agent(BaseModel):
     ) ->  Union[RunResponse, Iterator[RunResponse]]:
 
 
-        agent_id = self.name or self.role or self.id
+        agent_id = self.name or self.id
 
         logger.debug("")
         logger.debug("------------------------------------------")
@@ -388,7 +384,9 @@ class Agent(BaseModel):
 
             if output_file:
                 with open(output_file, "a") as file:
-                    name = self.name or self.role or self.id
+
+                    name = self.name or self.id
+
                     file.write("\n")
                     file.write("---\n\n")
                     file.write(f"# Agent: { name }\n")

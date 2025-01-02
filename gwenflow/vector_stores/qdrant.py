@@ -1,6 +1,6 @@
 import logging
-import os
-import shutil
+import hashlib
+from typing import List, Optional, Dict, Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -15,6 +15,9 @@ from qdrant_client.models import (
 )
 
 from gwenflow.vector_stores.base import VectorStoreBase
+from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.reranker import Reranker
+from gwenflow.types import Document
 
 
 logger = logging.getLogger(__name__)
@@ -24,30 +27,39 @@ class Qdrant(VectorStoreBase):
 
     def __init__(
         self,
-        collection_name: str,
-        embedding_model_dims: int,
+        collection: str,
+        embeddings: Embeddings = GwenlakeEmbeddings(),
+        distance: Distance = Distance.COSINE,
         client: QdrantClient = None,
         host: str = None,
         port: int = 6333,
         path: str = None,
         url: str = None,
         api_key: str = None,
-        on_disk: bool = False,
+        reranker: Optional[Reranker] = None,
     ):
         """
         Initialize the Qdrant vector store.
 
         Args:
-            collection_name (str): Name of the collection.
-            embedding_model_dims (int): Dimensions of the embedding model.
+            collection (str): Name of the collection.
             client (QdrantClient, optional): Existing Qdrant client instance. Defaults to None.
             host (str, optional): Host address for Qdrant server. Defaults to None.
             port (int, optional): Port for Qdrant server. Defaults to None.
             path (str, optional): Path for local Qdrant database. Defaults to None.
             url (str, optional): Full URL for Qdrant server. Defaults to None.
             api_key (str, optional): API key for Qdrant server. Defaults to None.
-            on_disk (bool, optional): Enables persistent storage. Defaults to False.
         """
+
+        # Embedder
+        self.embeddings = embeddings
+
+        # Distance metric
+        self.distance = distance
+
+        # reranker
+        self.reranker = reranker
+
         if client:
             self.client = client
         else:
@@ -61,55 +73,80 @@ class Qdrant(VectorStoreBase):
                 params["port"] = port
             if not params:
                 params["path"] = path
-                if not on_disk:
-                    if os.path.exists(path) and os.path.isdir(path):
-                        shutil.rmtree(path)
 
             self.client = QdrantClient(**params)
 
-        self.collection_name = collection_name
-        self.create_collection(embedding_model_dims, on_disk)
+        self.collection = collection
+        self.create()
 
-    def create_collection(self, vector_size: int, on_disk: bool, distance: Distance = Distance.COSINE):
+    def get_collections(self) -> list:
         """
-        Create a new collection.
+        List all collections.
 
-        Args:
-            vector_size (int): Size of the vectors to be stored.
-            on_disk (bool): Enables persistent storage.
-            distance (Distance, optional): Distance metric for vector similarity. Defaults to Distance.COSINE.
+        Returns:
+            list: List of collection names.
         """
+        return self.client.get_collections()
+
+    def create(self):
+        """Create collection."""
         # Skip creating collection if already exists
         response = self.get_collections()
         for collection in response.collections:
-            if collection.name == self.collection_name:
-                logging.debug(f"Collection {self.collection_name} already exists. Skipping creation.")
+            if collection.name == self.collection:
+                logging.debug(f"Collection {self.collection} already exists. Skipping creation.")
                 return
 
         self.client.create_collection(
-            collection_name=self.collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=distance, on_disk=on_disk),
+            collection_name=self.collection,
+            vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance),
         )
 
-    def insert(self, vectors: list, payloads: list = None, ids: list = None):
+    def drop(self):
+        """Drop collection."""
+        self.client.delete_collection(collection_name=self.collection)
+
+    def count(self) -> int:
+        result = self.client.count(collection_name=self.collection, exact=True)
+        return result.count
+
+    def info(self) -> dict:
         """
-        Insert vectors into a collection.
+        Get information about the collection.
+
+        Returns:
+            dict: Collection information.
+        """
+        return self.client.get_collection(collection_name=self.collection)
+
+    def insert(self, documents: list[Document]):
+        """
+        Insert documents into a collection.
 
         Args:
-            vectors (list): List of vectors to insert.
-            payloads (list, optional): List of payloads corresponding to vectors. Defaults to None.
-            ids (list, optional): List of IDs corresponding to vectors. Defaults to None.
+            documents (list): List of documents to insert.
         """
-        logger.info(f"Inserting {len(vectors)} vectors into collection {self.collection_name}")
-        points = [
-            PointStruct(
-                id=idx if ids is None else ids[idx],
-                vector=vector,
-                payload=payloads[idx] if payloads else {},
+        logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
+
+        points = []
+        for document in documents:
+            text_for_id = document.id
+            if text_for_id is None:
+                text_for_id = document.content
+            _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
+            _embeddings = self.embeddings.embed_documents([document.content])[0]
+            _payload = document.metadata
+            _payload["content"] = document.content
+            points.append(
+                PointStruct(
+                    id=_id,
+                    vector=_embeddings,
+                    payload=_payload,
+                )
             )
-            for idx, vector in enumerate(vectors)
-        ]
-        self.client.upsert(collection_name=self.collection_name, points=points)
+    
+        if len(points) > 0:
+            self.client.upsert(collection_name=self.collection, points=points)
 
     def _create_filter(self, filters: dict) -> Filter:
         """
@@ -129,92 +166,87 @@ class Qdrant(VectorStoreBase):
                 conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
         return Filter(must=conditions) if conditions else None
 
-    def search(self, query: list, limit: int = 5, filters: dict = None) -> list:
+    def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
         """
         Search for similar vectors.
 
         Args:
-            query (list): Query vector.
+            query (str): Query.
             limit (int, optional): Number of results to return. Defaults to 5.
             filters (dict, optional): Filters to apply to the search. Defaults to None.
 
         Returns:
             list: Search results.
         """
+
+        query_embedding = self.embeddings.embed_query(query)
+        if query_embedding is None:
+            logger.error(f"Error getting embedding for Query: {query}")
+            return []
+
         query_filter = self._create_filter(filters) if filters else None
         hits = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query,
+            collection_name=self.collection,
+            query_vector=query_embedding,
             query_filter=query_filter,
             limit=limit,
+            with_payload=True,
+            with_vectors=False,
         )
+
         documents = []
         for d in hits:
-            doc = d.payload
-            doc["distance"] = 1-d.score
-            documents.append(doc)
+
+            if d.payload is None:
+                continue
+
+            content = None
+            if "content" in d.payload:
+                content = d.payload.pop("content")
+            elif "chunk" in d.payload:
+                content = d.payload.pop("chunk")
+
+            documents.append(
+                Document(
+                    id=d.id,
+                    content=content,
+                    metadata=d.payload,
+                    score=1-d.score,
+                )
+            )
+    
+        if self.reranker:
+            documents = self.reranker.rerank(query=query, documents=documents)
+
         return documents
 
-    def delete(self, vector_id: int):
+    def delete(self, id: int):
         """
         Delete a vector by ID.
 
         Args:
-            vector_id (int): ID of the vector to delete.
+            id (int): ID of the vector to delete.
         """
         self.client.delete(
-            collection_name=self.collection_name,
+            collection_name=self.collection,
             points_selector=PointIdsList(
-                points=[vector_id],
+                points=[id],
             ),
         )
 
-    def update(self, vector_id: int, vector: list = None, payload: dict = None):
-        """
-        Update a vector and its payload.
-
-        Args:
-            vector_id (int): ID of the vector to update.
-            vector (list, optional): Updated vector. Defaults to None.
-            payload (dict, optional): Updated payload. Defaults to None.
-        """
-        point = PointStruct(id=vector_id, vector=vector, payload=payload)
-        self.client.upsert(collection_name=self.collection_name, points=[point])
-
-    def get(self, vector_id: int) -> dict:
+    def get(self, id: int) -> dict:
         """
         Retrieve a vector by ID.
 
         Args:
-            vector_id (int): ID of the vector to retrieve.
+            id (int): ID of the vector to retrieve.
 
         Returns:
             dict: Retrieved vector.
         """
-        result = self.client.retrieve(collection_name=self.collection_name, ids=[vector_id], with_payload=True)
+        result = self.client.retrieve(collection_name=self.collection, ids=[id], with_payload=True)
         return result[0] if result else None
 
-    def get_collections(self) -> list:
-        """
-        List all collections.
-
-        Returns:
-            list: List of collection names.
-        """
-        return self.client.get_collections()
-
-    def delete_collection(self):
-        """Delete a collection."""
-        self.client.delete_collection(collection_name=self.collection_name)
-
-    def collection_info(self) -> dict:
-        """
-        Get information about a collection.
-
-        Returns:
-            dict: Collection information.
-        """
-        return self.client.get_collection(collection_name=self.collection_name)
 
     def list(self, filters: dict = None, limit: int = 100) -> list:
         """
@@ -229,7 +261,7 @@ class Qdrant(VectorStoreBase):
         """
         query_filter = self._create_filter(filters) if filters else None
         result = self.client.scroll(
-            collection_name=self.collection_name,
+            collection_name=self.collection,
             scroll_filter=query_filter,
             limit=limit,
             with_payload=True,

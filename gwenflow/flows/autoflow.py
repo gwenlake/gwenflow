@@ -4,41 +4,36 @@ from pydantic import BaseModel
 import json
 
 from gwenflow.agents import Agent
-from gwenflow.tasks import Task
 from gwenflow.flows import Flow
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.utils.json import parse_json_markdown
 from gwenflow.utils import logger
 
 
 EXAMPLE = [
     {
-        "id": 1,
-        "role": "Biographer",
+        "name": "Biographer",
         "task": "Write two paragraphs of max 500 words each",
-        "tools": "wikipedia",
-        "dependent_task_ids": [],
+        "tools": ["wikipedia"],
+        "context": [],
     },
     { 
-        "id": 2,
-        "role": "Summarizer", 
+        "name": "Summarizer",
         "task": "List of 10 bullet points",
         "tools": None,
-        "dependent_task_ids ":[1],
+        "context": ["Biographer"],
     },
     {
-        "id": 3,
-        "role": "Generate a list of related topics",
+        "name": "RelatedTopics",
         "task": "Generate a list of 5 related topics",
         "tools": None,
-        "dependent_task_ids ":[2],
+        "context": ["Summarizer"],
     },
     {
-        "id":4,
-        "role": "Final Report",
+        "name": "Final Report",
         "task": "Produce a final report in a Powerpoint file (pptx format)",
-        "tools": "python",
-        "dependent_task_ids ":[1,2,3],
+        "tools": ["wikipedia","python"],
+        "context": ["Biographer","Summarizer","RelatedTopics"],
     }
 ]
 
@@ -47,21 +42,20 @@ TASK_GENERATOR = """
 You are an expert in creating a list of AI agents as a JSON array.
 
 # Guidelines:
-- Create new agents based on the objective.
+- Create agents based on the objective.
+- A name should be given to Agents.
 - Limit agents to those that can be completed with the available tools listed below.
-- Role should be give.
 - Tasks should be detailed.
-- Current tool options are {tools}.
 - When requiring multiple searches, use the tools multiple times. This tool will use the dependent task result to generate the search query if necessary.
-- Use [user-input] sparingly and only if you need to ask a question to the user who set up the objective.
 - The task description should be the question you want to ask the user.
-- dependent_task_ids should always be an empty array, or an array of numbers representing the task ID it should pull results from.
-- Make sure all task IDs are in chronological order.
-- You can use multiple tools for a single task by separating them with a comma.
+- Make sure all task are in chronological order.
+- [context] should always be an empty array or an array of Agent names it should pull results from.
+- Current tool options are {tools}.
+- [tools] should always be an empty array or an array of Tools the Agent can use to complete its task.
 
 # Example:
 Objective: Look up AI news from today (May 27, 2023) and prepare a report.
-Task list
+Agent list
 ```json
 {examples}
 ```
@@ -76,35 +70,36 @@ class AutoFlow(Flow):
 
     manager: List[Agent] = []
     llm: Any = None
-    tools: List[Tool] = []
+    tools: List[BaseTool] = []
 
-    def execute_task(self, user_prompt: str):
+    def run(self, query: str) -> str:
 
         tools = [ tool.name for tool in self.tools ]
         tools = ", ".join(tools)
 
-        task_prompt = TASK_GENERATOR.format(objective=user_prompt, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
-
+        task_prompt = TASK_GENERATOR.format(objective=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
+        
         agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
         agents_json = parse_json_markdown(agents_json)
 
         for agent_json in agents_json:
 
             tools = []
-
             if agent_json.get("tools"):
-                task_tools = agent_json["tools"].split(",")
                 for t in self.tools:
-                    if t.name in task_tools:
+                    if t.name in agent_json["tools"]:
                         tools.append(t)
 
             agent = Agent(
                 llm=self.llm,
-                role=agent_json.get("role"),
+                name=agent_json.get("name"),
                 task=agent_json.get("task"),
                 tools=tools,
+                context_vars=agent_json.get("context"),
             )
 
             self.agents.append(agent)
 
-        return self.run(user_prompt)
+        self.describe()
+
+        return super().run(query)
