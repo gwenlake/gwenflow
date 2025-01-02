@@ -68,7 +68,6 @@ Agent list:
 
 class AutoFlow(Flow):
 
-    manager: List[Agent] = []
     llm: Any = None
     tools: List[BaseTool] = []
 

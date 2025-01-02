@@ -84,11 +84,11 @@ class Agent(BaseModel):
 
         system_message_lines = []
 
-        if self.description is not None:
-            system_message_lines.append(f"{self.description}\n")
-
         if self.name is not None:
             system_message_lines.append(f"Your name is: {self.name}.\n")
+
+        if self.description is not None:
+            system_message_lines.append(f"{self.description}\n")
 
         if self.task is not None:
             system_message_lines.append(f"Your task is: {self.task}\n")
