@@ -38,8 +38,7 @@ EXAMPLE = [
 ]
 
 
-TASK_GENERATOR = """
-You are an expert in creating a list of AI agents as a JSON array.
+TASK_GENERATOR = """You are an expert in creating a list of AI agents as a JSON array.
 
 # Guidelines:
 - Create agents based on the objective.

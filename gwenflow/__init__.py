@@ -10,7 +10,6 @@ except importlib.metadata.PackageNotFoundError:
 from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.agents import Agent
-from gwenflow.tasks import Task
 from gwenflow.tools import Tool
 from gwenflow.flows import Flow, AutoFlow
 from gwenflow.types import Document
@@ -24,7 +23,6 @@ __all__ = [
     "Document",
     "SimpleDirectoryReader",
     "Agent",
-    "Task",
     "Tool",
     "Flow",
     "AutoFlow",
