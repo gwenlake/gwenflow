@@ -91,7 +91,7 @@ class AutoFlow(Flow):
             agent = Agent(
                 llm=self.llm,
                 name=agent_json.get("name"),
-                task=agent_json.get("task"),
+                goal=agent_json.get("goal"),
                 tools=tools,
                 context_vars=agent_json.get("context"),
             )

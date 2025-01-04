@@ -1,5 +1,6 @@
 SYSTEM_PROMPT = """
-You're a helpful agent named '{name}'.
+You're a helpful agent named '{name}'. {description}
+Your personal goal is: {goal}.
 """
 
 SYSTEM_PROMPT_TOOLS = """
@@ -22,4 +23,5 @@ Task:
 {task}
 ---
 You're helping your manager solve a wider task: so make sure to not provide a one-line answer, but give as much information as possible to give them a clear understanding of the answer.
+This is VERY important to you, give your best Final Answer, your job depends on it!
 """
