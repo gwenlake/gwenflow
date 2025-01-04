@@ -3,14 +3,14 @@ import uuid
 import json
 from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
 from collections import defaultdict
-from pydantic import BaseModel, model_validator, field_validator, Field
+from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
 
 from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.agents.run import RunResponse
+from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
 from gwenflow.agents.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TOOLS, MANAGED_AGENT_TASK
@@ -19,24 +19,18 @@ from gwenflow.agents.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TOOLS, MANAGED_
 MAX_TURNS = 10
 
 
-class Result(BaseModel):
-    """Encapsulates the possible return values for an agent function."""
-    value: str = ""
-    agent: Optional[Any] = None
-    context_variables: dict = {}
-
-
 class Agent(BaseModel):
 
     # --- Agent Settings
-    id: Optional[str] = Field(None, validate_default=True)
-    name: str
+    id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
+    name: str = Field(description="Name of the agent")
+    goal: str = Field(description="Objective of the agent")
+    description: Optional[str] = Field(default="", description="Description of the agent")
 
     # --- Settings for system message
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
-    scrape_links: bool = True
     response_model: Optional[str] = None
  
     # --- Agent Model and Tools
@@ -57,11 +51,13 @@ class Agent(BaseModel):
 
 
     @field_validator("id", mode="before")
-    def set_id(cls, v: Optional[str]) -> str:
-        id = v or str(uuid.uuid4())
-        return id
+    @classmethod
+    def deny_user_set_id(cls, v: Optional[UUID4]) -> None:
+        if v:
+            raise ValueError("This field is not to be set by the user.")
 
     @field_validator("instructions", mode="before")
+    @classmethod
     def set_instructions(cls, v: Optional[Union[List, str]]) -> str:
         if isinstance(v, str):
             instructions = [v]
@@ -69,6 +65,7 @@ class Agent(BaseModel):
         return v
 
     @field_validator("llm", mode="before")
+    @classmethod
     def set_llm(cls, v: Optional[Any]) -> str:
         llm = v or ChatOpenAI(model="gpt-4o-mini")
         return llm
@@ -85,11 +82,18 @@ class Agent(BaseModel):
 
         system_message_lines = []
 
-        system_message_lines.append(SYSTEM_PROMPT.format(name=self.name).strip())
+        system_message_lines.append(
+            SYSTEM_PROMPT.format(
+                name=self.name,
+                goal=self.goal,
+                description=self.description,
+            ).strip()
+        )
 
         # tools
         if self.tools:
             tool_names = self.get_tool_names()
+            tool_names = ",".join(tool_names)
             system_message_lines.append(SYSTEM_PROMPT_TOOLS.format(tool_names=tool_names).strip())
 
         # instructions
@@ -97,9 +101,6 @@ class Agent(BaseModel):
         
         if self.add_datetime_to_instructions:
             instructions.append(f"The current time is { datetime.now() }")
-
-        if self.scrape_links:
-            instructions.append("If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.")
 
         if self.response_model:
              instructions.append("Use JSON to format your answers.")
@@ -151,87 +152,70 @@ class Agent(BaseModel):
         return { "role": "user", "content": prompt }
 
     
-    def get_tools_openai_schema(self, tools: List[BaseTool]):
-        return [tool.openai_schema for tool in tools]
+    def get_tools_openai_schema(self):
+        return [tool.openai_schema for tool in self.tools]
 
     def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
 
     def get_tool_names(self):
-        if not self.tools:
+        return [tool.name for tool in self.tools]
+
+    def execute_tool_call(self, tool_name: str, arguments: Dict[str, str]) -> Any:
+
+        available_tools = self.get_tools_map()
+        if tool_name not in available_tools:
+            logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
             return None
-        tools = [tool.name for tool in self.tools]
-        return ",".join(tools)
 
-    def handle_function_result(self, result) -> Result:
-        match result:
-            case Result() as result:
-                return result
+        logger.debug(f"Tool call: {tool_name} with arguments {arguments}")
+        observation = available_tools[tool_name].run(**arguments)
 
-            case Agent() as agent:
-                return Result(
-                    value=json.dumps({"assistant": self.name}),
-                    agent=agent,
-                )
-            case _:
-                try:
-                    return Result(value=str(result))
-                except Exception as e:
-                    error_message = f"Failed to cast response to string: {result}. Make sure agent functions return a string or Result object. Error: {str(e)}"
-                    logger.error(error_message)
-                    raise TypeError(error_message)
+        return observation
 
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-    ) -> RunResponse:
+    ) -> List:
         
         tool_map = self.get_tools_map()
 
-        partial_response = RunResponse(messages=[], agent=None)
-
+        messages = []
         for tool_call in tool_calls:
 
-            name = tool_call.function.name
+            tool_name = tool_call.function.name
 
             # handle missing tool case, skip to next tool
-            if name not in tool_map:
-                logger.debug(f"Tool {name} not found in function map.")
-                partial_response.messages.append(
+            if tool_name not in tool_map:
+                logger.error(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
+                messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "tool_name": name,
-                        "content": f"Error: Tool {name} not found.",
+                        "tool_name": tool_name,
+                        "content": f"Error: Tool {tool_name} not found.",
                     }
                 )
                 continue
 
-            args = json.loads(tool_call.function.arguments)
-            logger.debug(f"Tool call: {name} with arguments {args}")
+            arguments = json.loads(tool_call.function.arguments)
+            observation = self.execute_tool_call(tool_name, arguments)
+            
+            if observation:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_name,
+                        "content": f"Observation:\n{observation}",
+                    }
+                )
 
-            tool_result = tool_map[name].run(**args)
-
-            result: Result = self.handle_function_result(tool_result)
-
-            content = f"Observation:\n{result.value}"
-            partial_response.messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "tool_name": name,
-                    "content": content,
-                }
-            )
-
-            if result.agent:
-                partial_response.agent = result.agent
-
-        return partial_response
+        return messages
 
     def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
 
-        tools = self.get_tools_openai_schema(self.tools)
+        tools = self.get_tools_openai_schema()
 
         params = {
             "messages": messages,
@@ -256,7 +240,7 @@ class Agent(BaseModel):
         *,
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
-    ) ->  Iterator[RunResponse]:
+    ) ->  Iterator[AgentResponse]:
 
         # task
         if task:
@@ -332,16 +316,14 @@ class Agent(BaseModel):
                 break
 
             # handle tool calls and switching agents
-            partial_response = self.handle_tool_calls(message.tool_calls)
-            messages_for_model.extend(partial_response.messages)
-            if partial_response.agent:
-                return partial_response.agent
+            tool_response_messages = self.handle_tool_calls(message.tool_calls)
+            messages_for_model.extend(tool_response_messages)
 
         content = messages_for_model[-1]["content"]
         if self.response_model:
             content = json.loads(content)
 
-        yield RunResponse(
+        yield AgentResponse(
             content=content,
             messages=messages_for_model[init_len:],
             agent=self,
@@ -356,7 +338,7 @@ class Agent(BaseModel):
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
         output_file: Optional[str] = None,
-    ) ->  Union[RunResponse, Iterator[RunResponse]]:
+    ) ->  Union[AgentResponse, Iterator[AgentResponse]]:
 
         logger.debug("")
         logger.debug("------------------------------------------")
@@ -383,10 +365,9 @@ class Agent(BaseModel):
 
             if output_file:
                 with open(output_file, "a") as file:
-                    name = self.name or self.id
                     file.write("\n")
                     file.write("---\n\n")
-                    file.write(f"# Agent: { name }\n")
+                    file.write(f"# Agent: { self.name }\n")
                     file.write(f"{ task }\n")
                     file.write("\n")
                     file.write(response.content)

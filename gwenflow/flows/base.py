@@ -6,7 +6,6 @@ import yaml
 import time
 
 from gwenflow.agents import Agent
-from gwenflow.agents.run import RunResponse
 from gwenflow.tools import Tool
 from gwenflow.utils import logger
 
@@ -24,7 +23,7 @@ class Flow(BaseModel):
     def set_manager(cls, v: Optional[str]) -> str:
         manager = Agent(
             name="Team Manager",
-            task="Manage the team to complete the task in the best way possible.",
+            goal="Manage the team to complete the task in the best way possible.",
             instructions= [
                 "You are the leader of a team of AI Agents.",
                 "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
@@ -57,7 +56,8 @@ class Flow(BaseModel):
 
                         agent = Agent(
                             name=name,
-                            task=_values.get("task"),
+                            goal=_values.get("goal"),
+                            description=_values.get("description"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
                             context_vars=context_vars,
@@ -73,7 +73,7 @@ class Flow(BaseModel):
             print("---")
             print(f"Agent  : {agent.name}")
             if agent.task:
-                print(f"Task   : {agent.task}")
+                print(f"Goal   : {agent.goal}")
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
             if agent.tools:
