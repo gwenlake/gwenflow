@@ -1,6 +1,0 @@
-OBSERVATION = "\nObservation:"
-TASK = "Current Task: {description}\n\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!"
-CONTEXT = "# Useful context:\n{context}"
-TOOLS = "\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\n\n{tools}\n\nUse the following format:\n\nThought: you should always think about what to do\nAction: the action to take, only one name of [{tool_names}], just the name, exactly as it's written.\nAction Input: the input to the action, just a simple python dictionary, enclosed in curly braces, using \" to wrap keys and values.\nObservation: the result of the action\n\nOnce all necessary information is gathered:\n\nThought: I now know the final answer\nFinal Answer: the final answer to the original input question\n"
-NO_TOOLS = "\nTo give my best complete final answer to the task use the exact following format:\n\nThought: I now can give a great answer\nFinal Answer: Your final answer must be the great and the most complete as possible, it must be outcome described.\n\nI MUST use these formats, my job depends on it!"
-EXPECTED_OUTPUT = "This is the expect criteria for your final answer: {expected_output}\nyou MUST return the actual complete content as the final answer, not a summary."

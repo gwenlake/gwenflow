@@ -107,14 +107,14 @@ class Flow(BaseModel):
                     if agent.context_vars:
                         context = { f"{var}": outputs[var].content for var in agent.context_vars }
                     
-                    user_prompt = None
+                    task = None
                     if context is None:
-                        user_prompt = query # always keep query if no context
+                        task = query # always keep query if no context (first agents)
 
                     if last_response:
-                        user_prompt = f"Query: {query}\n\nYour previous resonse this query was the following: {last_response}\n\n. Please, improve substantially the quality of this answer."
+                        task = f"Task: {task}\n\nYour previous resonse this query was the following: {last_response}\n\n. Please, improve substantially the quality of this answer."
 
-                    agent_response = agent.run(user_prompt=user_prompt, context=context)
+                    agent_response = agent.run(task=task, context=context)
 
                     manager_prompt = f"The task of the agent is: { agent.task }\n\nIf you validate the agent response simply answer 'Yes'."
                     manager_response = self.manager.run(manager_prompt, context=agent_response.content)

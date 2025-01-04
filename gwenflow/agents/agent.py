@@ -13,6 +13,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.run import RunResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
+from gwenflow.agents.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TOOLS, MANAGED_AGENT_TASK
 
 
 MAX_TURNS = 10
@@ -32,8 +33,6 @@ class Agent(BaseModel):
     name: str
 
     # --- Settings for system message
-    description: Optional[str] = "You are a helpful AI assistant."
-    task: Optional[str] = None
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
@@ -46,7 +45,9 @@ class Agent(BaseModel):
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
-    # --- Context and Memory
+    # --- Task, Context and Memory
+    task: Optional[str] = None
+    context: Optional[Any] = None
     context_vars: Optional[List[str]] = []
     memory: Optional[ChatMemoryBuffer] = None
     keep_history: bool = False
@@ -80,19 +81,17 @@ class Agent(BaseModel):
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
-    def get_system_message(self, context: Optional[Any] = None):
+    def get_system_message(self):
         """Return the system message for the Agent."""
 
         system_message_lines = []
 
-        if self.name is not None:
-            system_message_lines.append(f"Your name is: {self.name}.\n")
+        system_message_lines.append(SYSTEM_PROMPT.format(name=self.name).strip())
 
-        if self.description is not None:
-            system_message_lines.append(f"{self.description}\n")
-
-        if self.task is not None:
-            system_message_lines.append(f"Your task is: {self.task}\n")
+        # tools
+        if self.tools:
+            tool_names = self.get_tool_names()
+            system_message_lines.append(SYSTEM_PROMPT_TOOLS.format(tool_names=tool_names).strip())
 
         # instructions
         instructions = self.instructions
@@ -100,16 +99,15 @@ class Agent(BaseModel):
         if self.add_datetime_to_instructions:
             instructions.append(f"The current time is { datetime.now() }")
 
-        if self.markdown and self.response_model is None:
-            instructions.append("Use markdown to format your answers.")
-
         if self.scrape_links:
             instructions.append("If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.")
 
         if self.response_model:
              instructions.append("Use JSON to format your answers.")
+        elif self.markdown:
+            instructions.append("Use markdown to format your answers.")
 
-        if context is not None:
+        if self.context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
@@ -130,41 +128,41 @@ class Agent(BaseModel):
         
         return None
 
-    def get_user_message(self, user_prompt: Optional[str] = None, context: Optional[Any] = None):
+    def get_user_message(self):
         """Return the user message for the Agent."""
 
-        prompt = ""
+        prompt = MANAGED_AGENT_TASK.format(task=self.task).strip()
 
-        if context is not None:
+        if self.context:
 
             prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
             prompt += "<context>\n"
 
-            if isinstance(context, str):
-                prompt += context + "\n"
+            if isinstance(self.context, str):
+                prompt += self.context + "\n"
 
-            elif isinstance(context, dict):
-                for key in context.keys():
+            elif isinstance(self.context, dict):
+                for key in self.context.keys():
                     prompt += f"<{key}>\n"
-                    prompt += context.get(key) + "\n"
+                    prompt += self.context.get(key) + "\n"
                     prompt += f"</{key}>\n\n"
 
             prompt += "</context>\n\n"
-        
-        if user_prompt:
-            if isinstance(user_prompt, str):
-                prompt += user_prompt
-            elif isinstance(user_prompt, dict):
-                prompt += user_prompt["content"]
-        
+                
         return { "role": "user", "content": prompt }
 
     
     def get_tools_openai_schema(self, tools: List[BaseTool]):
         return [tool.openai_schema for tool in tools]
 
-    def get_tools_map(self, tools: List[BaseTool]):
-        return {tool.name: tool for tool in tools}
+    def get_tools_map(self):
+        return {tool.name: tool for tool in self.tools}
+
+    def get_tool_names(self):
+        if not self.tools:
+            return None
+        tools = [tool.name for tool in self.tools]
+        return ",".join(tools)
 
     def handle_function_result(self, result) -> Result:
         match result:
@@ -187,10 +185,9 @@ class Agent(BaseModel):
     def handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
-        tools: List[BaseTool],
     ) -> RunResponse:
         
-        tool_map = self.get_tools_map(self.tools)
+        tool_map = self.get_tools_map()
 
         partial_response = RunResponse(messages=[], agent=None)
 
@@ -218,12 +215,13 @@ class Agent(BaseModel):
 
             result: Result = self.handle_function_result(tool_result)
 
+            content = f"Observation:\n{result.value}"
             partial_response.messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "tool_name": name,
-                    "content": result.value,
+                    "content": content,
                 }
             )
 
@@ -255,16 +253,24 @@ class Agent(BaseModel):
 
     def _run(
         self,
-        user_prompt: Optional[str] = None,
+        task: Optional[str] = None,
         *,
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
-        **kwargs: Any,
     ) ->  Iterator[RunResponse]:
+
+        # task
+        if task:
+            self.task = task
+        if self.task is None:
+            raise ValueError("No task given to agent.")
+
+        # context
+        self.context = context
 
         # prepare messages
         messages_for_model = []
-        system_message = self.get_system_message(context=context)
+        system_message = self.get_system_message()
         if system_message:
             messages_for_model.append(system_message)
 
@@ -272,7 +278,7 @@ class Agent(BaseModel):
             if len(self.memory.get())>0:
                 messages_for_model.extend(self.memory.get())
 
-        user_message = self.get_user_message(user_prompt, context=context)
+        user_message = self.get_user_message()
         if user_message:
             messages_for_model.append(user_message)
             if self.memory and self.keep_history:
@@ -327,7 +333,7 @@ class Agent(BaseModel):
                 break
 
             # handle tool calls and switching agents
-            partial_response = self.handle_tool_calls(message.tool_calls, self.tools)
+            partial_response = self.handle_tool_calls(message.tool_calls)
             messages_for_model.extend(partial_response.messages)
             if partial_response.agent:
                 return partial_response.agent
@@ -346,39 +352,33 @@ class Agent(BaseModel):
 
     def run(
         self,
-        user_prompt: Optional[str] = None,
+        task: Optional[str] = None,
         *,
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
         output_file: Optional[str] = None,
-        **kwargs: Any,
     ) ->  Union[RunResponse, Iterator[RunResponse]]:
-
-
-        agent_id = self.name or self.id
 
         logger.debug("")
         logger.debug("------------------------------------------")
-        logger.debug(f"Running Agent: { agent_id }")
+        logger.debug(f"Running Agent: { self.name }")
         logger.debug("------------------------------------------")
         logger.debug("")
 
         if stream:
             response = self._run(
-                user_prompt=user_prompt,
+                task=task,
                 context=context,
                 stream=True,
-                **kwargs,
             )
             return response
     
         else:
 
             response = self._run(
-                user_prompt=user_prompt,
+                task=task,
                 context=context,
                 stream=False,
-                **kwargs,
             )
             response = next(response)
 
@@ -390,8 +390,7 @@ class Agent(BaseModel):
                     file.write("\n")
                     file.write("---\n\n")
                     file.write(f"# Agent: { name }\n")
-                    if self.task:
-                        file.write(f"{ self.task }\n")
+                    file.write(f"{ task }\n")
                     file.write("\n")
                     file.write(response.content)
 
