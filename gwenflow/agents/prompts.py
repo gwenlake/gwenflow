@@ -11,7 +11,7 @@ Then you can use it as input for the next action.
 """
 
 
-MANAGED_AGENT_TASK = """
+AGENT_TASK = """
 You have been submitted this task by your manager.
 ---
 Task:
