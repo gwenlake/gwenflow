@@ -13,7 +13,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
-from gwenflow.agents.prompts import PROMPT_TOOLS, MANAGED_AGENT_TASK
+from gwenflow.agents.prompts import PROMPT_TOOLS, AGENT_TASK
 
 
 MAX_TURNS = 10
@@ -39,8 +39,6 @@ class Agent(BaseModel):
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Task, Context and Memory
-    task: Optional[str] = None
-    context: Optional[Any] = None
     context_vars: Optional[List[str]] = []
     memory: Optional[ChatMemoryBuffer] = None
     keep_history: bool = False
@@ -77,7 +75,7 @@ class Agent(BaseModel):
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
-    def get_system_message(self):
+    def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
         system_message_lines = []
@@ -87,9 +85,6 @@ class Agent(BaseModel):
 
         if self.description:
             system_message_lines.append(f"{self.description}")
-
-        if self.task:
-            system_message_lines.append(f"Your task is: {self.task}.")
 
         if self.role:
             system_message_lines.append(f"Your role is: {self.role}.")
@@ -111,7 +106,7 @@ class Agent(BaseModel):
         elif self.markdown:
             instructions.append("Use markdown to format your answers.")
 
-        if self.context is not None:
+        if context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
@@ -132,27 +127,30 @@ class Agent(BaseModel):
         
         return None
 
-    def get_user_message(self):
+    def get_user_message(self, task: Optional[str] = None, context: Optional[Any] = None):
         """Return the user message for the Agent."""
 
         prompt = ""
 
-        if self.context:
+        if context:
 
             prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
             prompt += "<context>\n"
 
-            if isinstance(self.context, str):
-                prompt += self.context + "\n"
+            if isinstance(context, str):
+                prompt += context + "\n"
 
-            elif isinstance(self.context, dict):
-                for key in self.context.keys():
+            elif isinstance(context, dict):
+                for key in context.keys():
                     prompt += f"<{key}>\n"
-                    prompt += self.context.get(key) + "\n"
+                    prompt += context.get(key) + "\n"
                     prompt += f"</{key}>\n\n"
 
             prompt += "</context>\n\n"
-                
+    
+        if task:
+            prompt += AGENT_TASK.format(task=task)
+
         return { "role": "user", "content": prompt }
 
     
@@ -246,16 +244,9 @@ class Agent(BaseModel):
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
 
-        # task
-        if task:
-            self.task = task
-
-        # context
-        self.context = context
-
         # prepare messages
         messages_for_model = []
-        system_message = self.get_system_message()
+        system_message = self.get_system_message(context=context)
         if system_message:
             messages_for_model.append(system_message)
 
@@ -263,7 +254,7 @@ class Agent(BaseModel):
             if len(self.memory.get())>0:
                 messages_for_model.extend(self.memory.get())
 
-        user_message = self.get_user_message()
+        user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
             if self.memory and self.keep_history:

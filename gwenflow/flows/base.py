@@ -97,36 +97,18 @@ class Flow(BaseModel):
                 if any(outputs.get(var) is None for var in agent.context_vars):
                     continue
 
-                # validation by the manager
-                trials = 1
-                last_response = None
-                while trials < MAX_TRIALS:
-
-                    # prepare context and run
-                    context = None
-                    if agent.context_vars:
-                        context = { f"{var}": outputs[var].content for var in agent.context_vars }
-                    
-                    task = None
-                    if context is None:
-                        task = query # always keep query if no context (first agents)
-
-                    if last_response:
-                        task = f"Task: {task}\n\nYour previous resonse this query was the following: {last_response}\n\n. Please, improve substantially the quality of this answer."
-
-                    agent_response = agent.run(task=task, context=context)
-
-                    manager_prompt = f"The task of the agent is: { agent.task }\n\nIf you validate the agent response simply answer 'Yes'."
-                    manager_response = self.manager.run(manager_prompt, context=agent_response.content)
-                    if manager_response.content == "Yes":
-                        outputs[agent.name] = agent_response
-                        break
-                    
-                    last_response = agent_response.content
-                    logger.debug(f"{agent.name}: {last_response}")
-
-                    trials += 1
+                # prepare context and run
+                context = None
+                if agent.context_vars:
+                    context = { f"{var}": outputs[var].content for var in agent.context_vars }
                 
+                task = None
+                if context is None:
+                    task = query # always keep query if no context (first agents)
+
+                outputs[agent.name] = agent.run(task=task, context=context)
+
+                logger.debug(f"{agent.name}: { outputs[agent.name].content }")                
 
         return outputs
     
