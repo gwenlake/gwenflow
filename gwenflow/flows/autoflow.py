@@ -13,25 +13,25 @@ from gwenflow.utils import logger
 EXAMPLE = [
     {
         "name": "Biographer",
-        "task": "Write two paragraphs of max 500 words each",
+        "role": "Write two paragraphs of max 500 words each",
         "tools": ["wikipedia"],
         "context": [],
     },
     { 
         "name": "Summarizer",
-        "task": "List of 10 bullet points",
+        "role": "List of 10 bullet points",
         "tools": None,
         "context": ["Biographer"],
     },
     {
         "name": "RelatedTopics",
-        "task": "Generate a list of 5 related topics",
+        "role": "Generate a list of 5 related topics",
         "tools": None,
         "context": ["Summarizer"],
     },
     {
         "name": "Final Report",
-        "task": "Produce a final report in a Powerpoint file (pptx format)",
+        "role": "Produce a final report in a Powerpoint file (pptx format)",
         "tools": ["wikipedia","python"],
         "context": ["Biographer","Summarizer","RelatedTopics"],
     }
@@ -91,7 +91,7 @@ class AutoFlow(Flow):
             agent = Agent(
                 llm=self.llm,
                 name=agent_json.get("name"),
-                goal=agent_json.get("goal"),
+                role=agent_json.get("role"),
                 tools=tools,
                 context_vars=agent_json.get("context"),
             )

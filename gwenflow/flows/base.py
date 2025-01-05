@@ -23,7 +23,7 @@ class Flow(BaseModel):
     def set_manager(cls, v: Optional[str]) -> str:
         manager = Agent(
             name="Team Manager",
-            goal="Manage the team to complete the task in the best way possible.",
+            role="Manage the team to complete the task in the best way possible.",
             instructions= [
                 "You are the leader of a team of AI Agents.",
                 "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
@@ -56,7 +56,7 @@ class Flow(BaseModel):
 
                         agent = Agent(
                             name=name,
-                            goal=_values.get("goal"),
+                            role=_values.get("role"),
                             description=_values.get("description"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
@@ -73,7 +73,7 @@ class Flow(BaseModel):
             print("---")
             print(f"Agent  : {agent.name}")
             if agent.task:
-                print(f"Goal   : {agent.goal}")
+                print(f"Role   : {agent.role}")
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
             if agent.tools:
