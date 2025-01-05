@@ -13,7 +13,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
-from gwenflow.agents.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TOOLS, MANAGED_AGENT_TASK
+from gwenflow.agents.prompts import PROMPT_TOOLS, MANAGED_AGENT_TASK
 
 
 MAX_TURNS = 10
@@ -24,8 +24,8 @@ class Agent(BaseModel):
     # --- Agent Settings
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
     name: str = Field(description="Name of the agent")
-    goal: str = Field(description="Objective of the agent")
-    description: Optional[str] = Field(default="", description="Description of the agent")
+    role: str = Field(description="Role of the agent")
+    description: Optional[str] = Field(default=None, description="Description of the agent")
 
     # --- Settings for system message
     instructions: Optional[Union[str, List[str]]] = []
@@ -82,19 +82,23 @@ class Agent(BaseModel):
 
         system_message_lines = []
 
-        system_message_lines.append(
-            SYSTEM_PROMPT.format(
-                name=self.name,
-                goal=self.goal,
-                description=self.description,
-            ).strip()
-        )
+        # name, description and role
+        system_message_lines.append(f"You're a helpful agent named '{self.name}'.")
+
+        if self.description:
+            system_message_lines.append(f"{self.description}")
+
+        if self.task:
+            system_message_lines.append(f"Your task is: {self.task}.")
+
+        if self.role:
+            system_message_lines.append(f"Your role is: {self.role}.")
 
         # tools
         if self.tools:
             tool_names = self.get_tool_names()
             tool_names = ",".join(tool_names)
-            system_message_lines.append(SYSTEM_PROMPT_TOOLS.format(tool_names=tool_names).strip())
+            system_message_lines.append(PROMPT_TOOLS.format(tool_names=tool_names).strip())
 
         # instructions
         instructions = self.instructions
@@ -131,7 +135,7 @@ class Agent(BaseModel):
     def get_user_message(self):
         """Return the user message for the Agent."""
 
-        prompt = MANAGED_AGENT_TASK.format(task=self.task).strip()
+        prompt = ""
 
         if self.context:
 
@@ -245,8 +249,6 @@ class Agent(BaseModel):
         # task
         if task:
             self.task = task
-        if self.task is None:
-            raise ValueError("No task given to agent.")
 
         # context
         self.context = context

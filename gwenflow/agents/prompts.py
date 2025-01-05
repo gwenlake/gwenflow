@@ -1,9 +1,4 @@
-SYSTEM_PROMPT = """
-You're a helpful agent named '{name}'. {description}
-Your personal goal is: {goal}.
-"""
-
-SYSTEM_PROMPT_TOOLS = """
+PROMPT_TOOLS = """
 You are an expert assistant who can solve any task using tool calls. You will be given a task to solve as best you can.
 To do so, you have been given access to the following tools: {tool_names}
 
