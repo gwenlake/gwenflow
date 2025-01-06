@@ -108,7 +108,7 @@ class Flow(BaseModel):
 
                 outputs[agent.name] = agent.run(task=task, context=context)
 
-                logger.debug(f"{agent.name}: { outputs[agent.name].content }")                
+                logger.debug(f"# {agent.name}\n{ outputs[agent.name].content }", extra={"markup": True})                
 
         return outputs
     
