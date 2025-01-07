@@ -1,7 +1,6 @@
 
 import io
-import requests
-from typing import List
+from typing import List, Union
 from pathlib import Path
 
 from gwenflow.types import Document
@@ -11,7 +10,7 @@ from gwenflow.utils import logger
 
 class PDFReader(Reader):
 
-    def read(self, file: Path) -> List[Document]:
+    def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
 
         try:
             import pymupdf
@@ -29,7 +28,6 @@ class PDFReader(Reader):
                 tables = []
                 for table in page.find_tables():
                     tables.append(table.extract())
-                filename = str(file)
                 metadata = dict(filename=filename, page=page.number+1, tables=tables, images=[])
                 doc = Document(id=f"{filename}_{page.number+1}", content=safe_text, metadata=metadata)
                 documents.append(doc)
