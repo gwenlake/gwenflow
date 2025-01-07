@@ -13,6 +13,7 @@ from gwenflow.agents import Agent
 from gwenflow.tools import Tool
 from gwenflow.flows import Flow, AutoFlow
 from gwenflow.types import Document
+from gwenflow.knowledge import Knowledge
 
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "Tool",
     "Flow",
     "AutoFlow",
+    "Knowledge",
 ]

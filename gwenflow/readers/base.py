@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 import io
@@ -18,14 +18,19 @@ class Reader(BaseModel):
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
 
-    def get_file_name(self, file: Path):
+    def get_file_name(self, file: Union[Path, io.BytesIO]):
+        if isinstance(file, io.BytesIO):
+            return "noname"
         if not isinstance(file, Path):
             return str(Path(file))
         return str(file)
 
-    def get_file_content(self, file: Path, text_mode: bool=False):
+    def get_file_content(self, file: Union[Path, io.BytesIO], text_mode: bool=False):
 
         try:
+
+            if isinstance(file, io.BytesIO):
+                return file
 
             filename = str(file)
 

@@ -41,7 +41,6 @@ class Agent(BaseModel):
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
     memory: Optional[ChatMemoryBuffer] = None
-    keep_history: bool = False
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team of agents
@@ -64,7 +63,7 @@ class Agent(BaseModel):
 
     @field_validator("llm", mode="before")
     @classmethod
-    def set_llm(cls, v: Optional[Any]) -> str:
+    def set_llm(cls, v: Optional[Any]) -> Any:
         llm = v or ChatOpenAI(model="gpt-4o-mini")
         return llm
 
@@ -244,22 +243,18 @@ class Agent(BaseModel):
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
 
-        # prepare messages
+        # system messages
         messages_for_model = []
         system_message = self.get_system_message(context=context)
         if system_message:
             messages_for_model.append(system_message)
 
-        if self.keep_history:
-            if len(self.memory.get())>0:
-                messages_for_model.extend(self.memory.get())
-
+        # user messages
         user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
-            if self.memory and self.keep_history:
-                self.memory.add_message(user_message)
-                
+            self.memory.add_message(user_message)
+
         # global loop
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
@@ -287,7 +282,13 @@ class Agent(BaseModel):
                         if delta["role"] == "assistant":
                             delta["sender"] = self.name
                         if delta["content"]:
-                            yield delta["content"]
+                            # yield delta["content"]
+                            yield AgentResponse(
+                                delta=delta["content"],
+                                messages=None,
+                                agent=self,
+                                tools=self.tools,
+                            )
                         delta.pop("role", None)
                         delta.pop("sender", None)
                         merge_chunk(message, delta)

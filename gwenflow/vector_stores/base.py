@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from pydantic import BaseModel
+from typing import Optional
 
 from gwenflow.types import Document
 
