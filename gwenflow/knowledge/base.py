@@ -34,7 +34,6 @@ class Knowledge(BaseModel):
                 self.vector_db = Qdrant(collection=collection_name, embeddings=GwenlakeEmbeddings(model="multilingual-e5-base"), on_disk=False)
             except Exception as e:
                 logger.error(f"Error creating knowledge: {e}")
-                print("ok")
 
     def load_document(self, document: Document) -> bool:
         try:
