@@ -1,22 +1,37 @@
 
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator, field_validator, Field
 
 import yaml
 import time
 
 from gwenflow.agents import Agent
-from gwenflow.agents.run import RunResponse
 from gwenflow.tools import Tool
 from gwenflow.utils import logger
+
+
+MAX_TRIALS=5
 
 
 class Flow(BaseModel):
 
     agents: List[Agent] = []
+    manager: Optional[Agent] = Field(None, validate_default=True)
     flow_type: str = "sequence"
 
-
+    @field_validator("manager", mode="before")
+    def set_manager(cls, v: Optional[str]) -> str:
+        manager = Agent(
+            name="Team Manager",
+            role="Manage the team to complete the task in the best way possible.",
+            instructions= [
+                "You are the leader of a team of AI Agents.",
+                "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
+                "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
+            ]
+        )
+        return manager
+    
     @classmethod
     def from_yaml(cls, file: str, tools: List[Tool]) -> "Flow":
         if cls == Flow:
@@ -41,7 +56,8 @@ class Flow(BaseModel):
 
                         agent = Agent(
                             name=name,
-                            task=_values.get("task"),
+                            role=_values.get("role"),
+                            description=_values.get("description"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
                             context_vars=context_vars,
@@ -57,7 +73,7 @@ class Flow(BaseModel):
             print("---")
             print(f"Agent  : {agent.name}")
             if agent.task:
-                print(f"Task   : {agent.task}")
+                print(f"Role   : {agent.role}")
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
             if agent.tools:
@@ -85,7 +101,14 @@ class Flow(BaseModel):
                 context = None
                 if agent.context_vars:
                     context = { f"{var}": outputs[var].content for var in agent.context_vars }
-                outputs[agent.name] = agent.run(user_prompt=query, context=context)
+                
+                task = None
+                if context is None:
+                    task = query # always keep query if no context (first agents)
+
+                outputs[agent.name] = agent.run(task=task, context=context)
+
+                logger.debug(f"# {agent.name}\n{ outputs[agent.name].content }", extra={"markup": True})                
 
         return outputs
     

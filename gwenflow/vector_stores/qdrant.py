@@ -37,6 +37,7 @@ class Qdrant(VectorStoreBase):
         url: str = None,
         api_key: str = None,
         reranker: Optional[Reranker] = None,
+        on_disk: bool = True,
     ):
         """
         Initialize the Qdrant vector store.
@@ -60,6 +61,9 @@ class Qdrant(VectorStoreBase):
         # reranker
         self.reranker = reranker
 
+        # on disk:
+        self.on_disk = on_disk
+
         if client:
             self.client = client
         else:
@@ -73,6 +77,8 @@ class Qdrant(VectorStoreBase):
                 params["port"] = port
             if not params:
                 params["path"] = path
+            if self.on_disk:
+                params = { "url": "http://localhost:6333" }
 
             self.client = QdrantClient(**params)
 
@@ -86,21 +92,30 @@ class Qdrant(VectorStoreBase):
         Returns:
             list: List of collection names.
         """
-        return self.client.get_collections()
+        try:
+            return self.client.get_collections()
+        except Exception as e:
+            logger.error(f"Error while reading collections: {e}")
+        return []
+
 
     def create(self):
         """Create collection."""
         # Skip creating collection if already exists
         response = self.get_collections()
-        for collection in response.collections:
-            if collection.name == self.collection:
-                logging.debug(f"Collection {self.collection} already exists. Skipping creation.")
-                return
+        if response:
+            for collection in response.collections:
+                if collection.name == self.collection:
+                    logging.debug(f"Collection {self.collection} already exists. Skipping creation.")
+                    return
 
-        self.client.create_collection(
-            collection_name=self.collection,
-            vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance),
-        )
+        try:
+            self.client.create_collection(
+                collection_name=self.collection,
+                vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance, on_disk=self.on_disk),
+            )
+        except Exception as e:
+            logger.error(f"Error while creating collection: {e}")
 
     def drop(self):
         """Drop collection."""
@@ -130,10 +145,9 @@ class Qdrant(VectorStoreBase):
 
         points = []
         for document in documents:
-            text_for_id = document.id
-            if text_for_id is None:
-                text_for_id = document.content
-            _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
+            if document.id is None:
+                document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
+            _id = document.id
             _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
             _payload["content"] = document.content
