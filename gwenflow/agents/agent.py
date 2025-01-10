@@ -10,6 +10,7 @@ from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
+from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
@@ -42,6 +43,7 @@ class Agent(BaseModel):
     context_vars: Optional[List[str]] = []
     memory: Optional[ChatMemoryBuffer] = None
     metadata: Optional[Dict[str, Any]] = None
+    # knowledge: Optional[Knowledge] = None
 
     # --- Team of agents
     team: Optional[List["Agent"]] = None
