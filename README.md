@@ -87,27 +87,26 @@ dotenv.load_dotenv(override=True)  # load you OpenAI api key from .env
 
 # automatically use gpt-4o-mini for the Agent
 agent = Agent(
-    role="Agent",
-    description="You are a helpful agent.",
+    name="Agent",
+    role="You are a helpful agent.",
 )
 
 response = agent.run("how are you?")
 print(response.content)
 ```
 
-## Agents, Tasks and Tools
+## Agents and Tools
 
 ```python
 import requests
 import json
 import dotenv
 
-from gwenflow import ChatOpenAI, Agent, Task, Tool
+from gwenflow import ChatOpenAI, Agent, Tool
 
-dotenv.load_dotenv(override=True)  # load you api key from .env
+dotenv.load_dotenv(override=True)
 
 
-# tool to get fx
 def get_exchange_rate(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
     try:
@@ -121,17 +120,16 @@ def get_exchange_rate(currency_iso: str) -> str:
 
 tool_get_exchange_rate = Tool.from_function(get_exchange_rate)
 
-# llm, agent and task
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-agentfx = Agent(
-    role="Fx Analyst",
-    instructions="Get recent exchange rates data.",
+agent = Agent(
+    name="AgentFX",
+    role="Get recent exchange rates data.",
+    instructions="Answer in one sentence and if there is a date, mention this date.",
     llm=llm,
     tools=[tool_get_exchange_rate],
 )
 
-# Loop on a list of tasks
 queries = [
     "Find the capital city of France?",
     "What's the exchange rate of the Brazilian real?",
@@ -142,81 +140,29 @@ queries = [
 ]
 
 for query in queries:
-    task = Task(
-        description=query,
-        expected_output="Answer in one sentence and if there is a date, mention this date.",
-        agent=agentfx
-    )
     print("")
     print("Q:", query)
-    print("A:", task.run())
+    print("A:", agent.run(query).content)
 ```
 
 ```
 Q: Find the capital city of France?
-A: The capital city of France is Paris.
+A: The capital city of France is Paris, which is not only the largest city in the country but also a major global center for art, fashion, and culture. Located in the north-central part of France along the Seine River, Paris is renowned for its iconic landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral. The city has a rich history dating back to its founding in the 3rd century BC as a small fishing village, and over the centuries, it has evolved into a vibrant metropolis known for its stylish boulevards, world-class cuisine, and significant historical events. Paris also serves as the political and administrative hub of France, housing key government institutions, including the Élysée Palace, where the French President resides.
 
 Q: What's the exchange rate of the Brazilian real?
-A: The exchange rate of the Brazilian real (BRL) is approximately 5.76, as of November 12, 2024.
+A: As of January 10, 2025, the exchange rate for the Brazilian Real (BRL) is approximately 6.0604 BRL to 1 USD, with an inverse rate of about 0.1650 USD for 1 BRL. This means that for every Brazilian Real, you can exchange it for about 16.5 cents in US dollars.
 
 Q: What's the exchange rate of the Euro?
-A: The exchange rate of the Euro (EUR) is 0.9409 as of November 12, 2024.
+A: As of January 10, 2025, the exchange rate for the Euro (EUR) is approximately 0.9709 against the US Dollar, meaning 1 Euro can be exchanged for about 0.9709 USD; conversely, the inverse rate indicates that 1 USD is equivalent to about 1.0300 Euros.
 
 Q: What's the exchange rate of the Chine Renminbi?
-A: The exchange rate of the Chinese Renminbi (CNY) is 7.23 as of November 12, 2024.
+A: As of January 10, 2025, the exchange rate for the Chinese Renminbi (CNY), also known as the Chinese Yuan, is approximately 7.33 CNY per 1 USD. Additionally, the inverse rate indicates that 1 CNY is equivalent to about 0.1364 USD. This rate is important for various financial transactions, including trade, investments, and tourism related to China, reflecting the currency's strength in the global market as observed at 15:55 GMT on the same date.
 
 Q: What's the exchange rate of the Chinese Yuan?
-A: The exchange rate of the Chinese Yuan (CNY) is 7.23 as of November 12, 2024.
+A: As of January 10, 2025, the exchange rate for the Chinese Yuan (CNY) is approximately 7.33 CNY to 1 USD, with an inverse rate of about 0.14 USD for each CNY, reflecting its value in the global market. This data indicates the strength of the yuan against the US dollar, and it is essential for understanding its purchasing power and economic interactions, especially for businesses and individuals engaging in international transactions.
 
 Q: What's the exchange rate of the Tonga?
-A: The current exchange rate for the Tongan paʻanga (TOP) is 2.3662, as of November 12, 2024.
-```
-
-## Automated Flows, Agents with Langchain Tools
-
-Run an agent with Langchain tools. Requires langchain and pip install langchain-experimental
-
-```
-pip install langchain
-pip install langchain-experimental
-```
-
-> [!CAUTION]  
-> Python REPL can execute arbitrary code on the host machine (e.g., delete files, make network requests). Use with
-> caution.
-> For more information general security guidelines, please see https://python.langchain.com/docs/security/.
-
-```python
-import dotenv
-from gwenflow import ChatOpenAI, Tool, AutoFlow
-
-import langchain.agents
-from langchain_experimental.utilities import PythonREPL
-from langchain_community.tools import WikipediaQueryRun
-from langchain_community.utilities import WikipediaAPIWrapper
-
-# Load API key from .env file
-dotenv.load_dotenv(override=True)
-
-python_repl = PythonREPL()
-python_repl_tool = langchain.agents.Tool(
-    name="python_repl",
-    description="This tool can execute python code and shell commands (pip commands to modules installation) Use with caution",
-    func=python_repl.run,
-)
-
-api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=5000)
-wikipedia = WikipediaQueryRun(api_wrapper=api_wrapper)
-
-tool_python = Tool.from_langchain(python_repl_tool)
-tool_wikipedia = Tool.from_langchain(wikipedia)
-
-llm = ChatOpenAI(model="gpt-4o")
-
-flow = AutoFlow(llm=llm, tools=[tool_python, tool_wikipedia])
-flow.generate_tasks(
-    objective="Tell me about the biography of Kamala Harris and produce a pptx name biography_auto.pptx")
-flow.run()
+A: As of January 10, 2025, the current exchange rate for the Tongan paʻanga (ISO code: TOP) is approximately 2.42 TOP per 1 USD, while the inverse rate is around 0.41 USD per 1 TOP. The Tongan paʻanga is denoted by the numeric code 776, and the latest exchange data indicates that the rate was last updated at 15:55:14 GMT on the same day.
 ```
 
 ## Contributing to Gwenflow
