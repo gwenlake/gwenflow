@@ -2,12 +2,11 @@ import requests
 import json
 import dotenv
 
-from gwenflow import ChatOpenAI, Agent, Task, Tool
+from gwenflow import ChatOpenAI, Agent, Tool
 
-# load you api key
 dotenv.load_dotenv(override=True)
 
-# tool to get fx
+
 def get_exchange_rate(currency_iso: str) -> str:
     """Get the current exchange rate for a given currency. Currency MUST be in iso format."""
     try:
@@ -20,12 +19,12 @@ def get_exchange_rate(currency_iso: str) -> str:
 
 tool_get_exchange_rate = Tool.from_function(get_exchange_rate)
 
-# llm, agent and task
+
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-agentfx = Agent(
-    role="Fx Analyst",
-    instructions="Get recent exchange rates data.",
+agent = Agent(
+    role="Get recent exchange rates data.",
+    instructions="Answer in one sentence and if there is a date, mention this date.",
     llm=llm,
     tools=[tool_get_exchange_rate],
 )
@@ -40,11 +39,6 @@ queries = [
 ]
 
 for query in queries:
-    task = Task(
-        description=query,
-        expected_output="Answer in one sentence and if there is a date, mention this date.",
-        agent=agentfx
-    )
     print("")
     print("Q:", query)
-    print("A:", task.run())
+    print("A:", agent.run(query).content)
