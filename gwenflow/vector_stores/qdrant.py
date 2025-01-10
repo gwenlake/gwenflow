@@ -145,10 +145,9 @@ class Qdrant(VectorStoreBase):
 
         points = []
         for document in documents:
-            text_for_id = document.id
-            if text_for_id is None:
-                text_for_id = document.content
-            _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
+            if document.id is None:
+                document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
+            _id = document.id
             _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
             _payload["content"] = document.content
