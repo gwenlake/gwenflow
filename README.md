@@ -21,9 +21,16 @@ scalable solutions tailored to specific business or user needs.
 
 ## Installation
 
+Install from PyPI:
+
+```bash
+pip install gwenflow
+```
+
 Install from the main branch to try the newest features:
 
 ```bash
+# install from PyPI
 pip install -U git+https://github.com/gwenlake/gwenflow.git@main
 ```
 
