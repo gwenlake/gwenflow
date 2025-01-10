@@ -1,0 +1,26 @@
+[project]
+name = "gwenflow"
+version = "0.5.1"
+description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE.txt" }
+keywords = ["gwenflow", "gwenlake", "agents", "llms", "ai", "ml", "nlp", "framework"]
+authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain Barthélémy", email = "sylvain.barthelemy@gwenlake.com" }, { name = "Guillaume Beguec", email = "guillaume.beguec@gwenlake.com" }, { name = "Antoine de Parthenay", email = "antoine.departhenay@gwenlake.com" }]
+
+dependencies = ["httpx", "pydantic", "tqdm", "pyyaml", "beautifulsoup4", "fsspec", "rich", "tiktoken", "openai", "langchain", "boto3", "pyarrow", "lancedb", "qdrant-client", "jinja2", "markupsafe"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: Freely Distributable",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+"Homepage" = "https://gwenlake.com"
+"Source" = "https://github.com/gwenlake/gwenflow"
