@@ -1,6 +1,6 @@
 <div align="center">
 
-![Logo of Gwenflow](./docs/images/gwenflow.png)
+![Logo of Gwenflow](https://raw.githubusercontent.com/gwenlake/gwenflow/refs/heads/main/docs/images/gwenflow.png)
 
 **A framework for orchestrating applications powered by autonomous AI agents and LLMs.**
 
