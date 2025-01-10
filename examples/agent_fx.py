@@ -23,6 +23,7 @@ tool_get_exchange_rate = Tool.from_function(get_exchange_rate)
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 agent = Agent(
+    name="AgentFX",
     role="Get recent exchange rates data.",
     instructions="Answer in one sentence and if there is a date, mention this date.",
     llm=llm,
