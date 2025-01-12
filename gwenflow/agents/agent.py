@@ -14,7 +14,7 @@ from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
-from gwenflow.agents.prompts import PROMPT_TOOLS, AGENT_TASK
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_TASK
 
 
 MAX_TURNS = 10
@@ -41,7 +41,7 @@ class Agent(BaseModel):
 
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
-    memory: Optional[ChatMemoryBuffer] = None
+    history: Optional[ChatMemoryBuffer] = None
     metadata: Optional[Dict[str, Any]] = None
     # knowledge: Optional[Knowledge] = None
 
@@ -71,9 +71,9 @@ class Agent(BaseModel):
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
-        if self.memory is None and self.llm is not None:
+        if self.history is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
-             self.memory = ChatMemoryBuffer(token_limit=token_limit)
+             self.history = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
     def get_system_message(self, context: Optional[Any] = None):
@@ -111,12 +111,12 @@ class Agent(BaseModel):
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
-            system_message_lines.append("# Instructions")
+            system_message_lines.append("### Instructions")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
         if self.response_model:
-            system_message_lines.append("# Provide your output using the following JSON schema:")
+            system_message_lines.append("### Provide your output using the following JSON schema:")
             if isinstance(self.response_model, str):
                 system_message_lines.append("<json_fields>")
                 system_message_lines.append(f"{ self.response_model.strip() }")
@@ -150,7 +150,7 @@ class Agent(BaseModel):
             prompt += "</context>\n\n"
     
         if task:
-            prompt += AGENT_TASK.format(task=task)
+            prompt += PROMPT_TASK.format(task=task).strip()
 
         return { "role": "user", "content": prompt }
 
@@ -245,8 +245,9 @@ class Agent(BaseModel):
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
 
-        # system messages
         messages_for_model = []
+
+        # system messages
         system_message = self.get_system_message(context=context)
         if system_message:
             messages_for_model.append(system_message)
@@ -255,7 +256,7 @@ class Agent(BaseModel):
         user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
-            self.memory.add_message(user_message)
+            self.history.add_message(user_message)
 
         # global loop
         init_len = len(messages_for_model)
@@ -308,7 +309,7 @@ class Agent(BaseModel):
             messages_for_model.append(message_dict)
 
             if not message.tool_calls:
-                self.memory.add_message(message_dict)
+                self.history.add_message(message_dict)
                 break
 
             # handle tool calls and switching agents
