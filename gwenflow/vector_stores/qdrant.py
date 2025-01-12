@@ -1,6 +1,7 @@
 import logging
 import hashlib
-from typing import List, Optional, Dict, Any
+from typing import Optional
+from enum import Enum
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -11,17 +12,29 @@ from qdrant_client.models import (
     PointIdsList,
     PointStruct,
     Range,
+    DatetimeRange,
     VectorParams,
-)
+    CreateAliasOperation,
+    CreateAlias,
+    DeleteAliasOperation,
+    DeleteAlias,
+    PayloadSchemaType)
 
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
 
-
 logger = logging.getLogger(__name__)
 
+class Index(str, Enum):
+    keyword = PayloadSchemaType.KEYWORD
+    integer = PayloadSchemaType.INTEGER
+    float = PayloadSchemaType.FLOAT
+    bool = PayloadSchemaType.BOOL
+    geo = PayloadSchemaType.GEO
+    datetime = PayloadSchemaType.DATETIME
+    text = PayloadSchemaType.TEXT
 
 class Qdrant(VectorStoreBase):
 
@@ -98,17 +111,36 @@ class Qdrant(VectorStoreBase):
             logger.error(f"Error while reading collections: {e}")
         return []
 
+    def get_aliases(self) -> list:
+            """
+            List all aliases.
+
+            Returns:
+                list: List of alias names.
+            """
+            try:
+                return self.client.get_aliases()
+            except Exception as e:
+                logger.error(f"Error while reading aliases: {e}")
+            return []
+
 
     def create(self):
         """Create collection."""
-        # Skip creating collection if already exists
-        response = self.get_collections()
-        if response:
-            for collection in response.collections:
+        # Skip creating collection if already exists or an existing alias is already present
+        collections = self.get_collections()
+        if collections:
+            for collection in collections.collections:
                 if collection.name == self.collection:
                     logging.debug(f"Collection {self.collection} already exists. Skipping creation.")
                     return
 
+        aliases = self.get_aliases()
+        if aliases:
+            for alias in aliases.aliases:
+                if alias.alias_name == self.collection:
+                    logging.debug(f"Alias {self.collection} already exists. Skipping creation.")
+                    return
         try:
             self.client.create_collection(
                 collection_name=self.collection,
@@ -142,19 +174,18 @@ class Qdrant(VectorStoreBase):
             documents (list): List of documents to insert.
         """
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
-
+        _embeddings = self.embeddings.embed_documents([document.content for document in documents])
         points = []
-        for document in documents:
+        for document, embedding in zip(documents, _embeddings):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             _id = document.id
-            _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
             _payload["content"] = document.content
             points.append(
                 PointStruct(
                     id=_id,
-                    vector=_embeddings,
+                    vector=embedding,
                     payload=_payload,
                 )
             )
@@ -173,9 +204,13 @@ class Qdrant(VectorStoreBase):
             Filter: The created Filter object.
         """
         conditions = []
+        collection_payload = self.client.get_collection(collection_name=self.collection).payload_schema
         for key, value in filters.items():
             if isinstance(value, dict) and "gte" in value and "lte" in value:
-                conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
+                if key in collection_payload and collection_payload[key].data_type=="datetime":
+                    conditions.append(FieldCondition(key=key, range=DatetimeRange(gte=value["gte"], lte=value["lte"])))
+                else:
+                    conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
             else:
                 conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
         return Filter(must=conditions) if conditions else None
@@ -282,3 +317,77 @@ class Qdrant(VectorStoreBase):
             with_vectors=False,
         )
         return result
+    
+    def create_alias(self, alias_name: str):
+        """
+        Create an alias for a list of collections.
+
+        Args:
+            alias (str): Name of the alias.
+            collections (List[str]): List of collection names.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            CreateAliasOperation(
+                create_alias=CreateAlias(
+                    collection_name=self.collection, alias_name=alias_name
+                )
+            )
+        ]
+    )
+        
+    def delete_alias(self, alias_name: str):
+        """
+        Delete an alias.
+
+        Args:
+            alias (str): Name of the alias.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            DeleteAliasOperation(
+                delete_alias=DeleteAlias(alias_name=alias_name)
+            ),
+        ]
+    )
+        
+    def switch_alias(self, alias_name: str):
+        """
+        Switch an alias to a new collection.
+
+        Args:
+            alias (str): Name of the alias.
+            collection (str): Name of the collection.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            DeleteAliasOperation(
+                delete_alias=DeleteAlias(alias_name=alias_name)
+            ),
+            CreateAliasOperation(
+                create_alias=CreateAlias(
+                    collection_name=self.collection, alias_name=alias_name
+                )
+            )
+        ]
+    )
+        
+    def add_index(self, field_name: str, index_type: str):
+        """
+        Args:
+            field_name (str): Name of the field to index.
+            index_type (str): Type of index (must be one of the valid types).
+
+        Raises:
+            ValueError: If the index type is not valid.
+        """
+
+        if index_type not in Index.__members__:
+            raise ValueError(f"Invalid index_type: {index_type}. Must be one of {list(Index.__members__.keys())}")
+        
+        self.client.create_payload_index(
+            collection_name=self.collection,
+            field_name=field_name,
+            field_schema=Index(index_type)
+        )
+         

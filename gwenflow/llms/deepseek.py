@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Union, List, Dict, Any
 
 import openai
@@ -5,7 +6,7 @@ import openai
 from gwenflow.llms.openai import ChatOpenAI
 
 
-class ChatOllama(ChatOpenAI):
+class ChatDeepSeek(ChatOpenAI):
  
     def __init__(
         self,
@@ -25,9 +26,12 @@ class ChatOllama(ChatOpenAI):
         seed: Optional[int] = None,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
-        base_url: str,
+        api_key: Optional[str] = None,
         **kwargs,
-    ):
+        ):
+        
+        _api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+
         super().__init__(
             model = model,
             timeout = timeout,
@@ -44,7 +48,11 @@ class ChatOllama(ChatOpenAI):
             seed = seed,
             logprobs = logprobs,
             top_logprobs = top_logprobs,
+            api_key = _api_key,
             **kwargs,
         )
 
-        self.client = openai.OpenAI(base_url=base_url)
+        _api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        self.client = openai.OpenAI(api_key=_api_key, base_url="https://api.deepseek.com")
+        self.async_client = openai.AsyncOpenAI(api_key=_api_key, base_url="https://api.deepseek.com")
+        

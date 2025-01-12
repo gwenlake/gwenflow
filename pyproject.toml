@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "0.5.3"
+version = "0.6.0"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,7 +8,7 @@ license = { file = "LICENSE.txt" }
 keywords = ["gwenflow", "gwenlake", "agents", "llms", "ai", "ml", "nlp", "framework"]
 authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain Barthélémy", email = "sylvain.barthelemy@gwenlake.com" }, { name = "Guillaume Beguec", email = "guillaume.beguec@gwenlake.com" }, { name = "Antoine de Parthenay", email = "antoine.departhenay@gwenlake.com" }]
 
-dependencies = ["httpx", "pydantic", "tqdm", "pyyaml", "beautifulsoup4", "fsspec", "rich", "tiktoken", "openai", "langchain", "boto3", "pyarrow", "lancedb", "qdrant-client", "jinja2", "markupsafe"]
+dependencies = ["httpx", "pydantic", "tqdm", "pyyaml", "beautifulsoup4", "fsspec", "rich", "tiktoken", "openai", "langchain", "boto3", "pyarrow", "lancedb", "qdrant-client", "jinja2", "markupsafe", "dirtyjson"]
 
 classifiers = [
     "Development Status :: 3 - Alpha",
