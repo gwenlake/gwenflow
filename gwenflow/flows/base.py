@@ -3,7 +3,6 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, model_validator, field_validator, Field
 
 import yaml
-import time
 
 from gwenflow.agents import Agent
 from gwenflow.tools import Tool
@@ -33,7 +32,7 @@ class Flow(BaseModel):
         return manager
     
     @classmethod
-    def from_yaml(cls, file: str, tools: List[Tool]) -> "Flow":
+    def from_yaml(cls, file: str, tools: List[Tool], llm: Optional[Any] = None) -> "Flow":
         if cls == Flow:
             with open(file) as stream:
                 try:
@@ -52,7 +51,7 @@ class Flow(BaseModel):
 
                         context_vars = []
                         if _values.get("context"):
-                            context_vars = _values.get("context")
+                            context_vars = _values.get("context")                            
 
                         agent = Agent(
                             name=name,
@@ -61,6 +60,7 @@ class Flow(BaseModel):
                             response_model=_values.get("response_model"),
                             tools=_tools,
                             context_vars=context_vars,
+                            llm=llm,
                         )
                         agents.append(agent)
                     return Flow(agents=agents)
