@@ -77,8 +77,8 @@ class Qdrant(VectorStoreBase):
                 params["port"] = port
             if not params:
                 params["path"] = path
-            if self.on_disk:
-                params = { "url": "http://localhost:6333" }
+            # if self.on_disk:
+            #     params = { "url": "http://localhost:6333" }
 
             self.client = QdrantClient(**params)
 
@@ -207,7 +207,7 @@ class Qdrant(VectorStoreBase):
             with_payload=True,
             with_vectors=False,
         )
-
+ 
         documents = []
         for d in hits:
 
