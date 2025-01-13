@@ -81,7 +81,7 @@ class Flow(BaseModel):
                 print(f"Tools  :", ",".join(available_tools))
 
 
-    def run(self, query: str) -> str:
+    def run(self, query: str, output_file: Optional[str] = None) -> str:
 
         outputs = {}
 
@@ -106,7 +106,7 @@ class Flow(BaseModel):
                 if context is None:
                     task = query # always keep query if no context (first agents)
 
-                outputs[agent.name] = agent.run(task=task, context=context)
+                outputs[agent.name] = agent.run(task=task, context=context, output_file=output_file)
 
                 logger.debug(f"# {agent.name}\n{ outputs[agent.name].content }", extra={"markup": True})                
 
