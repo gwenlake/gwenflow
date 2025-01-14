@@ -8,7 +8,25 @@ license = { file = "LICENSE.txt" }
 keywords = ["gwenflow", "gwenlake", "agents", "llms", "ai", "ml", "nlp", "framework"]
 authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain Barthélémy", email = "sylvain.barthelemy@gwenlake.com" }, { name = "Guillaume Beguec", email = "guillaume.beguec@gwenlake.com" }, { name = "Antoine de Parthenay", email = "antoine.departhenay@gwenlake.com" }]
 
-dependencies = ["httpx", "pydantic", "tqdm", "pyyaml", "beautifulsoup4", "fsspec", "rich", "tiktoken", "openai", "langchain", "boto3", "pyarrow", "lancedb", "qdrant-client", "jinja2", "markupsafe"]
+dependencies = [
+    "gwenflow",
+    "markupsafe>=3.0.2",
+    "jinja2>=3.1.5",
+    "httpx>=0.28.1",
+    "pydantic>=2.10.5",
+    "tqdm>=4.67.1",
+    "pyyaml>=6.0.2",
+    "beautifulsoup4>=4.12.3",
+    "fsspec>=2024.12.0",
+    "rich>=13.9.4",
+    "tiktoken>=0.8.0",
+    "openai>=1.59.7",
+    "langchain>=0.3.14",
+    "boto3>=1.35.98",
+    "pyarrow>=18.1.0",
+    "lancedb>=0.18.0",
+    "qdrant-client>=1.12.2",
+]
 
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -24,3 +42,6 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://gwenlake.com"
 "Source" = "https://github.com/gwenlake/gwenflow"
+
+[tool.uv.sources]
+gwenflow = { workspace = true }
