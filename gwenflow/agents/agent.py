@@ -17,7 +17,7 @@ from gwenflow.utils import logger
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_TASK
 
 
-MAX_TURNS = 10
+MAX_TURNS = float('inf') #10
 
 
 class Agent(BaseModel):
@@ -309,7 +309,7 @@ class Agent(BaseModel):
             messages_for_model.append(message_dict)
 
             if not message.tool_calls:
-                self.history.add_message(message_dict)
+                self.history.add_message(message_dict) # We only keep the answer in history (not tool calls)
                 break
 
             # handle tool calls and switching agents
