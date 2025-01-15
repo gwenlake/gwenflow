@@ -1,16 +1,13 @@
-
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, model_validator, field_validator, Field
+from typing import List, Optional
 
 import yaml
-import time
+from pydantic import BaseModel, field_validator, Field
 
 from gwenflow.agents import Agent
 from gwenflow.tools import Tool
 from gwenflow.utils import logger
 
-
-MAX_TRIALS=5
+MAX_TRIALS = 5
 
 
 class Flow(BaseModel):
@@ -24,14 +21,14 @@ class Flow(BaseModel):
         manager = Agent(
             name="Team Manager",
             role="Manage the team to complete the task in the best way possible.",
-            instructions= [
+            instructions=[
                 "You are the leader of a team of AI Agents.",
                 "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
                 "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
-            ]
+            ],
         )
         return manager
-    
+
     @classmethod
     def from_yaml(cls, file: str, tools: List[Tool]) -> "Flow":
         if cls == Flow:
@@ -57,17 +54,20 @@ class Flow(BaseModel):
                         agent = Agent(
                             name=name,
                             role=_values.get("role"),
+                            instructions=_values.get("instructions", []),
                             description=_values.get("description"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
                             context_vars=context_vars,
+                            keep_query=_values.get("keep_query", False),
+                            keep_tools_history=_values.get("keep_tools_history", False),
                         )
                         agents.append(agent)
                     return Flow(agents=agents)
                 except Exception as e:
                     logger.error(repr(e))
         raise NotImplementedError(f"from_yaml not implemented for {cls.__name__}")
-    
+
     def describe(self):
         for agent in self.agents:
             print("---")
@@ -77,9 +77,8 @@ class Flow(BaseModel):
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
             if agent.tools:
-                available_tools = [ tool.name for tool in agent.tools ]
+                available_tools = [tool.name for tool in agent.tools]
                 print(f"Tools  :", ",".join(available_tools))
-
 
     def run(self, query: str) -> str:
 
@@ -100,15 +99,21 @@ class Flow(BaseModel):
                 # prepare context and run
                 context = None
                 if agent.context_vars:
-                    context = { f"{var}": outputs[var].content for var in agent.context_vars }
-                
+                    context = {
+                        f"{var}": outputs[var].content for var in agent.context_vars
+                    }
+
                 task = None
-                if context is None:
-                    task = query # always keep query if no context (first agents)
+                if agent.keep_query:
+                    task = query  # always keep query if no context (first agents)
+
+                print(context)
 
                 outputs[agent.name] = agent.run(task=task, context=context)
 
-                logger.debug(f"# {agent.name}\n{ outputs[agent.name].content }", extra={"markup": True})                
+                logger.debug(
+                    f"# {agent.name}\n{ outputs[agent.name].content }",
+                    extra={"markup": True},
+                )
 
         return outputs
-    

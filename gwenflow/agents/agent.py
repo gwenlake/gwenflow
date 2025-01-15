@@ -1,21 +1,19 @@
-
-import uuid
 import json
-from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+import uuid
 from collections import defaultdict
-from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
+from typing import List, Union, Optional, Any, Dict, Iterator
 
-from gwenflow.llms import ChatOpenAI
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
-from gwenflow.tools import BaseTool
-from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.knowledge import Knowledge
+from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
+
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_TASK
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
+from gwenflow.llms import ChatOpenAI
+from gwenflow.memory import ChatMemoryBuffer
+from gwenflow.tools import BaseTool
+from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.utils import logger
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_TASK
-
 
 MAX_TURNS = 10
 
@@ -26,14 +24,16 @@ class Agent(BaseModel):
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
     name: str = Field(description="Name of the agent")
     role: str = Field(description="Role of the agent")
-    description: Optional[str] = Field(default=None, description="Description of the agent")
+    description: Optional[str] = Field(
+        default=None, description="Description of the agent"
+    )
 
     # --- Settings for system message
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
     response_model: Optional[str] = None
- 
+
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
     tools: List[BaseTool] = []
@@ -43,11 +43,12 @@ class Agent(BaseModel):
     context_vars: Optional[List[str]] = []
     history: Optional[ChatMemoryBuffer] = None
     metadata: Optional[Dict[str, Any]] = None
+    keep_query: bool = False
+    keep_tools_history: bool = False
     # knowledge: Optional[Knowledge] = None
 
     # --- Team of agents
     team: Optional[List["Agent"]] = None
-
 
     @field_validator("id", mode="before")
     @classmethod
@@ -72,10 +73,10 @@ class Agent(BaseModel):
     @model_validator(mode="after")
     def model_valid(self) -> Any:
         if self.history is None and self.llm is not None:
-             token_limit = self.llm.get_context_window_size()
-             self.history = ChatMemoryBuffer(token_limit=token_limit)
+            token_limit = self.llm.get_context_window_size()
+            self.history = ChatMemoryBuffer(token_limit=token_limit)
         return self
-    
+
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
@@ -94,29 +95,37 @@ class Agent(BaseModel):
         if self.tools:
             tool_names = self.get_tool_names()
             tool_names = ",".join(tool_names)
-            system_message_lines.append(PROMPT_TOOLS.format(tool_names=tool_names).strip())
+            system_message_lines.append(
+                PROMPT_TOOLS.format(tool_names=tool_names).strip()
+            )
 
         # instructions
         instructions = self.instructions
-        
+
         if self.add_datetime_to_instructions:
             instructions.append(f"The current time is { datetime.now() }")
 
         if self.response_model:
-             instructions.append("Use JSON to format your answers.")
+            instructions.append("Use JSON to format your answers.")
         elif self.markdown:
             instructions.append("Use markdown to format your answers.")
 
         if context is not None:
-            instructions.append("Always prefer information from the provided context over your own knowledge.")
+            instructions.append(
+                "Always prefer information from the provided context over your own knowledge."
+            )
 
         if len(instructions) > 0:
             system_message_lines.append("### Instructions")
-            system_message_lines.extend([f"- {instruction}" for instruction in instructions])
+            system_message_lines.extend(
+                [f"- {instruction}" for instruction in instructions]
+            )
             system_message_lines.append("")
 
         if self.response_model:
-            system_message_lines.append("### Provide your output using the following JSON schema:")
+            system_message_lines.append(
+                "### Provide your output using the following JSON schema:"
+            )
             if isinstance(self.response_model, str):
                 system_message_lines.append("<json_fields>")
                 system_message_lines.append(f"{ self.response_model.strip() }")
@@ -124,11 +133,15 @@ class Agent(BaseModel):
 
         # final system prompt
         if len(system_message_lines) > 0:
-            return dict(role="system", content=("\n".join(system_message_lines)).strip())
-        
+            return dict(
+                role="system", content=("\n".join(system_message_lines)).strip()
+            )
+
         return None
 
-    def get_user_message(self, task: Optional[str] = None, context: Optional[Any] = None):
+    def get_user_message(
+        self, task: Optional[str] = None, context: Optional[Any] = None
+    ):
         """Return the user message for the Agent."""
 
         prompt = ""
@@ -148,13 +161,12 @@ class Agent(BaseModel):
                     prompt += f"</{key}>\n\n"
 
             prompt += "</context>\n\n"
-    
+
         if task:
             prompt += PROMPT_TASK.format(task=task).strip()
 
-        return { "role": "user", "content": prompt }
+        return {"role": "user", "content": prompt}
 
-    
     def get_tools_openai_schema(self):
         return [tool.openai_schema for tool in self.tools]
 
@@ -168,7 +180,9 @@ class Agent(BaseModel):
 
         available_tools = self.get_tools_map()
         if tool_name not in available_tools:
-            logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
+            logger.error(
+                f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }."
+            )
             return None
 
         logger.debug(f"Tool call: {tool_name} with arguments {arguments}")
@@ -180,7 +194,7 @@ class Agent(BaseModel):
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
     ) -> List:
-        
+
         tool_map = self.get_tools_map()
 
         messages = []
@@ -190,7 +204,9 @@ class Agent(BaseModel):
 
             # handle missing tool case, skip to next tool
             if tool_name not in tool_map:
-                logger.error(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
+                logger.error(
+                    f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }."
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -203,7 +219,7 @@ class Agent(BaseModel):
 
             arguments = json.loads(tool_call.function.arguments)
             observation = self.execute_tool_call(tool_name, arguments)
-            
+
             if observation:
                 messages.append(
                     {
@@ -216,7 +232,7 @@ class Agent(BaseModel):
 
         return messages
 
-    def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
+    def invoke(self, messages: list, stream: bool = False) -> Union[Any, Iterator[Any]]:
 
         tools = self.get_tools_openai_schema()
 
@@ -233,9 +249,8 @@ class Agent(BaseModel):
 
         if stream:
             return self.llm.stream(**params, response_format=response_format)
-        
-        return self.llm.invoke(**params, response_format=response_format)
 
+        return self.llm.invoke(**params, response_format=response_format)
 
     def _run(
         self,
@@ -243,7 +258,7 @@ class Agent(BaseModel):
         *,
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
-    ) ->  Iterator[AgentResponse]:
+    ) -> Iterator[AgentResponse]:
 
         messages_for_model = []
 
@@ -298,7 +313,7 @@ class Agent(BaseModel):
 
                 message["tool_calls"] = list(message.get("tool_calls", {}).values())
                 message = ChatCompletionMessage(**message)
-            
+
             else:
                 completion = self.invoke(messages=messages_for_model)
                 message = completion.choices[0].message
@@ -316,7 +331,16 @@ class Agent(BaseModel):
             tool_response_messages = self.handle_tool_calls(message.tool_calls)
             messages_for_model.extend(tool_response_messages)
 
-        content = messages_for_model[-1]["content"]
+        if self.keep_tools_history:
+            content = "\n".join(
+                [
+                    message["content"]
+                    for message in messages_for_model[1:]
+                    if message["content"]
+                ]
+            )
+        else:
+            content = messages_for_model[-1]["content"]
         if self.response_model:
             content = json.loads(content)
 
@@ -327,7 +351,6 @@ class Agent(BaseModel):
             tools=self.tools,
         )
 
-
     def run(
         self,
         task: Optional[str] = None,
@@ -335,7 +358,7 @@ class Agent(BaseModel):
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
         output_file: Optional[str] = None,
-    ) ->  Union[AgentResponse, Iterator[AgentResponse]]:
+    ) -> Union[AgentResponse, Iterator[AgentResponse]]:
 
         logger.debug("")
         logger.debug("------------------------------------------")
@@ -350,7 +373,7 @@ class Agent(BaseModel):
                 stream=True,
             )
             return response
-    
+
         else:
 
             response = self._run(
