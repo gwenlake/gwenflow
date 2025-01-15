@@ -199,12 +199,9 @@ class DrawFlow(BaseModel):
 
         # Define the template path relative to the package directory
         template_file = "index.html"
-        print(f"Template file: {os.path.join(package_dir, template_file)}")
 
         # Generate JSON for the template
         drawflow_json = self.generate_drawflow()
-
-        print(f"Drawflow JSON: {drawflow_json}")
 
         # Set up Jinja2 environment, pointing to the package directory
         env = Environment(loader=FileSystemLoader(package_dir))
