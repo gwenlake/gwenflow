@@ -38,19 +38,19 @@ EXAMPLE = [
 ]
 
 
-TASK_GENERATOR = """You are an expert in creating a list of AI agents as a JSON array.
+TASK_GENERATOR = """Create a list of AI Agents as a JSON array. Follow these guidelines:
 
-# Guidelines:
-- Create agents based on the objective.
+- Create agents based on the tasks.
 - A name should be given to Agents.
 - Limit agents to those that can be completed with the available tools listed below.
-- Tasks should be detailed.
+- All tasks should be detailed.
 - When requiring multiple searches, use the tools multiple times. This tool will use the dependent task result to generate the search query if necessary.
 - The task description should be the question you want to ask the user.
 - Make sure all task are in chronological order.
 - [context] should always be an empty array or an array of Agent names it should pull results from.
-- Current tool options are {tools}.
+- Current tool options are the following: {tools}.
 - [tools] should always be an empty array or an array of Tools the Agent can use to complete its task.
+- You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.
 
 # Example:
 Objective: Look up AI news from today (May 27, 2023) and prepare a report.
@@ -59,26 +59,26 @@ Agent list
 {examples}
 ```
 
-# Your task:
-Objective: {objective}
-Agent list:
-"""
+You have to achieve the following task:
 
+<tasks>
+{tasks}
+<tasks>
+"""
 
 class AutoFlow(Flow):
 
-    llm: Any = None
-    tools: List[BaseTool] = []
-
-    def run(self, query: str, output_file: Optional[str] = None) -> str:
+    def run(self, user_prompt: str, output_file: Optional[str] = None) -> str:
 
         tools = [ tool.name for tool in self.tools ]
         tools = ", ".join(tools)
 
-        task_prompt = TASK_GENERATOR.format(objective=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
+        task_prompt = TASK_GENERATOR.format(tasks=user_prompt, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
         
-        agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
-        agents_json = parse_json_markdown(agents_json)
+        response = self.manager.run(task_prompt)
+        # agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
+
+        agents_json = parse_json_markdown(response.content)
 
         for agent_json in agents_json:
 
@@ -100,4 +100,4 @@ class AutoFlow(Flow):
 
         self.describe()
 
-        return super().run(query, output_file=output_file)
+        return super().run(user_prompt=user_prompt, output_file=output_file)

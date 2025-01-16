@@ -5,7 +5,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field
 import yaml
 
 from gwenflow.agents import Agent
-from gwenflow.tools import Tool
+from gwenflow.tools import Tool, BaseTool
 from gwenflow.utils import logger
 
 
@@ -15,22 +15,28 @@ MAX_TRIALS=5
 class Flow(BaseModel):
 
     agents: List[Agent] = []
-    manager: Optional[Agent] = Field(None, validate_default=True)
+    manager: Optional[Agent] = None
+    llm: Any = None
+    tools: List[BaseTool] = []
+
     flow_type: str = "sequence"
 
-    @field_validator("manager", mode="before")
-    def set_manager(cls, v: Optional[str]) -> str:
-        manager = Agent(
-            name="Team Manager",
-            role="Manage the team to complete the task in the best way possible.",
-            instructions= [
-                "You are the leader of a team of AI Agents.",
-                "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
-                "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
-            ]
-        )
-        return manager
-    
+    @model_validator(mode="after")
+    def model_valid(self) -> Any:
+        if self.manager is None:
+            self.manager = Agent(
+                name="Team Manager",
+                role="Manage the team to complete the task in the best way possible.",
+                instructions= [
+                    "You are the leader of a team of AI Agents.",
+                    "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
+                    "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
+                ],
+                tools=self.tools,
+                llm=self.llm,
+            )
+        return self
+        
     @classmethod
     def from_yaml(cls, file: str, tools: List[Tool], llm: Optional[Any] = None) -> "Flow":
         if cls == Flow:
@@ -81,7 +87,7 @@ class Flow(BaseModel):
                 print(f"Tools  :", ",".join(available_tools))
 
 
-    def run(self, query: str, output_file: Optional[str] = None) -> str:
+    def run(self, user_prompt: str, output_file: Optional[str] = None) -> str:
 
         outputs = {}
 
@@ -104,7 +110,7 @@ class Flow(BaseModel):
                 
                 task = None
                 if context is None:
-                    task = query # always keep query if no context (first agents)
+                    task = user_prompt # always keep query if no context (first agents)
 
                 outputs[agent.name] = agent.run(task=task, context=context, output_file=output_file)
 
