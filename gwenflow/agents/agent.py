@@ -38,6 +38,7 @@ class Agent(BaseModel):
     llm: Optional[Any] = Field(None, validate_default=True)
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    show_tool_calls: bool = False
 
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
@@ -285,13 +286,21 @@ class Agent(BaseModel):
                         if delta["role"] == "assistant":
                             delta["sender"] = self.name
                         if delta["content"]:
-                            # yield delta["content"]
                             yield AgentResponse(
                                 delta=delta["content"],
                                 messages=None,
                                 agent=self,
                                 tools=self.tools,
                             )
+                        elif delta["tool_calls"] and self.show_tool_calls:
+                            if delta["tool_calls"][0]["function"]["name"] and not delta["tool_calls"][0]["function"]["arguments"]:
+                                response = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
+                                yield AgentResponse(
+                                    delta=response,
+                                    messages=None,
+                                    agent=self,
+                                    tools=self.tools,
+                                )
                         delta.pop("role", None)
                         delta.pop("sender", None)
                         merge_chunk(message, delta)
