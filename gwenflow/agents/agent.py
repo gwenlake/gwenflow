@@ -34,7 +34,7 @@ class Agent(BaseModel):
     markdown: bool = False
     response_model: Optional[dict] = None
     steps: Optional[List[str]] = []
-    follow_steps: bool = True
+    follow_steps: bool = False
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
