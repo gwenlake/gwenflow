@@ -33,6 +33,7 @@ class Agent(BaseModel):
     add_datetime_to_instructions: bool = True
     markdown: bool = False
     response_model: Optional[dict] = None
+    steps: Optional[List[str]] = []
     follow_steps: bool = True
  
     # --- Agent Model and Tools
@@ -111,7 +112,7 @@ class Agent(BaseModel):
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
-            system_message_lines.append("Follow these guidelines:\n")
+            system_message_lines.append("Guidelines:\n")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
@@ -123,8 +124,13 @@ class Agent(BaseModel):
             system_message_lines.append("")
 
         if self.follow_steps:
-            system_message_lines.append(PROMPT_STEPS.strip())
-            system_message_lines.append("")
+            if len(self.steps) > 0:
+                system_message_lines.append("Follow these steps:\n")
+                system_message_lines.extend([f"{i+1}. {step}" for i, step in enumerate(self.steps)])
+                system_message_lines.append("")
+            else:
+                system_message_lines.append(PROMPT_STEPS.strip())
+                system_message_lines.append("")
 
         # final system prompt
         if len(system_message_lines) > 0:
