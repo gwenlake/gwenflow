@@ -12,7 +12,7 @@ HTML_TEMPLATE = """
     <i class="fas fa-robot"></i>&nbsp;&nbsp;{name}
   </div>
   <div class="box">
-    <p>{task}</p>
+    <p>{role}</p>
   </div>
 </div>
 """
@@ -55,7 +55,7 @@ class Node(BaseModel):
             "name": self.name,
             "context_vars": self.context_vars,
             "class": "agent",
-            "html": HTML_TEMPLATE.format(name=self.name, task=self.role),
+            "html": HTML_TEMPLATE.format(name=self.name, role=self.role),
             "typenode": False,
             "data": {},
             "inputs": self.inputs,
