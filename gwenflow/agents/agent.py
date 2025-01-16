@@ -112,7 +112,9 @@ class Agent(BaseModel):
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
+
             system_message_lines.append("Guidelines:\n")
+
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
@@ -131,6 +133,7 @@ class Agent(BaseModel):
             else:
                 system_message_lines.append(PROMPT_STEPS.strip())
                 system_message_lines.append("")
+
 
         # final system prompt
         if len(system_message_lines) > 0:
