@@ -69,6 +69,7 @@ Instructions for Creating AI Agents:
    - Limit Agents to those that can be completed with the available tools listed above
    - Ensure all tasks are detailed and specific
    - When multiple searches are required, use the tools multiple times
+   - Do not use the same tool with the same arguments multiple times
    - Make sure all tasks are in chronological order
    - Validate the output of other Agents and reassign tasks if necessary
 
