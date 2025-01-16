@@ -70,7 +70,7 @@ class AutoFlow(Flow):
     llm: Any = None
     tools: List[BaseTool] = []
 
-    def run(self, query: str) -> str:
+    def run(self, query: str, output_file: Optional[str] = None) -> str:
 
         tools = [ tool.name for tool in self.tools ]
         tools = ", ".join(tools)
@@ -100,4 +100,4 @@ class AutoFlow(Flow):
 
         self.describe()
 
-        return super().run(query)
+        return super().run(query, output_file=output_file)

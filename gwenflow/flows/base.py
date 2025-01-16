@@ -72,7 +72,7 @@ class Flow(BaseModel):
         for agent in self.agents:
             print("---")
             print(f"Agent  : {agent.name}")
-            if agent.task:
+            if agent.role:
                 print(f"Role   : {agent.role}")
             if agent.context_vars:
                 print(f"Context:", ",".join(agent.context_vars))
