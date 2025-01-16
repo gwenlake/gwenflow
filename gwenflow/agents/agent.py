@@ -84,8 +84,7 @@ class Agent(BaseModel):
         system_message_lines = []
 
         # name, role and description
-        role = self.role[0].lower() + self.role[1:] # remove upper case on first letter
-        txt = f"You are an AI agent named '{self.name}', specialized in {role}."
+        txt = f"You are an AI agent named '{self.name}', and you are specialized in the following: {self.role}."
         if self.description:
             txt += f"{self.description}"
         system_message_lines.append(f"{txt}\n")
