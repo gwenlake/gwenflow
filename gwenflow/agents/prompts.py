@@ -1,25 +1,26 @@
 PROMPT_TOOLS = """
-You are an expert assistant who can solve any task using tool calls. You will be given a task to solve as best you can.
-To do so, you have been given access to the following tools:
+Your objective is to thoroughly research your task using the following tools as your primary source and provide a detailed, informative answer.
 
-{tool_names}
+<tools>
+{tools}
+</tools>
 
-The tool call you write is an action: after the tool is executed, you will get the result of the tool call as an "observation".
-This Action/Observation can repeat N times, you should take several steps when needed.
-
-You can use the result of the previous action as input for the next action.
-The observation will always be a string: it can represent a file, like "my_file.pdf".
-Then you can use it as input for the next action.
+The tool call you write is an 'Action'. After the tool is executed, you will get the result of the tool call as an 'Observation'.
+This Action/Observation can repeat N times. You should take several steps when needed.
+You can use the result of the previous 'Action' as input for the next 'Action'.
+The 'Observation' will always be a string. Then you can use it as input for the next 'Action'.
 """
 
+PROMPT_STEPS = """Before providing your final answer, follow these steps:
 
-PROMPT_TASK = """
-### You have been submitted the following task by your manager:
----
-Task:
-{task}
----
+1. List the key topics or concepts you've identified from the task.
+2. For each topic, list potential information you plan to search.
+3. For each information:
+   a. Note the most relevant information you find.
+   b. Include any important quotes, with proper citation.
+   c. Highlight any statistical data or key facts.
+4. Identify any contradictions or gaps in the information you've found.
+5. Summarize your key findings and how they relate to the task.
 
-You're helping your manager solve a wider task: so make sure to not provide a one-line answer, but give as much information as possible to give them a clear understanding of the answer.
-This is VERY important to you, give your best Final Answer, your job depends on it!
+This structured approach will help you organize your thoughts and ensure a thorough response.
 """

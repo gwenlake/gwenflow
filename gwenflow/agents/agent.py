@@ -14,7 +14,7 @@ from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_TASK
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS
 
 
 MAX_TURNS = float('inf') #10
@@ -32,7 +32,8 @@ class Agent(BaseModel):
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
-    response_model: Optional[str] = None
+    response_model: Optional[dict] = None
+    follow_steps: bool = True
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
@@ -82,27 +83,26 @@ class Agent(BaseModel):
 
         system_message_lines = []
 
-        # name, description and role
-        system_message_lines.append(f"You're a helpful agent named '{self.name}'.")
-
+        # name, role and description
+        role = self.role[0].lower() + self.role[1:] # remove upper case on first letter
+        txt = f"You are an AI agent named '{self.name}', specialized in {role}."
         if self.description:
-            system_message_lines.append(f"{self.description}")
+            txt += f"{self.description}"
+        system_message_lines.append(f"{txt}\n")
 
-        if self.role:
-            system_message_lines.append(f"Your role is: {self.role}.")
+        if self.add_datetime_to_instructions:
+            txt = f"The current date and time is:\n<current_date>\n{ datetime.now() }\n</current_date>\n"
+            system_message_lines.append(txt)
 
         # tools
         if self.tools:
-            tool_names = self.get_tool_names()
-            tool_names = ",".join(tool_names)
-            system_message_lines.append(PROMPT_TOOLS.format(tool_names=tool_names).strip())
+            tool_names = ",".join(self.get_tool_names())
+            system_message_lines.append(PROMPT_TOOLS.format(tools=tool_names).strip())
+            system_message_lines.append("")
 
         # instructions
         instructions = self.instructions
         
-        if self.add_datetime_to_instructions:
-            instructions.append(f"The current time is { datetime.now() }")
-
         if self.response_model:
              instructions.append("Use JSON to format your answers.")
         elif self.markdown:
@@ -112,16 +112,20 @@ class Agent(BaseModel):
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
-            system_message_lines.append("### Instructions")
+            system_message_lines.append("Follow these guidelines:\n")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
         if self.response_model:
-            system_message_lines.append("### Provide your output using the following JSON schema:")
-            if isinstance(self.response_model, str):
-                system_message_lines.append("<json_fields>")
-                system_message_lines.append(f"{ self.response_model.strip() }")
-                system_message_lines.append("</json_fields>\n\n")
+            system_message_lines.append("Provide your output using the following JSON schema:")
+            system_message_lines.append("<json_schema>")
+            system_message_lines.append(json.dumps(self.response_model, indent=4))
+            system_message_lines.append("</json_schema>")
+            system_message_lines.append("")
+
+        if self.follow_steps:
+            system_message_lines.append(PROMPT_STEPS.strip())
+            system_message_lines.append("")
 
         # final system prompt
         if len(system_message_lines) > 0:
@@ -134,9 +138,12 @@ class Agent(BaseModel):
 
         prompt = ""
 
+        if task:
+            prompt += f"You have received the following task from your manager:\n<task>\n{task}\n</task>\n\n"
+
         if context:
 
-            prompt += "\n\nUse the following information from the knowledge base if it helps:\n"
+            prompt += "Use the following information from the knowledge base if it helps:\n"
             prompt += "<context>\n"
 
             if isinstance(context, str):
@@ -150,9 +157,6 @@ class Agent(BaseModel):
 
             prompt += "</context>\n\n"
     
-        if task:
-            prompt += PROMPT_TASK.format(task=task).strip()
-
         return { "role": "user", "content": prompt }
 
     
