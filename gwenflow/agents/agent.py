@@ -35,6 +35,7 @@ class Agent(BaseModel):
     response_model: Optional[dict] = None
     steps: Optional[List[str]] = []
     follow_steps: bool = False
+    is_react: bool = False
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
@@ -96,8 +97,10 @@ class Agent(BaseModel):
 
         # tools
         if self.tools:
-            tool_names = ",".join(self.get_tool_names())
-            system_message_lines.append(PROMPT_TOOLS.format(tools=tool_names).strip())
+            tools = ",".join(self.get_tool_names())
+            if self.is_react:
+                tools = json.dumps(self.get_tools_openai_schema())
+            system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
             system_message_lines.append("")
 
         # instructions
@@ -141,8 +144,28 @@ class Agent(BaseModel):
         
         return None
 
+
+    def format_context(self, context):
+        prompt  = "Use the following information from the knowledge base if it helps:\n\n<context>\n"
+
+        if isinstance(context, str):
+            prompt += context + "\n"
+
+        elif isinstance(context, dict):
+            for key in context.keys():
+                prompt += f"<{key}>\n"
+                prompt += context.get(key) + "\n"
+                prompt += f"</{key}>\n\n"
+
+        prompt += "</context>\n\n"
+
+        return prompt
+
     def get_user_message(self, task: Optional[str] = None, context: Optional[Any] = None):
         """Return the user message for the Agent."""
+
+        if not task and not context:
+            raise ValueError("You need a task or a context (or both) to run the agent!")
 
         prompt = ""
 
@@ -150,21 +173,8 @@ class Agent(BaseModel):
             prompt += f"You have received the following task from your manager:\n<task>\n{task}\n</task>\n\n"
 
         if context:
+            prompt += self.format_context(context)
 
-            prompt += "Use the following information from the knowledge base if it helps:\n"
-            prompt += "<context>\n"
-
-            if isinstance(context, str):
-                prompt += context + "\n"
-
-            elif isinstance(context, dict):
-                for key in context.keys():
-                    prompt += f"<{key}>\n"
-                    prompt += context.get(key) + "\n"
-                    prompt += f"</{key}>\n\n"
-
-            prompt += "</context>\n\n"
-    
         return { "role": "user", "content": prompt }
 
     
