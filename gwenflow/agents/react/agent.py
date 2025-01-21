@@ -1,85 +1,18 @@
-
-import uuid
-import re
 import json
-from json_repair import repair_json
-from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+from typing import Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
-from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
-from datetime import datetime
 
-from gwenflow.llms import ChatOpenAI
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
-from gwenflow.tools import BaseTool
-from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.knowledge import Knowledge
+from gwenflow.types import ChatCompletionMessage
 from gwenflow.agents.types import AgentResponse
+from gwenflow.agents.agent import Agent
+from gwenflow.agents.react.types import ActionReasoningStep
+from gwenflow.agents.react.parser import parse_reasoning_step
+from gwenflow.agents.react.prompts import PROMPT_TASK_REACT
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
-from gwenflow.agents.agent import Agent
-from gwenflow.agents.types import ReActAgentAction, ReActAgentFinish
-from gwenflow.agents.prompts import PROMPT_TASK_REACT
 
 
 MAX_TURNS = float('inf')
-
-FINAL_ANSWER = "Final Answer:"
-
-def _extract_thought(text: str) -> str:
-    regex = r"(.*?)(?:\n\nAction|\n\nFinal Answer)"
-    thought_match = re.search(regex, text, re.DOTALL)
-    if thought_match:
-        return thought_match.group(1).strip()
-    return ""
-
-def _clean_action(text: str) -> str:
-    """Clean action string by removing non-essential formatting characters."""
-    return re.sub(r"^\s*\*+\s*|\s*\*+\s*$", "", text).strip()
-
-def _safe_repair_json(tool_input: str) -> str:
-    UNABLE_TO_REPAIR_JSON_RESULTS = ['""', "{}"]
-    if tool_input.startswith("[") and tool_input.endswith("]"):
-        return tool_input
-    tool_input = tool_input.replace('"""', '"')
-    result = repair_json(tool_input)
-    if result in UNABLE_TO_REPAIR_JSON_RESULTS:
-        return tool_input
-    return str(result)
-    
-def _parse_response(text: str) -> Union[ReActAgentAction, ReActAgentFinish]:
-
-    thought = _extract_thought(text)
-    includes_answer = "Final Answer:" in text
-    regex = (
-        r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
-    )
-    action_match = re.search(regex, text, re.DOTALL)
-
-    if action_match:
-
-        if includes_answer:
-            raise ValueError("Error while trying to perform Action and give a Final Answer at the same time!")
-
-        action = action_match.group(1)
-        action = _clean_action(action)
-        action_input = action_match.group(2).strip()
-
-        tool_input = action_input.strip(" ").strip('"')
-        tool_input = _safe_repair_json(tool_input)
-
-        return ReActAgentAction(thought=thought, action=action, action_input=tool_input, text=text)
-
-    elif includes_answer:
-        final_answer = text.split(FINAL_ANSWER)[-1].strip()
-        return ReActAgentFinish(thought=thought, final_answer=final_answer, text=text)
-
-    if not re.search(r"Action\s*\d*\s*:[\s]*(.*?)", text, re.DOTALL):
-        raise ValueError("Missing Action after Thought!")
-
-    elif not re.search(r"[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)", text, re.DOTALL):
-        raise ValueError("Missing Action Input after Action!")
-    else:
-        raise ValueError("Sorry, I didn't use the right tool format.!")
 
 
 class ReActAgent(Agent):
@@ -105,22 +38,22 @@ class ReActAgent(Agent):
 
     def handle_tool_call(
         self,
-        agent_action: ReActAgentAction,
+        reasoning_step: ActionReasoningStep,
     ) -> Dict:
         
         tool_map = self.get_tools_map()
 
         # handle missing tool case, skip to next tool
-        if agent_action.action not in tool_map:
-            logger.error(f"Unknown tool {agent_action.action}, should be instead one of { tool_map.keys() }.")
+        if reasoning_step.action not in tool_map:
+            logger.error(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
                     "role": "assistant",
-                    "content": f"Error: Tool {agent_action.action} not found.",
+                    "content": f"Error: Tool {reasoning_step.action} not found.",
             }
 
-        arguments = json.loads(agent_action.action_input)
-        observation = self.execute_tool_call(agent_action.action, arguments)
-        
+        arguments = json.loads(reasoning_step.action_input)
+        observation = self.execute_tool_call(reasoning_step.action, arguments)
+                
         return {
             "role": "assistant",
             "content": f"Observation: {observation}",
@@ -165,7 +98,7 @@ class ReActAgent(Agent):
             self.history.add_message(user_message)
 
         # global loop
-        final_answer = ""
+        response = ""
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
 
@@ -225,14 +158,14 @@ class ReActAgent(Agent):
 
             # parse response
             logger.info(completion.choices[0].message.content)
-            parsed_response = _parse_response(completion.choices[0].message.content)
-            if isinstance(parsed_response, ReActAgentFinish):
+            reasoning_step = parse_reasoning_step(completion.choices[0].message.content)
+            if reasoning_step.is_done:
                 logger.debug("Task done.")
-                final_answer = parsed_response.final_answer
+                response = reasoning_step.response
                 break
 
             # handle tool calls and switching agents
-            observation = self.handle_tool_call(parsed_response)
+            observation = self.handle_tool_call(reasoning_step)
             messages_for_model.append(observation)
 
         content = messages_for_model[-1]["content"]
@@ -240,7 +173,7 @@ class ReActAgent(Agent):
             content = json.loads(content)
 
         yield AgentResponse(
-            content=final_answer,
+            content=response,
             messages=messages_for_model[init_len:],
             agent=self,
             tools=self.tools,

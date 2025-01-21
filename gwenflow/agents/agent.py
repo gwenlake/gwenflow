@@ -1,7 +1,7 @@
 
 import uuid
 import json
-from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
 from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
@@ -10,11 +10,10 @@ from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
-from gwenflow.utils import logger
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS
+from gwenflow.utils import logger
 
 
 MAX_TURNS = float('inf') #10
