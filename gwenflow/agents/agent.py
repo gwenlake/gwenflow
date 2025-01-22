@@ -28,6 +28,7 @@ class Agent(BaseModel):
     description: Optional[str] = Field(default=None, description="Description of the agent")
 
     # --- Settings for system message
+    system_prompt: Optional[str] = None
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
@@ -82,12 +83,17 @@ class Agent(BaseModel):
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
+        if self.system_prompt is not None:
+            return dict(role="system", content=self.system_prompt)
+
         system_message_lines = []
 
         # name, role and description
-        txt = f"You are an AI agent named '{self.name}', and you are specialized in the following: {self.role}."
+        txt = f"You are an AI agent named '{self.name}'."
+        if self.role:
+            txt += f" Your role is: {self.role.strip('.')}."
         if self.description:
-            txt += f"{self.description}"
+            txt += f" {self.description.strip('.')}."
         system_message_lines.append(f"{txt}\n")
 
         if self.add_datetime_to_instructions:
@@ -106,22 +112,21 @@ class Agent(BaseModel):
         instructions = self.instructions
         
         if self.response_model:
-             instructions.append("Use JSON to format your answers.")
+            instructions.append("Use JSON to format your answers.")
         elif self.markdown:
             instructions.append("Use markdown to format your answers.")
-
+        if self.tools is not None:
+            instructions.append("Only use the tools you are provided.")
         if context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(instructions) > 0:
-
-            system_message_lines.append("Guidelines:\n")
-
+            system_message_lines.append("## Guidelines:")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
         if self.response_model:
-            system_message_lines.append("Provide your output using the following JSON schema:")
+            system_message_lines.append("## Provide your output using the following JSON schema:")
             system_message_lines.append("<json_schema>")
             system_message_lines.append(json.dumps(self.response_model, indent=4))
             system_message_lines.append("</json_schema>")
@@ -129,13 +134,12 @@ class Agent(BaseModel):
 
         if self.follow_steps:
             if len(self.steps) > 0:
-                system_message_lines.append("Follow these steps:\n")
+                system_message_lines.append("## Follow these steps:\n")
                 system_message_lines.extend([f"{i+1}. {step}" for i, step in enumerate(self.steps)])
                 system_message_lines.append("")
             else:
                 system_message_lines.append(PROMPT_STEPS.strip())
                 system_message_lines.append("")
-
 
         # final system prompt
         if len(system_message_lines) > 0:

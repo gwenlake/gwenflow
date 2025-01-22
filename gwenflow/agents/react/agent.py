@@ -7,7 +7,7 @@ from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import parse_reasoning_step
-from gwenflow.agents.react.prompts import PROMPT_TASK_REACT
+from gwenflow.agents.react.prompts import PROMPT_REACT
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
 
@@ -18,23 +18,32 @@ MAX_TURNS = float('inf')
 class ReActAgent(Agent):
 
     is_react: bool = True
+    description: str = "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step."
 
-    def get_user_message(self, task: Optional[str] = None, context: Optional[Any] = None):
-        """Return the user message for the Agent."""
+    def get_system_message(self, context: Optional[Any] = None):
+        """Return the system message for the Agent."""
+        system_message = super(ReActAgent, self).get_system_message(context=context)
 
-        if not task:
-            raise ValueError("A ReActAgent always needs a task!")
-
-        prompt = ""
-
-        if context:
-            prompt += self.format_context(context)
-
+        # ReAct
         tool_names = ",".join(self.get_tool_names())
-        prompt += PROMPT_TASK_REACT.format(task=task, tool_names=tool_names)
+        prompt = PROMPT_REACT.format(tool_names=tool_names).strip()
+        system_message["content"] += f"\n\n{prompt}"
 
-        return { "role": "user", "content": prompt }
+        # Additional guidelines
+        guidelines = [
+            "First, carefully analyze the task by spelling it out loud.",
+            "Then, break down the problem by thinking through it step by step and develop multiple strategies to solve the problem.",
+            "Work through your plan step-by-step, executing any tools as needed.",
+        ]
+        if len(guidelines) > 0:
+            system_message_lines = []
+            system_message_lines.append("## Additional Guidelines:")
+            system_message_lines.extend([f"- {guideline}" for guideline in guidelines])
+            system_message_lines.append("")
+            system_message["content"] += "\n\n"
+            system_message["content"] += "\n".join(system_message_lines)
 
+        return system_message
 
     def handle_tool_call(
         self,
@@ -96,7 +105,7 @@ class ReActAgent(Agent):
         if user_message:
             messages_for_model.append(user_message)
             self.history.add_message(user_message)
-
+        
         # global loop
         response = ""
         init_len = len(messages_for_model)
@@ -107,14 +116,6 @@ class ReActAgent(Agent):
                     "content": "",
                     "sender": self.name,
                     "role": "assistant",
-                    "function_call": None,
-                    "tool_calls": defaultdict(
-                        lambda: {
-                            "function": {"arguments": "", "name": ""},
-                            "id": "",
-                            "type": "",
-                        }
-                    ),
                 }
 
                 completion = self.invoke(messages=messages_for_model, stream=True)
@@ -131,20 +132,10 @@ class ReActAgent(Agent):
                                 agent=self,
                                 tools=self.tools,
                             )
-                        elif delta["tool_calls"] and self.show_tool_calls:
-                            if delta["tool_calls"][0]["function"]["name"] and not delta["tool_calls"][0]["function"]["arguments"]:
-                                response = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                                yield AgentResponse(
-                                    delta=response,
-                                    messages=None,
-                                    agent=self,
-                                    tools=self.tools,
-                                )
                         delta.pop("role", None)
                         delta.pop("sender", None)
                         merge_chunk(message, delta)
 
-                message["tool_calls"] = list(message.get("tool_calls", {}).values())
                 message = ChatCompletionMessage(**message)
             
             else:
@@ -157,14 +148,14 @@ class ReActAgent(Agent):
             messages_for_model.append(message_dict)
 
             # parse response
-            logger.info(completion.choices[0].message.content)
-            reasoning_step = parse_reasoning_step(completion.choices[0].message.content)
+            logger.debug(message.content)
+            reasoning_step = parse_reasoning_step(message.content)
             if reasoning_step.is_done:
                 logger.debug("Task done.")
                 response = reasoning_step.response
                 break
 
-            # handle tool calls and switching agents
+            # handle tool calls
             observation = self.handle_tool_call(reasoning_step)
             messages_for_model.append(observation)
 

@@ -1,4 +1,4 @@
-PROMPT_TASK_REACT = """
+PROMPT_REACT = """
 ## Output Format
 To answer the question, please use the following format.
 
@@ -31,9 +31,4 @@ Final Answer: [your answer here]
 Thought: I cannot answer the question with the provided tools.
 Final Answer: Sorry, I cannot answer your query.
 ```
-
-## Current Conversation
-Below is the current conversation consisting of interleaving human and assistant messages.
-
-{task}
 """
