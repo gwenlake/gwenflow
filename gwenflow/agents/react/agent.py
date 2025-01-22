@@ -20,14 +20,22 @@ class ReActAgent(Agent):
     is_react: bool = True
     description: str = "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step."
 
+
+    def parse(self, text: str) -> ActionReasoningStep:
+        return parse_reasoning_step(text)
+
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
         # Add additional instructions
         additional_guidelines = [
-            "Please ALWAYS start with a Thought. Carefully analyze the task by spelling it out loud.",
-            "Then, break down the problem by thinking through it step by step and develop multiple strategies to solve the problem.",
-            "Work through your plan step-by-step, executing any tools as needed.",
+            "Your goal is to reason about the query and decide on the best course of action to answer it accurately.",
+            "Analyze the query, previous reasoning steps, and observations.",
+            "Please ALWAYS start with a Thought.",
+            "Always base your reasoning on the actual observations from tool use.",
+            "If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.",
+            "Provide a final answer only when you're confident you have sufficient information.",
+            "If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.",
         ]
         self.instructions = additional_guidelines + self.instructions
 
@@ -52,15 +60,15 @@ class ReActAgent(Agent):
         if reasoning_step.action not in tool_map:
             logger.error(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
-                    "role": "assistant",
-                    "content": f"Error: Tool {reasoning_step.action} not found.",
+                "role": "user",
+                "content": f"Observation: Error, Tool {reasoning_step.action} not found.",
             }
 
         arguments = json.loads(reasoning_step.action_input)
         observation = self.execute_tool_call(reasoning_step.action, arguments)
                 
         return {
-            "role": "assistant",
+            "role": "user",
             "content": f"Observation: {observation}",
         }
     
@@ -103,7 +111,6 @@ class ReActAgent(Agent):
             self.history.add_message(user_message)
        
         # global loop
-        response = ""
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
 
@@ -139,16 +146,17 @@ class ReActAgent(Agent):
                 message = completion.choices[0].message
                 message.sender = self.name
 
+            # show response
+            logger.debug(message.content)
+
             # add messages to the current message stack
-            message_dict = json.loads(message.model_dump_json())
-            messages_for_model.append(message_dict)
+            message = json.loads(message.model_dump_json())
+            messages_for_model.append(message)
 
             # parse response
-            logger.debug(message.content)
-            reasoning_step = parse_reasoning_step(message.content)
+            reasoning_step = self.parse(message["content"])
             if reasoning_step.is_done:
                 logger.debug("Task done.")
-                response = reasoning_step.response
                 break
 
             # handle tool calls
@@ -160,7 +168,7 @@ class ReActAgent(Agent):
             content = json.loads(content)
 
         yield AgentResponse(
-            content=response,
+            content=content,
             messages=messages_for_model[init_len:],
             agent=self,
             tools=self.tools,

@@ -218,13 +218,13 @@ class Agent(BaseModel):
 
             # handle missing tool case, skip to next tool
             if tool_name not in tool_map:
-                logger.error(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
+                logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Error: Tool {tool_name} not found.",
+                        "content": f"Observation: Error, Tool {tool_name} not found.",
                     }
                 )
                 continue

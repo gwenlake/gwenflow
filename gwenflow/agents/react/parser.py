@@ -9,7 +9,8 @@ FINAL_ANSWER = "Final Answer:"
 
 
 def _extract_thought(text: str) -> str:
-    regex = r"(.*?)(?:\n\nAction|\n\nFinal Answer)"
+    # regex = r"(.*?)(?:\n\nAction|\n\nFinal Answer)"
+    regex = r"Thought\s*\d*\s*:[\s]*(.*?)(?:\n\nAction|\n\nFinal Answer)"
     thought_match = re.search(regex, text, re.DOTALL)
     if thought_match:
         return thought_match.group(1).strip()
@@ -55,6 +56,9 @@ def parse_reasoning_step(text: str) -> ActionReasoningStep:
     elif includes_answer:
         response = text.split(FINAL_ANSWER)[-1].strip()
         return ActionReasoningStep(thought=thought, response=response, is_done=True)
+
+    elif thought is not None:
+        return ActionReasoningStep(thought=thought)
 
     if not re.search(r"Action\s*\d*\s*:[\s]*(.*?)", text, re.DOTALL):
         raise ValueError("Missing Action after Thought!")
