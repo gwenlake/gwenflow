@@ -58,9 +58,8 @@ def parse_reasoning_step(text: str) -> ActionReasoningStep:
 
     if not re.search(r"Action\s*\d*\s*:[\s]*(.*?)", text, re.DOTALL):
         raise ValueError("Missing Action after Thought!")
-
     elif not re.search(r"[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)", text, re.DOTALL):
         raise ValueError("Missing Action Input after Action!")
     else:
-        raise ValueError("Sorry, I didn't use the right tool format.!")
+        raise ValueError("Sorry, I didn't use the right tool format!")
 

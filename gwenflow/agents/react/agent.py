@@ -22,26 +22,22 @@ class ReActAgent(Agent):
 
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
+
+        # Add additional instructions
+        additional_guidelines = [
+            "Please ALWAYS start with a Thought. Carefully analyze the task by spelling it out loud.",
+            "Then, break down the problem by thinking through it step by step and develop multiple strategies to solve the problem.",
+            "Work through your plan step-by-step, executing any tools as needed.",
+        ]
+        self.instructions = additional_guidelines + self.instructions
+
+        # default system message
         system_message = super(ReActAgent, self).get_system_message(context=context)
 
         # ReAct
         tool_names = ",".join(self.get_tool_names())
         prompt = PROMPT_REACT.format(tool_names=tool_names).strip()
         system_message["content"] += f"\n\n{prompt}"
-
-        # Additional guidelines
-        guidelines = [
-            "First, carefully analyze the task by spelling it out loud.",
-            "Then, break down the problem by thinking through it step by step and develop multiple strategies to solve the problem.",
-            "Work through your plan step-by-step, executing any tools as needed.",
-        ]
-        if len(guidelines) > 0:
-            system_message_lines = []
-            system_message_lines.append("## Additional Guidelines:")
-            system_message_lines.extend([f"- {guideline}" for guideline in guidelines])
-            system_message_lines.append("")
-            system_message["content"] += "\n\n"
-            system_message["content"] += "\n".join(system_message_lines)
 
         return system_message
 
@@ -105,7 +101,7 @@ class ReActAgent(Agent):
         if user_message:
             messages_for_model.append(user_message)
             self.history.add_message(user_message)
-        
+       
         # global loop
         response = ""
         init_len = len(messages_for_model)

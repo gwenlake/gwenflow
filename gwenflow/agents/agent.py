@@ -109,8 +109,7 @@ class Agent(BaseModel):
             system_message_lines.append("")
 
         # instructions
-        instructions = self.instructions
-        
+        instructions = []        
         if self.response_model:
             instructions.append("Use JSON to format your answers.")
         elif self.markdown:
@@ -119,6 +118,9 @@ class Agent(BaseModel):
             instructions.append("Only use the tools you are provided.")
         if context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
+
+        if len(self.instructions) > 0:
+            instructions += self.instructions
 
         if len(instructions) > 0:
             system_message_lines.append("## Guidelines:")
