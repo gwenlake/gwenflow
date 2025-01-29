@@ -8,6 +8,7 @@ from gwenflow.tools.yahoofinance import (
     YahooFinanceStock,
     YahooFinanceScreen,
 )
+from gwenflow.tools.tavily import TavilyWebSearchTool
 
 __all__ = [
     "BaseTool",
@@ -20,4 +21,5 @@ __all__ = [
     "YahooFinanceNews",
     "YahooFinanceStock",
     "YahooFinanceScreen",
+    "TavilyWebSearchTool",
 ]
