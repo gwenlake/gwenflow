@@ -12,6 +12,10 @@ from qdrant_client.models import (
     PointStruct,
     Range,
     VectorParams,
+    CreateAliasOperation,
+    CreateAlias,
+    DeleteAliasOperation,
+    DeleteAlias,
 )
 
 from gwenflow.vector_stores.base import VectorStoreBase
@@ -98,17 +102,36 @@ class Qdrant(VectorStoreBase):
             logger.error(f"Error while reading collections: {e}")
         return []
 
+    def get_aliases(self) -> list:
+            """
+            List all aliases.
+
+            Returns:
+                list: List of alias names.
+            """
+            try:
+                return self.client.get_aliases()
+            except Exception as e:
+                logger.error(f"Error while reading aliases: {e}")
+            return []
+
 
     def create(self):
         """Create collection."""
-        # Skip creating collection if already exists
-        response = self.get_collections()
-        if response:
-            for collection in response.collections:
+        # Skip creating collection if already exists or an existing alias is already present
+        collections = self.get_collections()
+        if collections:
+            for collection in collections.collections:
                 if collection.name == self.collection:
                     logging.debug(f"Collection {self.collection} already exists. Skipping creation.")
                     return
 
+        aliases = self.get_aliases()
+        if aliases:
+            for alias in aliases.aliases:
+                if alias.alias_name == self.collection:
+                    logging.debug(f"Alias {self.collection} already exists. Skipping creation.")
+                    return
         try:
             self.client.create_collection(
                 collection_name=self.collection,
@@ -282,3 +305,58 @@ class Qdrant(VectorStoreBase):
             with_vectors=False,
         )
         return result
+    
+    def create_alias(self, alias_name: str):
+        """
+        Create an alias for a list of collections.
+
+        Args:
+            alias (str): Name of the alias.
+            collections (List[str]): List of collection names.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            CreateAliasOperation(
+                create_alias=CreateAlias(
+                    collection_name=self.collection, alias_name=alias_name
+                )
+            )
+        ]
+    )
+        
+    def delete_alias(self, alias_name: str):
+        """
+        Delete an alias.
+
+        Args:
+            alias (str): Name of the alias.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            DeleteAliasOperation(
+                delete_alias=DeleteAlias(alias_name=alias_name)
+            ),
+        ]
+    )
+        
+    def switch_alias(self, alias_name: str):
+        """
+        Switch an alias to a new collection.
+
+        Args:
+            alias (str): Name of the alias.
+            collection (str): Name of the collection.
+        """
+        self.client.update_collection_aliases(
+        change_aliases_operations=[
+            DeleteAliasOperation(
+                delete_alias=DeleteAlias(alias_name=alias_name)
+            ),
+            CreateAliasOperation(
+                create_alias=CreateAlias(
+                    collection_name=self.collection, alias_name=alias_name
+                )
+            )
+        ]
+    )
+
