@@ -87,7 +87,6 @@ class WebsiteReader(Reader):
                 try:
                     logger.debug(f"Reading: {current_url}")
                     response = client.get(current_url, timeout=10)
-                    print(response.cookies)
                     soup = BeautifulSoup(response.content, "html.parser")
 
                     # Extract main content
