@@ -1,6 +1,7 @@
 
 import uuid
 import json
+import inspect
 from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
 from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
@@ -17,6 +18,30 @@ from gwenflow.utils import logger
 
 
 MAX_TURNS = float('inf') #10
+
+
+def render_text_description(tools: list[BaseTool]) -> str:
+    """Render the tool name and description in plain text.
+
+    Args:
+        tools: The tools to render.
+
+    Returns:
+        The rendered text.
+
+    Output will be in the format of:
+
+    .. code-block:: markdown
+
+        search: This tool is used for search
+        calculator: This tool is used for math
+    """
+    descriptions = []
+    for tool in tools:
+        sig = inspect.signature(tool._run)
+        description = f"{tool.name}{sig} - {tool.description}"
+        descriptions.append(description)
+    return "\n".join(descriptions)
 
 
 class Agent(BaseModel):
@@ -104,7 +129,7 @@ class Agent(BaseModel):
         if self.tools:
             tools = ",".join(self.get_tool_names())
             if self.is_react:
-                tools = json.dumps(self.get_tools_openai_schema())
+                tools = render_text_description(self.tools)
             system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
             system_message_lines.append("")
 

@@ -8,23 +8,23 @@ from gwenflow.utils import logger
 
 class TavilyBaseTool(BaseTool):
 
-    client: Any
+    client: Optional[Any] = None
     api_key: Optional[str] = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
+    @model_validator(mode="after")
+    def validate_environment(self) -> 'TavilyBaseTool':
         """Validate that the python package exists in environment."""
         try:
             from tavily import TavilyClient
-            api_key = values["api_key"] or os.getenv("TAVILY_API_KEY")
-            if not api_key:
-                logger.error("TAVILY_API_KEY not provided")
-            values["client"] = TavilyClient(api_key=api_key)
+            if self.client is None:
+                if self.api_key is None:
+                    self.api_key = os.getenv("TAVILY_API_KEY")
+                if self.api_key is None:
+                    logger.error("TAVILY_API_KEY not provided")
+                self.client = TavilyClient(api_key=self.api_key)
         except ImportError:
             raise ImportError("`tavily-python` not installed. Please install using `pip install tavily-python`")
-        return values
-
+        return self
 
 class TavilyWebSearchTool(TavilyBaseTool):
 
