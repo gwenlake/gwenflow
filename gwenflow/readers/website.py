@@ -61,29 +61,29 @@ class WebsiteReader(Reader):
 
         self._urls_to_crawl.append((url, starting_depth))
 
-        while self._urls_to_crawl:
+        with httpx.Client() as client:
 
-            # Unpack URL and depth from the global list
-            current_url, current_depth = self._urls_to_crawl.pop(0)
+            while self._urls_to_crawl:
 
-            # Skip if...
-            if (
-                current_url in self._visited
-                or not urlparse(current_url).netloc.endswith(primary_domain)
-                or current_depth > self.max_depth
-                or num_links >= self.max_links
-            ):
-                continue
+                # Unpack URL and depth from the global list
+                current_url, current_depth = self._urls_to_crawl.pop(0)
 
-            self._visited.add(current_url)
+                # Skip if...
+                if (
+                    current_url in self._visited
+                    or not urlparse(current_url).netloc.endswith(primary_domain)
+                    or current_depth > self.max_depth
+                    or num_links >= self.max_links
+                ):
+                    continue
 
-            # Delay
-            if self.delay:
-                self.sleep()
+                self._visited.add(current_url)
 
-            # Crawler
-            with httpx.Client() as client:
+                # Delay
+                if self.delay:
+                    self.sleep()
 
+                # Crawler
                 try:
                     logger.debug(f"Reading: {current_url}")
                     response = client.get(current_url, timeout=10)
