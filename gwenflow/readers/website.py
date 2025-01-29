@@ -61,6 +61,13 @@ class WebsiteReader(Reader):
 
         self._urls_to_crawl.append((url, starting_depth))
 
+        headers = {
+            'accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53',
+            'Accept-Language': 'en-US,en;q=0.9,it;q=0.8,es;q=0.7',
+            'referer': 'https://www.google.com/',
+        }
+
         with httpx.Client() as client:
 
             while self._urls_to_crawl:
@@ -86,7 +93,7 @@ class WebsiteReader(Reader):
                 # Crawler
                 try:
                     logger.debug(f"Reading: {current_url}")
-                    response = client.get(current_url, timeout=10)
+                    response = client.get(current_url, timeout=10, headers=headers)
                     soup = BeautifulSoup(response.content, "html.parser")
 
                     # Extract main content
