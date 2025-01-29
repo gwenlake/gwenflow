@@ -20,30 +20,6 @@ from gwenflow.utils import logger
 MAX_TURNS = float('inf') #10
 
 
-def render_text_description(tools: list[BaseTool]) -> str:
-    """Render the tool name and description in plain text.
-
-    Args:
-        tools: The tools to render.
-
-    Returns:
-        The rendered text.
-
-    Output will be in the format of:
-
-    .. code-block:: markdown
-
-        search: This tool is used for search
-        calculator: This tool is used for math
-    """
-    descriptions = []
-    for tool in tools:
-        sig = inspect.signature(tool._run)
-        description = f"{tool.name}{sig} - {tool.description}"
-        descriptions.append(description)
-    return "\n".join(descriptions)
-
-
 class Agent(BaseModel):
 
     # --- Agent Settings
@@ -129,7 +105,7 @@ class Agent(BaseModel):
         if self.tools:
             tools = ",".join(self.get_tool_names())
             if self.is_react:
-                tools = render_text_description(self.tools)
+                tools = self.get_tools_text_schema()
             system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
             system_message_lines.append("")
 
@@ -210,6 +186,14 @@ class Agent(BaseModel):
     
     def get_tools_openai_schema(self):
         return [tool.openai_schema for tool in self.tools]
+
+    def get_tools_text_schema(self) -> str:
+        descriptions = []
+        for tool in self.tools:
+            sig = inspect.signature(tool._run)
+            description = f"{tool.name}{sig} - {tool.description}"
+            descriptions.append(description)
+        return "\n".join(descriptions)
 
     def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
