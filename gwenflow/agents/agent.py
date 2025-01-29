@@ -226,7 +226,7 @@ class Agent(BaseModel):
             tool_name = tool_call.function.name
 
             # handle missing tool case, skip to next tool
-            if tool_name not in tool_map:
+            if tool_name not in tool_map.keys():
                 logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
                 messages.append(
                     {

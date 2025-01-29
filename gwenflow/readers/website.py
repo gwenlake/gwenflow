@@ -39,6 +39,7 @@ class WebsiteReader(Reader):
 
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
         """Extracts the main content from a BeautifulSoup object."""
+
         for tag in ["article", "main"]:
             element = soup.find(tag)
             if element:
@@ -81,31 +82,34 @@ class WebsiteReader(Reader):
                 self.sleep()
 
             # Crawler
-            try:
-                logger.debug(f"Reading: {current_url}")
-                response = httpx.get(current_url, timeout=10)
-                soup = BeautifulSoup(response.content, "html.parser")
+            with httpx.Client() as client:
 
-                # Extract main content
-                main_content = self._extract_main_content(soup)
-                if main_content:
-                    crawler_result[current_url] = main_content
-                    num_links += 1
+                try:
+                    logger.debug(f"Reading: {current_url}")
+                    response = client.get(current_url, timeout=10)
+                    print(response.cookies)
+                    soup = BeautifulSoup(response.content, "html.parser")
 
-                # Add found URLs to the global list, with incremented depth
-                for link in soup.find_all("a", href=True):
-                    full_url = urljoin(current_url, link["href"])
-                    parsed_url = urlparse(full_url)
-                    # TODO: adjust to use PDFReader and TextReader if files are found
-                    if parsed_url.netloc.endswith(primary_domain) and not any(
-                        parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
-                    ):
-                        if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
-                            self._urls_to_crawl.append((full_url, current_depth + 1))
+                    # Extract main content
+                    main_content = self._extract_main_content(soup)
+                    if main_content:
+                        crawler_result[current_url] = main_content
+                        num_links += 1
 
-            except Exception as e:
-                logger.debug(f"Failed to crawl: {current_url}: {e}")
-                pass
+                    # Add found URLs to the global list, with incremented depth
+                    for link in soup.find_all("a", href=True):
+                        full_url = urljoin(current_url, link["href"])
+                        parsed_url = urlparse(full_url)
+                        # TODO: adjust to use PDFReader and TextReader if files are found
+                        if parsed_url.netloc.endswith(primary_domain) and not any(
+                            parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
+                        ):
+                            if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
+                                self._urls_to_crawl.append((full_url, current_depth + 1))
+
+                except Exception as e:
+                    logger.debug(f"Failed to crawl: {current_url}: {e}")
+                    pass
 
         return crawler_result
 
