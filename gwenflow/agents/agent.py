@@ -46,7 +46,7 @@ class Agent(BaseModel):
 
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
-    history: Optional[ChatMemoryBuffer] = None
+    memory: Optional[ChatMemoryBuffer] = None
     metadata: Optional[Dict[str, Any]] = None
     # knowledge: Optional[Knowledge] = None
 
@@ -76,9 +76,9 @@ class Agent(BaseModel):
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
-        if self.history is None and self.llm is not None:
+        if self.memory is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
-             self.history = ChatMemoryBuffer(token_limit=token_limit)
+             self.memory = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
     def get_system_message(self, context: Optional[Any] = None):
@@ -208,7 +208,7 @@ class Agent(BaseModel):
             logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
             return None
 
-        logger.debug(f"Tool call: {tool_name} with arguments {arguments}")
+        logger.debug(f"Tool call: {tool_name}({arguments})")
         observation = available_tools[tool_name].run(**arguments)
 
         return observation
@@ -293,7 +293,7 @@ class Agent(BaseModel):
         user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
-            self.history.add_message(user_message)
+            self.memory.add_message(user_message)
 
         # global loop
         init_len = len(messages_for_model)
@@ -354,7 +354,8 @@ class Agent(BaseModel):
             messages_for_model.append(message_dict)
 
             if not message.tool_calls:
-                self.history.add_message(message_dict) # We only keep the answer in history (not tool calls)
+                logger.debug("Task done.")
+                self.memory.add_message(message_dict) # We only keep the answer in memory (not tool calls)
                 break
 
             # handle tool calls and switching agents

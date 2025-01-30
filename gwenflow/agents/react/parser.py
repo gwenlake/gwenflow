@@ -1,69 +1,93 @@
+from typing import Tuple
 
 import re
-from json_repair import repair_json
+import dirtyjson as json
 
 from gwenflow.agents.react.types import ActionReasoningStep
+from gwenflow.utils import extract_json_str
 
 
-FINAL_ANSWER = "Final Answer:"
-
-
-def _extract_thought(text: str) -> str:
-    # regex = r"(.*?)(?:\n\nAction|\n\nFinal Answer)"
-    regex = r"Thought\s*\d*\s*:[\s]*(.*?)(?:\n\nAction|\n\nFinal Answer)"
-    thought_match = re.search(regex, text, re.DOTALL)
-    if thought_match:
-        return thought_match.group(1).strip()
-    return ""
-
-def _clean_action(text: str) -> str:
-    """Clean action string by removing non-essential formatting characters."""
-    return re.sub(r"^\s*\*+\s*|\s*\*+\s*$", "", text).strip()
-
-def _safe_repair_json(tool_input: str) -> str:
-    UNABLE_TO_REPAIR_JSON_RESULTS = ['""', "{}"]
-    if tool_input.startswith("[") and tool_input.endswith("]"):
-        return tool_input
-    tool_input = tool_input.replace('"""', '"')
-    result = repair_json(tool_input)
-    if result in UNABLE_TO_REPAIR_JSON_RESULTS:
-        return tool_input
-    return str(result)
-    
-def parse_reasoning_step(text: str) -> ActionReasoningStep:
-
-    thought = _extract_thought(text)
-    includes_answer = "Final Answer:" in text
-    regex = (
-        r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
+def extract_tool_use(input_text: str) -> Tuple[str, str, str]:
+    pattern = (
+        r"\s*Thought: (.*?)\n+Action: ([^\n\(\) ]+).*?\n+Action Input: .*?(\{.*\})"
     )
-    action_match = re.search(regex, text, re.DOTALL)
 
-    if action_match:
+    match = re.search(pattern, input_text, re.DOTALL)
+    if not match:
+        raise ValueError(f"Could not extract tool use from input text: {input_text}")
 
-        if includes_answer:
-            raise ValueError("Error while trying to perform Action and give a Final Answer at the same time!")
+    thought = match.group(1).strip()
+    action = match.group(2).strip()
+    action_input = match.group(3).strip()
+    return thought, action, action_input
 
-        action = action_match.group(1)
-        action = _clean_action(action)
-        action_input = action_match.group(2).strip()
+def action_input_parser(json_str: str) -> dict:
+    processed_string = re.sub(r"(?<!\w)\'|\'(?!\w)", '"', json_str)
+    pattern = r'"(\w+)":\s*"([^"]*)"'
+    matches = re.findall(pattern, processed_string)
+    return dict(matches)
 
-        tool_input = action_input.strip(" ").strip('"')
-        tool_input = _safe_repair_json(tool_input)
+def extract_final_response(input_text: str) -> Tuple[str, str]:
+    pattern = r"\s*Thought:(.*?)Final Answer:(.*?)(?:$)"
 
-        return ActionReasoningStep(thought=thought, action=action, action_input=tool_input)
+    match = re.search(pattern, input_text, re.DOTALL)
+    if not match:
+        raise ValueError(
+            f"Could not extract final answer from input text: {input_text}"
+        )
 
-    elif includes_answer:
-        response = text.split(FINAL_ANSWER)[-1].strip()
-        return ActionReasoningStep(thought=thought, response=response, is_done=True)
+    thought = match.group(1).strip()
+    answer = match.group(2).strip()
+    return thought, answer
 
-    elif thought is not None:
-        return ActionReasoningStep(thought=thought)
+def parse_action_reasoning_step(output: str) -> ActionReasoningStep:
+    # Weaker LLMs may generate ReActAgent steps whose Action Input are horrible JSON strings.
+    # `dirtyjson` is more lenient than `json` in parsing JSON strings.
+    thought, action, action_input = extract_tool_use(output)
+    json_str = extract_json_str(action_input)
+    # First we try json, if this fails we use ast
+    try:
+        action_input_dict = json.loads(json_str)
+    except Exception:
+        action_input_dict = action_input_parser(json_str)
+    return ActionReasoningStep(
+        thought=thought, action=action, action_input=action_input_dict
+    )
 
-    if not re.search(r"Action\s*\d*\s*:[\s]*(.*?)", text, re.DOTALL):
-        raise ValueError("Missing Action after Thought!")
-    elif not re.search(r"[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)", text, re.DOTALL):
-        raise ValueError("Missing Action Input after Action!")
-    else:
-        raise ValueError("Sorry, I didn't use the right tool format!")
+class ReActOutputParser:
+    """ReAct Output parser."""
+
+    def parse(self, output: str) -> ActionReasoningStep:
+        """Parse output from ReAct agent.
+
+        We expect the output to be in one of the following formats:
+        1. If the agent need to use a tool to answer the question:
+            ```
+            Thought: <thought>
+            Action: <action>
+            Action Input: <action_input>
+            ```
+        2. If the agent can answer the question without any tools:
+            ```
+            Thought: <thought>
+            Final Answer: <answer>
+            ```
+        """
+
+        # Agent directly outputs the answer instead of following the thought-answer format
+        if "Thought:" not in output:
+            return ActionReasoningStep(
+                thought="(Implicit) I can answer without any more tools!",
+                response=output,
+            )
+
+        # An "Action" should take priority over an "Answer"
+        if "Action:" in output:
+            return parse_action_reasoning_step(output)
+
+        if "Final Answer:" in output:
+            thought, answer = extract_final_response(output)
+            return ActionReasoningStep(thought=thought, response=answer, is_done=True)
+
+        raise ValueError(f"Could not parse output: {output}")
 

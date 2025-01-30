@@ -6,7 +6,7 @@ from gwenflow.types import ChatCompletionMessage
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
-from gwenflow.agents.react.parser import parse_reasoning_step
+from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
@@ -22,20 +22,20 @@ class ReActAgent(Agent):
 
 
     def parse(self, text: str) -> ActionReasoningStep:
-        return parse_reasoning_step(text)
+        return ReActOutputParser().parse(text)
 
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
         # Add additional instructions
         additional_guidelines = [
-            "Your goal is to reason about the query and decide on the best course of action to answer it accurately.",
-            "Analyze the query, previous reasoning steps, and observations.",
-            "Please ALWAYS start with a Thought.",
-            "Always base your reasoning on the actual observations from tool use.",
-            "If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.",
-            "Provide a final answer only when you're confident you have sufficient information.",
+            "Your goal is to reason about the task or query and decide on the best course of action to answer it accurately.",
             "If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.",
+            # "Analyze the query, previous reasoning steps, and observations.",
+            # "Please ALWAYS start with a Thought.",
+            # "Always base your reasoning on the actual observations from tool use.",
+            # "If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.",
+            # "Provide a final answer only when you're confident you have sufficient information.",
         ]
         self.instructions = additional_guidelines + self.instructions
 
@@ -61,7 +61,7 @@ class ReActAgent(Agent):
             if reasoning_step.action_input:
                 return {
                     "role": "user",
-                    "content": f"Observation: {reasoning_step.action_input}.",
+                    "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
                 }
             else:
                 return {
@@ -69,8 +69,7 @@ class ReActAgent(Agent):
                     "content": "Observation: None. Let’s proceed to the next step.",
                 }
 
-        arguments = json.loads(reasoning_step.action_input)
-        observation = self.execute_tool_call(reasoning_step.action, arguments)
+        observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
                 
         return {
             "role": "user",
@@ -113,9 +112,10 @@ class ReActAgent(Agent):
         user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
-            self.history.add_message(user_message)
+            self.memory.add_message(user_message)
        
         # global loop
+        reasoning_step = None
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
 
@@ -151,17 +151,20 @@ class ReActAgent(Agent):
                 message = completion.choices[0].message
                 message.sender = self.name
 
-            # show response
-            logger.debug(message.content)
-
             # add messages to the current message stack
-            message = json.loads(message.model_dump_json())
-            messages_for_model.append(message)
+            message_dict = json.loads(message.model_dump_json())
+            messages_for_model.append(message_dict)
 
             # parse response
-            reasoning_step = self.parse(message["content"])
+            reasoning_step = self.parse(message_dict["content"])
+
+            # show response
+            logger.debug(f"\nThought: { reasoning_step.thought } \n")
+
+            # final answer ?
             if reasoning_step.is_done:
                 logger.debug("Task done.")
+                self.memory.add_message(message_dict)
                 break
 
             # handle tool calls
@@ -171,6 +174,9 @@ class ReActAgent(Agent):
         content = messages_for_model[-1]["content"]
         if self.response_model:
             content = json.loads(content)
+
+        if reasoning_step:
+            content = reasoning_step.thought + "\n\n" + reasoning_step.response
 
         yield AgentResponse(
             content=content,
