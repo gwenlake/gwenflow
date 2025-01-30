@@ -154,7 +154,7 @@ class ReActAgent(Agent):
             reasoning_step = self.parse(message_dict["content"])
 
             # show response
-            logger.debug(f"\nThought: { reasoning_step.thought } \n")
+            logger.debug(f"Thought: { reasoning_step.thought }\n")
 
             # final answer ?
             if reasoning_step.is_done:
