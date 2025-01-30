@@ -49,19 +49,16 @@ class ReActAgent(Agent):
 
         return system_message
 
-    def handle_tool_call(
-        self,
-        reasoning_step: ActionReasoningStep,
-    ) -> Dict:
+    def handle_tool_call(self, reasoning_step: ActionReasoningStep) -> Dict:
         
         tool_map = self.get_tools_map()
 
         # handle missing tool case, skip to next tool
         if reasoning_step.action not in tool_map:
-            logger.error(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
+            logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
                 "role": "user",
-                "content": f"Observation: Error, Tool {reasoning_step.action} not found.",
+                "content": "Observation: None. Let’s proceed to the next step.",
             }
 
         arguments = json.loads(reasoning_step.action_input)
