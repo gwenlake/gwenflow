@@ -31,11 +31,6 @@ class ReActAgent(Agent):
         additional_guidelines = [
             "Your goal is to reason about the task or query and decide on the best course of action to answer it accurately.",
             "If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.",
-            # "Analyze the query, previous reasoning steps, and observations.",
-            # "Please ALWAYS start with a Thought.",
-            # "Always base your reasoning on the actual observations from tool use.",
-            # "If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.",
-            # "Provide a final answer only when you're confident you have sufficient information.",
         ]
         self.instructions = additional_guidelines + self.instructions
 
