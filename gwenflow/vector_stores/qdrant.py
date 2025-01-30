@@ -174,19 +174,18 @@ class Qdrant(VectorStoreBase):
             documents (list): List of documents to insert.
         """
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
-
+        _embeddings = self.embeddings.embed_documents([document.content for document in documents])
         points = []
-        for document in documents:
+        for document, embedding in zip(documents, _embeddings):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             _id = document.id
-            _embeddings = self.embeddings.embed_documents([document.content])[0]
             _payload = document.metadata
             _payload["content"] = document.content
             points.append(
                 PointStruct(
                     id=_id,
-                    vector=_embeddings,
+                    vector=embedding,
                     payload=_payload,
                 )
             )
