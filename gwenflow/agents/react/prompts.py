@@ -19,11 +19,10 @@ If this format is used, the user will respond in the following format:
 Observation: tool response
 ```
 
-You should keep repeating the above format until you have enough information to answer the question without using any more tools. At that point, you MUST respond
-in the following two format:
+You should keep repeating the above format until you have enough information to answer the question without using any more tools. At that point, you MUST respond in the following two format:
 
 ```
-Thought: I now know the final answer
+Thought: the final thought to the original input question
 Final Answer: the final answer to the original input question
 ```
 
