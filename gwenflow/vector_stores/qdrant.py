@@ -1,6 +1,7 @@
 import logging
 import hashlib
-from typing import List, Optional, Dict, Any
+from typing import Optional
+from enum import Enum
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -11,21 +12,29 @@ from qdrant_client.models import (
     PointIdsList,
     PointStruct,
     Range,
+    DatetimeRange,
     VectorParams,
     CreateAliasOperation,
     CreateAlias,
     DeleteAliasOperation,
     DeleteAlias,
-)
+    PayloadSchemaType)
 
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
 
-
 logger = logging.getLogger(__name__)
 
+class Index(str, Enum):
+    keyword = PayloadSchemaType.KEYWORD
+    integer = PayloadSchemaType.INTEGER
+    float = PayloadSchemaType.FLOAT
+    bool = PayloadSchemaType.BOOL
+    geo = PayloadSchemaType.GEO
+    datetime = PayloadSchemaType.DATETIME
+    text = PayloadSchemaType.TEXT
 
 class Qdrant(VectorStoreBase):
 
@@ -196,9 +205,13 @@ class Qdrant(VectorStoreBase):
             Filter: The created Filter object.
         """
         conditions = []
+        collection_payload = self.client.get_collection(collection_name=self.collection).payload_schema
         for key, value in filters.items():
             if isinstance(value, dict) and "gte" in value and "lte" in value:
-                conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
+                if key in collection_payload and collection_payload[key].data_type=="datetime":
+                    conditions.append(FieldCondition(key=key, range=DatetimeRange(gte=value["gte"], lte=value["lte"])))
+                else:
+                    conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
             else:
                 conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
         return Filter(must=conditions) if conditions else None
@@ -359,4 +372,23 @@ class Qdrant(VectorStoreBase):
             )
         ]
     )
+        
+    def add_index(self, field_name: str, index_type: str):
+        """
+        Args:
+            field_name (str): Name of the field to index.
+            index_type (str): Type of index (must be one of the valid types).
 
+        Raises:
+            ValueError: If the index type is not valid.
+        """
+
+        if index_type not in Index.__members__:
+            raise ValueError(f"Invalid index_type: {index_type}. Must be one of {list(Index.__members__.keys())}")
+        
+        self.client.create_payload_index(
+            collection_name=self.collection,
+            field_name=field_name,
+            field_schema=Index(index_type)
+        )
+         
