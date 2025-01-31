@@ -1,5 +1,5 @@
 import json
-from typing import Union, Optional, Any, Dict, Iterator
+from typing import Union, Optional, Any, Dict, List, Iterator
 from collections import defaultdict
 
 from gwenflow.types import ChatCompletionMessage
@@ -19,7 +19,7 @@ class ReActAgent(Agent):
 
     is_react: bool = True
     description: str = "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step."
-
+    reasoning_steps: List[ActionReasoningStep] = []
 
     def parse(self, text: str) -> ActionReasoningStep:
         return ReActOutputParser().parse(text)
@@ -110,7 +110,6 @@ class ReActAgent(Agent):
             self.memory.add_message(user_message)
        
         # global loop
-        reasoning_step = None
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
 
@@ -152,6 +151,7 @@ class ReActAgent(Agent):
 
             # parse response
             reasoning_step = self.parse(message_dict["content"])
+            self.reasoning_steps.append(reasoning_step)
 
             # show response
             logger.debug(f"\n---\nThought: { reasoning_step.thought }")
@@ -170,8 +170,9 @@ class ReActAgent(Agent):
         if self.response_model:
             content = json.loads(content)
 
-        if reasoning_step:
-            content = reasoning_step.thought + "\n\n" + reasoning_step.response
+        if len(self.reasoning_steps)>0:
+            last_reasoning_step = self.reasoning_steps[-1]
+            content = last_reasoning_step.thought + "\n\n" + last_reasoning_step.response
 
         yield AgentResponse(
             content=content,
@@ -179,4 +180,23 @@ class ReActAgent(Agent):
             agent=self,
             tools=self.tools,
         )
+
+    def get_reasoning_steps(self) -> str:
+        steps = []
+        steps.append("# Reasoning Steps")
+        for i, reasoning_step in enumerate(self.reasoning_steps):
+            if reasoning_step.is_done:
+                text  = f"## Final Step\n"
+                text += f"- **Reasoning:** {reasoning_step.thought}\n"
+                text += f"- **Final Answer:** {reasoning_step.response}\n"
+                steps.append(text)
+                break
+            else:
+                text  = f"## Step {i+1}.\n"
+                text += f"- **Reasoning:** {reasoning_step.thought}\n"
+                text += f"- **Action:** {reasoning_step.action}, **Inputs:** {reasoning_step.action_input}\n"
+                steps.append(text)
+
+        steps = "\n\n".join(steps)
+        return steps
 
