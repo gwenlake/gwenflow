@@ -29,7 +29,7 @@ class PDFReader(Reader):
                 for table in page.find_tables():
                     tables.append(table.extract())
                 metadata = dict(filename=filename, page=page.number+1, tables=tables, images=[])
-                doc = Document(id=f"{filename}_{page.number+1}", content=safe_text, metadata=metadata)
+                doc = Document(id=self.key(f"{filename}_{page.number+1}"), content=safe_text, metadata=metadata)
                 documents.append(doc)
 
         except Exception as e:

@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 import io
 import requests
+import hashlib
 from typing import List
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_u
 class Reader(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def key(self, text) -> str:
+        return hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
 
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError

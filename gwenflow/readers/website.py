@@ -129,7 +129,7 @@ class WebsiteReader(Reader):
         for url, content in result.items():
             documents.append(
                 Document(
-                    id=str(url),
+                    id=self.key(str(url)),
                     content=content,
                     metadata={"url": str(url)},
                 )

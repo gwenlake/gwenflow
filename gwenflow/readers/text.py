@@ -19,7 +19,7 @@ class TextReader(Reader):
 
             documents = [
                 Document(
-                    id=filename,
+                    id=self.key(filename),
                     content=content,
                     metadata={"filename": filename},
                 )

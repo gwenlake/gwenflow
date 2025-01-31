@@ -28,7 +28,7 @@ class JSONReader(Reader):
                 metadata = {"filename": filename, "page": page_num}
                 metadata.update(page_data)
                 documents.append( Document(
-                        id=f"{filename}_{page_num}",
+                        id=self.key(f"{filename}_{page_num}"),
                         content=content,
                         metadata=metadata,
                     )
