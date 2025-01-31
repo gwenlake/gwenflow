@@ -1,7 +1,8 @@
 
 import uuid
 import json
-from typing import List, Callable, Union, Optional, Any, Dict, Iterator, Literal, Sequence, overload, Type
+import inspect
+from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
 from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
@@ -10,11 +11,10 @@ from gwenflow.llms import ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
-from gwenflow.utils import logger
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS
+from gwenflow.utils import logger
 
 
 MAX_TURNS = float('inf') #10
@@ -29,12 +29,14 @@ class Agent(BaseModel):
     description: Optional[str] = Field(default=None, description="Description of the agent")
 
     # --- Settings for system message
+    system_prompt: Optional[str] = None
     instructions: Optional[Union[str, List[str]]] = []
     add_datetime_to_instructions: bool = True
     markdown: bool = False
     response_model: Optional[dict] = None
     steps: Optional[List[str]] = []
     follow_steps: bool = False
+    is_react: bool = False
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
@@ -44,7 +46,7 @@ class Agent(BaseModel):
 
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
-    history: Optional[ChatMemoryBuffer] = None
+    memory: Optional[ChatMemoryBuffer] = None
     metadata: Optional[Dict[str, Any]] = None
     # knowledge: Optional[Knowledge] = None
 
@@ -74,20 +76,25 @@ class Agent(BaseModel):
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
-        if self.history is None and self.llm is not None:
+        if self.memory is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
-             self.history = ChatMemoryBuffer(token_limit=token_limit)
+             self.memory = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
+        if self.system_prompt is not None:
+            return dict(role="system", content=self.system_prompt)
+
         system_message_lines = []
 
         # name, role and description
-        txt = f"You are an AI agent named '{self.name}', and you are specialized in the following: {self.role}."
+        txt = f"You are an AI agent named '{self.name}'."
+        if self.role:
+            txt += f" Your role is: {self.role.strip('.')}."
         if self.description:
-            txt += f"{self.description}"
+            txt += f" {self.description.strip('.')}."
         system_message_lines.append(f"{txt}\n")
 
         if self.add_datetime_to_instructions:
@@ -96,30 +103,33 @@ class Agent(BaseModel):
 
         # tools
         if self.tools:
-            tool_names = ",".join(self.get_tool_names())
-            system_message_lines.append(PROMPT_TOOLS.format(tools=tool_names).strip())
+            tools = ",".join(self.get_tool_names())
+            if self.is_react:
+                tools = self.get_tools_text_schema()
+            system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
             system_message_lines.append("")
 
         # instructions
-        instructions = self.instructions
-        
+        instructions = []        
         if self.response_model:
-             instructions.append("Use JSON to format your answers.")
+            instructions.append("Use JSON to format your answers.")
         elif self.markdown:
             instructions.append("Use markdown to format your answers.")
-
+        if self.tools is not None:
+            instructions.append("Only use the tools you are provided.")
         if context is not None:
             instructions.append("Always prefer information from the provided context over your own knowledge.")
 
+        if len(self.instructions) > 0:
+            instructions += self.instructions
+
         if len(instructions) > 0:
-
-            system_message_lines.append("Guidelines:\n")
-
+            system_message_lines.append("## Guidelines:")
             system_message_lines.extend([f"- {instruction}" for instruction in instructions])
             system_message_lines.append("")
 
         if self.response_model:
-            system_message_lines.append("Provide your output using the following JSON schema:")
+            system_message_lines.append("## Provide your output using the following JSON schema:")
             system_message_lines.append("<json_schema>")
             system_message_lines.append(json.dumps(self.response_model, indent=4))
             system_message_lines.append("</json_schema>")
@@ -127,13 +137,12 @@ class Agent(BaseModel):
 
         if self.follow_steps:
             if len(self.steps) > 0:
-                system_message_lines.append("Follow these steps:\n")
+                system_message_lines.append("## Follow these steps:\n")
                 system_message_lines.extend([f"{i+1}. {step}" for i, step in enumerate(self.steps)])
                 system_message_lines.append("")
             else:
                 system_message_lines.append(PROMPT_STEPS.strip())
                 system_message_lines.append("")
-
 
         # final system prompt
         if len(system_message_lines) > 0:
@@ -141,8 +150,28 @@ class Agent(BaseModel):
         
         return None
 
+
+    def format_context(self, context):
+        prompt  = "Use the following information from the knowledge base if it helps:\n\n<context>\n"
+
+        if isinstance(context, str):
+            prompt += context + "\n"
+
+        elif isinstance(context, dict):
+            for key in context.keys():
+                prompt += f"<{key}>\n"
+                prompt += context.get(key) + "\n"
+                prompt += f"</{key}>\n\n"
+
+        prompt += "</context>\n\n"
+
+        return prompt
+
     def get_user_message(self, task: Optional[str] = None, context: Optional[Any] = None):
         """Return the user message for the Agent."""
+
+        if not task and not context:
+            raise ValueError("You need a task or a context (or both) to run the agent!")
 
         prompt = ""
 
@@ -150,26 +179,21 @@ class Agent(BaseModel):
             prompt += f"You have received the following task from your manager:\n<task>\n{task}\n</task>\n\n"
 
         if context:
+            prompt += self.format_context(context)
 
-            prompt += "Use the following information from the knowledge base if it helps:\n"
-            prompt += "<context>\n"
-
-            if isinstance(context, str):
-                prompt += context + "\n"
-
-            elif isinstance(context, dict):
-                for key in context.keys():
-                    prompt += f"<{key}>\n"
-                    prompt += context.get(key) + "\n"
-                    prompt += f"</{key}>\n\n"
-
-            prompt += "</context>\n\n"
-    
         return { "role": "user", "content": prompt }
 
     
     def get_tools_openai_schema(self):
         return [tool.openai_schema for tool in self.tools]
+
+    def get_tools_text_schema(self) -> str:
+        descriptions = []
+        for tool in self.tools:
+            sig = inspect.signature(tool._run)
+            description = f"{tool.name}{sig} - {tool.description}"
+            descriptions.append(description)
+        return "\n".join(descriptions)
 
     def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
@@ -184,7 +208,7 @@ class Agent(BaseModel):
             logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
             return None
 
-        logger.debug(f"Tool call: {tool_name} with arguments {arguments}")
+        logger.debug(f"Tool call: {tool_name}({arguments})")
         observation = available_tools[tool_name].run(**arguments)
 
         return observation
@@ -202,14 +226,14 @@ class Agent(BaseModel):
             tool_name = tool_call.function.name
 
             # handle missing tool case, skip to next tool
-            if tool_name not in tool_map:
-                logger.error(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
+            if tool_name not in tool_map.keys():
+                logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Error: Tool {tool_name} not found.",
+                        "content": f"Observation: Error, Tool {tool_name} not found.",
                     }
                 )
                 continue
@@ -269,7 +293,7 @@ class Agent(BaseModel):
         user_message = self.get_user_message(task=task, context=context)
         if user_message:
             messages_for_model.append(user_message)
-            self.history.add_message(user_message)
+            self.memory.add_message(user_message)
 
         # global loop
         init_len = len(messages_for_model)
@@ -330,7 +354,8 @@ class Agent(BaseModel):
             messages_for_model.append(message_dict)
 
             if not message.tool_calls:
-                self.history.add_message(message_dict) # We only keep the answer in history (not tool calls)
+                logger.debug("Task done.")
+                self.memory.add_message(message_dict) # We only keep the answer in memory (not tool calls)
                 break
 
             # handle tool calls and switching agents

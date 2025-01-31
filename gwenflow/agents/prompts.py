@@ -1,7 +1,8 @@
 PROMPT_TOOLS = """
-Your objective is to thoroughly research your task using the following tools as your primary source and provide a detailed, informative answer.
+## Tools
+Your objective is to thoroughly research your task using the following tools as your primary source and provide a detailed and informative answer.
 
-
+You have access to the following tools:
 <tools>
 {tools}
 </tools>
