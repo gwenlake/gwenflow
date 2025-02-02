@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Union, Optional, Any, Dict, List, Iterator
 from collections import defaultdict
 
@@ -8,6 +9,7 @@ from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
+from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
 
@@ -50,19 +52,18 @@ class ReActAgent(Agent):
 
         # handle missing tool case, skip to next tool
         if reasoning_step.action not in tool_map:
-
             logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
-
-            if reasoning_step.action_input:
-                return {
-                    "role": "user",
-                    "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
-                }
-            else:
-                return {
-                    "role": "user",
-                    "content": "Observation: None. Let’s proceed to the next step.",
-                }
+            return None
+            # if reasoning_step.action_input:
+            #     return {
+            #         "role": "user",
+            #         "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
+            #     }
+            # else:
+            #     return {
+            #         "role": "user",
+            #         "content": "Observation: None. Let’s proceed to the next step.",
+            #     }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
                 
@@ -87,6 +88,36 @@ class ReActAgent(Agent):
         
         return self.llm.invoke(**params, response_format=response_format)
 
+    def reason(self, task: str):
+
+        if self.reasoning_model is None:
+            return None
+        
+        user_prompt = ""
+        
+        if self.tools:
+            tools = self.get_tools_text_schema()
+            user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
+
+        user_prompt += PROMPT_TASK.format(task=task).strip()
+        user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
+
+        params = {
+            "messages": [{"role": "user", "content": user_prompt}],
+            "parse_response": True,
+        }
+
+        logger.debug("Reasoning.")
+        response = self.reasoning_model.invoke(**params)
+
+        # only keep text outside <think>
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        if not reasoning_content:
+            return None
+        
+        logger.debug("Thought: " + reasoning_content)
+
+        return dict(role="assistant", content=f"<thinking>{reasoning_content}</thinking>")
 
     def _run(
         self,
@@ -117,7 +148,14 @@ class ReActAgent(Agent):
                 system_message["content"] += "\n\n" + user_message["content"]
             messages_for_model.append(system_message)
             self.memory.add_message(system_message)
-       
+
+        # add reasoning
+        if self.reasoning_model:
+            reasoning_message = self.reason(task=task)
+            if reasoning_message:
+                messages_for_model.append(reasoning_message)
+                self.memory.add_message(reasoning_message)
+
         # global loop
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
