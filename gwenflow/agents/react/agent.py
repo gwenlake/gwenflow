@@ -100,14 +100,23 @@ class ReActAgent(Agent):
 
         # system messages
         system_message = self.get_system_message(context=context)
-        if system_message:
-            messages_for_model.append(system_message)
 
         # user messages
         user_message = self.get_user_message(task=task, context=context)
-        if user_message:
-            messages_for_model.append(user_message)
-            self.memory.add_message(user_message)
+
+        # check if system prompt is allow and add messages to messages_for_model
+        if self.system_prompt_allowed:
+            if system_message:
+                messages_for_model.append(system_message)
+            if user_message:
+                messages_for_model.append(user_message)
+                self.memory.add_message(user_message)
+        else:
+            system_message["role"] = "user"
+            if user_message:
+                system_message["content"] += "\n\n" + user_message["content"]
+            messages_for_model.append(system_message)
+            self.memory.add_message(system_message)
        
         # global loop
         init_len = len(messages_for_model)

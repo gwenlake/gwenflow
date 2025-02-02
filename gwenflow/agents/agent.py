@@ -37,6 +37,7 @@ class Agent(BaseModel):
     steps: Optional[List[str]] = []
     follow_steps: bool = False
     is_react: bool = False
+    system_prompt_allowed: bool = True
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
