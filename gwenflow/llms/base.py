@@ -13,9 +13,11 @@ LLM_CONTEXT_WINDOW_SIZES = {
     "o1-mini": 128000,
     # deepseek
     "deepseek-chat": 128000,
-    # groq
+    "deepseek-r1": 128000,
+    # google
     "gemma2-9b-it": 8192,
     "gemma-7b-it": 8192,
+    # meta
     "llama3-groq-70b-8192-tool-use-preview": 8192,
     "llama3-groq-8b-8192-tool-use-preview": 8192,
     "llama-3.1-70b-versatile": 131072,
@@ -26,6 +28,7 @@ LLM_CONTEXT_WINDOW_SIZES = {
     "llama-3.2-90b-text-preview": 8192,
     "llama3-70b-8192": 8192,
     "llama3-8b-8192": 8192,
+    # mistral
     "mixtral-8x7b-32768": 32768,
 }
 
