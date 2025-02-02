@@ -164,7 +164,8 @@ class ReActAgent(Agent):
 
             # handle tool calls
             observation = self.handle_tool_call(reasoning_step)
-            messages_for_model.append(observation)
+            if observation:
+                messages_for_model.append(observation)
 
         content = messages_for_model[-1]["content"]
         if self.response_model:
