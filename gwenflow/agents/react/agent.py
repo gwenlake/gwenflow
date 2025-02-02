@@ -115,9 +115,11 @@ class ReActAgent(Agent):
         if not reasoning_content:
             return None
         
+        reasoning_content = reasoning_content.strip()
+        
         logger.debug("Thought: " + reasoning_content)
 
-        return dict(role="assistant", content=f"<thinking>{reasoning_content}</thinking>")
+        return dict(role="user", content=f"<thinking>{reasoning_content}</thinking>")
 
     def _run(
         self,
