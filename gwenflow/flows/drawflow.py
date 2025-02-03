@@ -1,12 +1,10 @@
 import json
-import os
 from collections import defaultdict, deque
-
+from pydantic import BaseModel, Field, field_validator
+from gwenflow.flows import Flow
+from gwenflow.tools import WikipediaTool, WebsiteTool, DuckDuckGoSearchTool
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
-from pydantic import BaseModel, Field, field_validator
-
-from gwenflow.flows import Flow
 
 HTML_TEMPLATE = """
 <div>
@@ -19,23 +17,21 @@ HTML_TEMPLATE = """
 </div>
 """
 
-
 def escapejs(value):
     """
     Escapes special characters for JavaScript.
     """
     if value is None:
-        return ""
+        return ''
     escaped = (
-        value.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
+        value.replace('\\', '\\\\')
+             .replace("'", "\\'")
+             .replace('"', '\\"')
+             .replace('\n', '\\n')
+             .replace('\r', '\\r')
+             .replace('\t', '\\t')
     )
     return Markup(escaped)
-
 
 class Node(BaseModel):
     id: str
@@ -68,7 +64,6 @@ class Node(BaseModel):
             "pos_y": self.pos_y,
         }
 
-
 class DrawFlow(BaseModel):
     flow: Flow
     nodes: dict[str, Node] = Field(default_factory=dict)
@@ -80,7 +75,7 @@ class DrawFlow(BaseModel):
                 id=str(agent.id),
                 name=agent.name,
                 context_vars=agent.context_vars,
-                role=agent.role,
+                role=agent.role
             )
             for agent in self.flow.__dict__["agents"]
         }
@@ -99,7 +94,7 @@ class DrawFlow(BaseModel):
                 in_degree[conn["node"]] += 1
 
         sources = [node_id for node_id, degree in in_degree.items() if degree == 0]
-        distances = {node_id: float("inf") for node_id in self.nodes}
+        distances = {node_id: float('inf') for node_id in self.nodes}
         distances[start_node] = 0
 
         queue = deque([start_node])
@@ -110,7 +105,7 @@ class DrawFlow(BaseModel):
                     distances[neighbor] = distances[current] + 1
                     queue.append(neighbor)
 
-        return min((distances[source] for source in sources), default=float("inf"))
+        return min((distances[source] for source in sources), default=float('inf'))
 
     def _assign_io_connections(self):
         """Assigns input and output connections between nodes based on context variables."""
@@ -119,12 +114,14 @@ class DrawFlow(BaseModel):
                 if node.id == other_node.id:
                     continue
                 if node.name in other_node.context_vars:
-                    node.outputs["output_1"]["connections"].append(
-                        {"node": other_node.id, "output": "input_1"}
-                    )
-                    other_node.inputs["input_1"]["connections"].append(
-                        {"node": node.id, "input": "output_1"}
-                    )
+                    node.outputs["output_1"]["connections"].append({
+                        "node": other_node.id,
+                        "output": "input_1"
+                    })
+                    other_node.inputs["input_1"]["connections"].append({
+                        "node": node.id,
+                        "input": "output_1"
+                    })
         for node in self.nodes.values():
             if not node.inputs:
                 continue
@@ -135,14 +132,9 @@ class DrawFlow(BaseModel):
             if len(node.outputs["output_1"]["connections"]) == 0:
                 node.outputs = {}
 
-    def _assign_positions(
-        self, separation_x=400, separation_y=200, initial_x=-350, initial_y=-150
-    ):
+    def _assign_positions(self, separation_x=400, separation_y=200, initial_x=-350, initial_y=-150):
         """Calculates and assigns positions to nodes."""
-        columns = {
-            node_id: self._find_longest_path_to_sources(node_id) + 1
-            for node_id in self.nodes
-        }
+        columns = {node_id: self._find_longest_path_to_sources(node_id) + 1 for node_id in self.nodes}
         rows = defaultdict(int)
         columns_inv = defaultdict(list)
 
@@ -164,9 +156,7 @@ class DrawFlow(BaseModel):
         return {
             "drawflow": {
                 "Home": {
-                    "data": {
-                        node_id: node.to_dict() for node_id, node in self.nodes.items()
-                    }
+                    "data": {node_id: node.to_dict() for node_id, node in self.nodes.items()}
                 }
             }
         }
@@ -178,7 +168,7 @@ class DrawFlow(BaseModel):
         instance = cls(flow=flow)
         instance._initialize_nodes()
         return instance
-
+    
     @classmethod
     def from_flow(cls, flow):
         """Creates a DrawFlow instance from a Flow instance."""
@@ -194,35 +184,17 @@ class DrawFlow(BaseModel):
 
     def generate_html(self, output_file):
         """Generates an HTML file using a Jinja2 template."""
-        # Get the directory of the current script (where the class is defined)
-        package_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Define the template path relative to the package directory
         template_file = "index.html"
-        print(f"Template file: {os.path.join(package_dir, template_file)}")
-
-        # Generate JSON for the template
         drawflow_json = self.generate_drawflow()
+        env = Environment(loader=FileSystemLoader(""))
+        env.filters['escapejs'] = escapejs
 
-        print(f"Drawflow JSON: {drawflow_json}")
-
-        # Set up Jinja2 environment, pointing to the package directory
-        env = Environment(loader=FileSystemLoader(package_dir))
-        env.filters["escapejs"] = escapejs
-
-        # Check if the template file exists in the package directory
-        if not os.path.exists(os.path.join(package_dir, template_file)):
-            raise FileNotFoundError(
-                f"Template file not found at {os.path.join(package_dir, template_file)}"
-            )
-
-        # Load the template
         template = env.get_template(template_file)
 
-        # Render the template
-        rendered_html = template.render({"drawflow_json": json.dumps(drawflow_json)})
+        rendered_html = template.render({
+            "drawflow_json": json.dumps(drawflow_json)
+        })
 
-        # Write the rendered HTML to the output file
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(rendered_html)
 

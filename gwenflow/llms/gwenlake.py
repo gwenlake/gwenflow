@@ -1,59 +1,37 @@
 import os
-from typing import Optional, Union, List, Dict, Any
-
-import openai
+from typing import Dict, Any
 
 from gwenflow.llms.openai import ChatOpenAI
 
 
 class ChatGwenlake(ChatOpenAI):
  
-    def __init__(
-        self,
-        *,
-        model: str,
-        timeout: Optional[Union[float, int]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        n: Optional[int] = None,
-        stop: Optional[Union[str, List[str]]] = None,
-        max_completion_tokens: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        logit_bias: Optional[Dict[int, float]] = None,
-        response_format: Optional[Dict[str, Any]] = None,
-        seed: Optional[int] = None,
-        logprobs: Optional[bool] = None,
-        top_logprobs: Optional[int] = None,
-        api_version: Optional[str] = None,
-        api_key: Optional[str] = None,
-        **kwargs,
-    ):
-        _api_key = api_key or os.environ.get("GWENLAKE_API_KEY")
-        if os.environ.get('OPENAI_ORG_ID'):
-            openai.organization = os.environ.get('OPENAI_ORG_ID')
-        if os.environ.get('GWENLAKE_ORGANIZATION'):
-            openai.organization = os.environ.get('GWENLAKE_ORGANIZATION')
+    model: str
+    base_url: str = "https://api.gwenlake.com/v1"
 
-        super().__init__(
-            model = model,
-            timeout = timeout,
-            temperature = temperature,
-            top_p = top_p,
-            n = n,
-            stop = stop,
-            max_completion_tokens = max_completion_tokens,
-            max_tokens = max_tokens,
-            presence_penalty = presence_penalty,
-            frequency_penalty = frequency_penalty,
-            logit_bias = logit_bias,
-            response_format = response_format,
-            seed = seed,
-            logprobs = logprobs,
-            top_logprobs = top_logprobs,
-            api_key = _api_key,
-            **kwargs,
-        )
+    def _get_client_params(self) -> Dict[str, Any]:
 
-        self.client = openai.OpenAI(api_key=_api_key, base_url="https://api.gwenlake.com/v1")
+        api_key = self.api_key
+        if api_key is None:
+            api_key = os.environ.get("GWENLAKE_API_KEY")
+        if api_key is None:
+            raise ValueError(
+                "The api_key client option must be set either by passing api_key to the client or by setting the GWENLAKE_API_KEY environment variable"
+            )
+
+        organization = self.organization
+        if organization is None:
+            organization = os.environ.get('GWENLAKE_ORGANIZATION')
+
+        client_params = {
+            "api_key": api_key,
+            "organization": organization,
+            "base_url": self.base_url,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+        }
+
+        client_params = {k: v for k, v in client_params.items() if v is not None}
+
+        return client_params
+        

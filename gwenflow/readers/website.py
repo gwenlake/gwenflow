@@ -1,20 +1,19 @@
-import random
+
 import time
-from typing import Set, Dict, List, Tuple
+import random
+import httpx
 from urllib.parse import urljoin, urlparse
 
-import httpx
+from typing import Set, Dict, List, Tuple
 
-from gwenflow.readers.base import Reader
 from gwenflow.types import Document
+from gwenflow.readers.base import Reader
 from gwenflow.utils import logger
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401
 except ImportError:
-    raise ImportError(
-        "BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`."
-    )
+    raise ImportError("BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`.")
 
 
 class WebsiteReader(Reader):
@@ -63,10 +62,10 @@ class WebsiteReader(Reader):
         self._urls_to_crawl.append((url, starting_depth))
 
         headers = {
-            "accept": "*/*",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53",
-            "Accept-Language": "en-US,en;q=0.9,it;q=0.8,es;q=0.7",
-            "referer": "https://www.google.com/",
+            'accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53',
+            'Accept-Language': 'en-US,en;q=0.9,it;q=0.8,es;q=0.7',
+            'referer': 'https://www.google.com/',
         }
 
         with httpx.Client() as client:
@@ -109,17 +108,10 @@ class WebsiteReader(Reader):
                         parsed_url = urlparse(full_url)
                         # TODO: adjust to use PDFReader and TextReader if files are found
                         if parsed_url.netloc.endswith(primary_domain) and not any(
-                            parsed_url.path.endswith(ext)
-                            for ext in [".pdf", ".jpg", ".png"]
+                            parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
                         ):
-                            if (
-                                full_url not in self._visited
-                                and (full_url, current_depth + 1)
-                                not in self._urls_to_crawl
-                            ):
-                                self._urls_to_crawl.append(
-                                    (full_url, current_depth + 1)
-                                )
+                            if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
+                                self._urls_to_crawl.append((full_url, current_depth + 1))
 
                 except Exception as e:
                     logger.debug(f"Failed to crawl: {current_url}: {e}")
@@ -142,5 +134,5 @@ class WebsiteReader(Reader):
                     metadata={"url": str(url)},
                 )
             )
-
+        
         return documents

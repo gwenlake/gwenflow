@@ -77,7 +77,7 @@ class ReActOutputParser:
         # Agent directly outputs the answer instead of following the thought-answer format
         if "Thought:" not in output:
             return ActionReasoningStep(
-                thought="(Implicit) I can answer without any more tools!",
+                thought="I can answer without any more tools!",
                 response=output,
             )
 

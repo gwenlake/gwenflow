@@ -1,9 +1,10 @@
-import json
-from pathlib import Path
-from typing import List
 
-from gwenflow.readers.base import Reader
+import json
+from typing import List
+from pathlib import Path
+
 from gwenflow.types import Document
+from gwenflow.readers.base import Reader
 from gwenflow.utils import logger
 
 
@@ -14,7 +15,7 @@ class JSONReader(Reader):
         try:
 
             filename = self.get_file_name(file)
-            content = self.get_file_content(file, text_mode=True)
+            content  = self.get_file_content(file, text_mode=True)
 
             json_data = json.loads(content)
 
@@ -26,14 +27,13 @@ class JSONReader(Reader):
                 content = page_data.pop("content")
                 metadata = {"filename": filename, "page": page_num}
                 metadata.update(page_data)
-                documents.append(
-                    Document(
+                documents.append( Document(
                         id=self.key(f"{filename}_{page_num}"),
                         content=content,
                         metadata=metadata,
                     )
                 )
-
+    
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return []

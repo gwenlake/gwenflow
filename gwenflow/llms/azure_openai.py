@@ -1,68 +1,49 @@
 import os
-from typing import Optional, Union, List, Dict, Any
+from typing import Optional, Dict, Any
 
-import openai
+from openai import AzureOpenAI
 
 from gwenflow.llms.openai import ChatOpenAI
 
 
 class ChatAzureOpenAI(ChatOpenAI):
  
-    def __init__(
-        self,
-        *,
-        model: str,
-        timeout: Optional[Union[float, int]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        n: Optional[int] = None,
-        stop: Optional[Union[str, List[str]]] = None,
-        max_completion_tokens: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        logit_bias: Optional[Dict[int, float]] = None,
-        response_format: Optional[Dict[str, Any]] = None,
-        seed: Optional[int] = None,
-        logprobs: Optional[bool] = None,
-        top_logprobs: Optional[int] = None,
-        api_version: Optional[str] = None,
-        api_key: Optional[str] = None,
-        azure_endpoint: Optional[str] = None,
-        azure_deployment: Optional[str] = None,
-        **kwargs,
-        ):
+    api_version: Optional[str] = None
+    azure_endpoint: Optional[str] = None
+    azure_deployment: Optional[str] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+
+        api_key = self.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        azure_endpoint = self.azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        azure_deployment = self.azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+        api_version = self.api_version or os.environ.get("AZURE_OPENAI_API_VERSION")
+
+        if api_key is None:
+            raise ValueError(
+                "The api_key client option must be set either by passing api_key to the client or by setting the AZURE_OPENAI_API_KEY environment variable"
+            )
+
+        client_params = {
+            "api_key": api_key,
+            "api_version": api_version,
+            "azure_endpoint": azure_endpoint,
+            "azure_deployment": azure_deployment,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+        }
         
-        # init variables before super().__init__
-        _api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-        _azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-        _azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-        _api_version = api_version or os.environ.get("AZURE_OPENAI_API_VERSION")
+        client_params = {k: v for k, v in client_params.items() if v is not None}
+        
+        return client_params
 
-        super().__init__(
-            model = model,
-            timeout = timeout,
-            temperature = temperature,
-            top_p = top_p,
-            n = n,
-            stop = stop,
-            max_completion_tokens = max_completion_tokens,
-            max_tokens = max_tokens,
-            presence_penalty = presence_penalty,
-            frequency_penalty = frequency_penalty,
-            logit_bias = logit_bias,
-            response_format = response_format,
-            seed = seed,
-            logprobs = logprobs,
-            top_logprobs = top_logprobs,
-            api_key = _api_key,
-            **kwargs,
-        )
+    def get_client(self) -> AzureOpenAI:
 
+        if self.client:
+            return self.client
+        
+        client_params = self._get_client_params()
 
-        self.client = openai.AzureOpenAI(
-            azure_endpoint=_azure_endpoint,
-            azure_deployment=_azure_deployment,
-            api_version=_api_version,
-            api_key=_api_key,
-        )
+        self.client = AzureOpenAI(**client_params)
+        return self.client
+    
