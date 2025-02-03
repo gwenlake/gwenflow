@@ -255,6 +255,13 @@ class Qdrant(VectorStoreBase):
             elif "chunk" in d.payload:
                 content = d.payload.pop("chunk")
 
+            # Note: should be removed
+            if "metadata" in d.payload:
+                d.payload = d.payload["metadata"]
+
+            if isinstance(d.id, int):
+                d.id = str(d.id)
+                
             documents.append(
                 Document(
                     id=d.id,
