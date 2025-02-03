@@ -11,7 +11,7 @@ Action Input: the input to the tool, in a JSON format representing the kwargs (e
 
 Please ALWAYS start with a Thought.
 
-If some instructions are provided under the tags <thinking></thinking>, please follow these guidelines.
+If some instructions are provided under the tags <thinking></thinking>, please follow these instructions.
 
 Please use a valid JSON format for the Action Input. Do NOT do this {{'input': 'hello world', 'num_beams': 5}}.
 

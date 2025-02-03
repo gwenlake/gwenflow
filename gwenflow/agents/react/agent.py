@@ -119,7 +119,7 @@ class ReActAgent(Agent):
         
         logger.debug("Thought: " + reasoning_content)
 
-        return dict(role="user", content=f"<thinking>{reasoning_content}</thinking>")
+        return reasoning_content
 
     def _run(
         self,
@@ -129,12 +129,20 @@ class ReActAgent(Agent):
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
 
+        # add reasoning
+        if self.reasoning_model:
+            reasoning_message = self.reason(task=task)
+            if reasoning_message:
+                if not context:
+                    context = {}
+                if isinstance(context, str):
+                    text = context
+                    context = { "context": text }
+                context["thinking"] = reasoning_message
+
+        # messages for model
         messages_for_model = []
-
-        # system messages
         system_message = self.get_system_message(context=context)
-
-        # user messages
         user_message = self.get_user_message(task=task, context=context)
 
         # check if system prompt is allow and add messages to messages_for_model
@@ -150,13 +158,6 @@ class ReActAgent(Agent):
                 system_message["content"] += "\n\n" + user_message["content"]
             messages_for_model.append(system_message)
             self.memory.add_message(system_message)
-
-        # add reasoning
-        if self.reasoning_model:
-            reasoning_message = self.reason(task=task)
-            if reasoning_message:
-                messages_for_model.append(reasoning_message)
-                self.memory.add_message(reasoning_message)
 
         # global loop
         init_len = len(messages_for_model)

@@ -2,6 +2,12 @@ from typing import Optional, Union, Any, List, Dict
 from pydantic import BaseModel, ConfigDict
 from abc import ABC, abstractmethod
 
+import json
+
+from gwenflow.tools import BaseTool
+from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.utils import logger
+
 
 LLM_CONTEXT_WINDOW_SIZES = {
     # openai
@@ -37,7 +43,7 @@ class ChatBase(BaseModel, ABC):
     model: str
 
     system_prompt: Optional[str] = None
-    tools: Optional[List[Dict]] = None
+    tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -53,4 +59,50 @@ class ChatBase(BaseModel, ABC):
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
-    
+
+    def get_tool_names(self):
+        return [tool.name for tool in self.tools]
+
+    def get_tools_map(self):
+        return {tool.name: tool for tool in self.tools}
+
+    def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+        
+        tool_map = self.get_tools_map()
+
+        if not tool_calls or not tool_map:
+            return None
+        
+        messages = []
+
+        for tool_call in tool_calls:
+
+            tool_name = tool_call.function.name
+            
+            if tool_name not in tool_map.keys():
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_name,
+                        "content": f"Observation: Error, Tool {tool_name} not found.",
+                    }
+                )
+                continue
+
+            arguments = json.loads(tool_call.function.arguments)
+            response = tool_map[tool_name].run(**arguments)
+
+            logger.debug(f"Tool call: {tool_name}({arguments})")
+
+            if response:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_name,
+                        "content": f"Observation: {response}",
+                    }
+                )
+
+        return messages
