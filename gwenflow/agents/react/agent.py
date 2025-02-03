@@ -1,5 +1,6 @@
 import json
-from typing import Union, Optional, Any, Dict, Iterator
+import re
+from typing import Union, Optional, Any, Dict, List, Iterator
 from collections import defaultdict
 
 from gwenflow.types import ChatCompletionMessage
@@ -8,6 +9,7 @@ from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
+from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
 from gwenflow.agents.utils import merge_chunk
 from gwenflow.utils import logger
 
@@ -19,7 +21,7 @@ class ReActAgent(Agent):
 
     is_react: bool = True
     description: str = "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step."
-
+    reasoning_steps: List[ActionReasoningStep] = []
 
     def parse(self, text: str) -> ActionReasoningStep:
         return ReActOutputParser().parse(text)
@@ -50,19 +52,18 @@ class ReActAgent(Agent):
 
         # handle missing tool case, skip to next tool
         if reasoning_step.action not in tool_map:
-
             logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
-
-            if reasoning_step.action_input:
-                return {
-                    "role": "user",
-                    "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
-                }
-            else:
-                return {
-                    "role": "user",
-                    "content": "Observation: None. Let’s proceed to the next step.",
-                }
+            return None
+            # if reasoning_step.action_input:
+            #     return {
+            #         "role": "user",
+            #         "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
+            #     }
+            # else:
+            #     return {
+            #         "role": "user",
+            #         "content": "Observation: None. Let’s proceed to the next step.",
+            #     }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
                 
@@ -87,6 +88,38 @@ class ReActAgent(Agent):
         
         return self.llm.invoke(**params, response_format=response_format)
 
+    def reason(self, task: str):
+
+        if self.reasoning_model is None:
+            return None
+        
+        user_prompt = ""
+        
+        if self.tools:
+            tools = self.get_tools_text_schema()
+            user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
+
+        user_prompt += PROMPT_TASK.format(task=task).strip()
+        user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
+
+        params = {
+            "messages": [{"role": "user", "content": user_prompt}],
+            "parse_response": True,
+        }
+
+        logger.debug("Reasoning.")
+        response = self.reasoning_model.invoke(**params)
+
+        # only keep text outside <think>
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        if not reasoning_content:
+            return None
+        
+        reasoning_content = reasoning_content.strip()
+        
+        logger.debug("Thought: " + reasoning_content)
+
+        return dict(role="user", content=f"<thinking>{reasoning_content}</thinking>")
 
     def _run(
         self,
@@ -100,17 +133,32 @@ class ReActAgent(Agent):
 
         # system messages
         system_message = self.get_system_message(context=context)
-        if system_message:
-            messages_for_model.append(system_message)
 
         # user messages
         user_message = self.get_user_message(task=task, context=context)
-        if user_message:
-            messages_for_model.append(user_message)
-            self.memory.add_message(user_message)
-       
+
+        # check if system prompt is allow and add messages to messages_for_model
+        if self.system_prompt_allowed:
+            if system_message:
+                messages_for_model.append(system_message)
+            if user_message:
+                messages_for_model.append(user_message)
+                self.memory.add_message(user_message)
+        else:
+            system_message["role"] = "user"
+            if user_message:
+                system_message["content"] += "\n\n" + user_message["content"]
+            messages_for_model.append(system_message)
+            self.memory.add_message(system_message)
+
+        # add reasoning
+        if self.reasoning_model:
+            reasoning_message = self.reason(task=task)
+            if reasoning_message:
+                messages_for_model.append(reasoning_message)
+                self.memory.add_message(reasoning_message)
+
         # global loop
-        reasoning_step = None
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
 
@@ -152,6 +200,7 @@ class ReActAgent(Agent):
 
             # parse response
             reasoning_step = self.parse(message_dict["content"])
+            self.reasoning_steps.append(reasoning_step)
 
             # show response
             logger.debug(f"\n---\nThought: { reasoning_step.thought }")
@@ -164,14 +213,16 @@ class ReActAgent(Agent):
 
             # handle tool calls
             observation = self.handle_tool_call(reasoning_step)
-            messages_for_model.append(observation)
+            if observation:
+                messages_for_model.append(observation)
 
         content = messages_for_model[-1]["content"]
         if self.response_model:
             content = json.loads(content)
 
-        if reasoning_step:
-            content = reasoning_step.thought + "\n\n" + reasoning_step.response
+        if len(self.reasoning_steps)>0:
+            last_reasoning_step = self.reasoning_steps[-1]
+            content = last_reasoning_step.thought + "\n\n" + last_reasoning_step.response
 
         yield AgentResponse(
             content=content,
@@ -179,4 +230,23 @@ class ReActAgent(Agent):
             agent=self,
             tools=self.tools,
         )
+
+    def get_reasoning_steps(self) -> str:
+        steps = []
+        steps.append("# Reasoning Steps")
+        for i, reasoning_step in enumerate(self.reasoning_steps):
+            if reasoning_step.is_done:
+                text  = f"## Final Step\n"
+                text += f"- **Reasoning:** {reasoning_step.thought}\n"
+                text += f"- **Final Answer:** {reasoning_step.response}\n"
+                steps.append(text)
+                break
+            else:
+                text  = f"## Step {i+1}.\n"
+                text += f"- **Reasoning:** {reasoning_step.thought}\n"
+                text += f"- **Action:** {reasoning_step.action}, **Inputs:** {reasoning_step.action_input}\n"
+                steps.append(text)
+
+        steps = "\n\n".join(steps)
+        return steps
 

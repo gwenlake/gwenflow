@@ -13,7 +13,7 @@ from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_TOOLS_REACT_GUIDELINES
 from gwenflow.utils import logger
 
 
@@ -37,12 +37,16 @@ class Agent(BaseModel):
     steps: Optional[List[str]] = []
     follow_steps: bool = False
     is_react: bool = False
+    system_prompt_allowed: bool = True
  
     # --- Agent Model and Tools
     llm: Optional[Any] = Field(None, validate_default=True)
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     show_tool_calls: bool = False
+
+    # --- Reasoning models
+    reasoning_model: Optional[Any] = Field(None, validate_default=True)
 
     # --- Task, Context and Memory
     context_vars: Optional[List[str]] = []
@@ -103,11 +107,15 @@ class Agent(BaseModel):
 
         # tools
         if self.tools:
-            tools = ",".join(self.get_tool_names())
             if self.is_react:
                 tools = self.get_tools_text_schema()
-            system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
-            system_message_lines.append("")
+                system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
+                system_message_lines.append(PROMPT_TOOLS_REACT_GUIDELINES)
+                system_message_lines.append("")
+            else:
+                tools = ",".join(self.get_tool_names())
+                system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
+                system_message_lines.append("")
 
         # instructions
         instructions = []        
@@ -272,7 +280,6 @@ class Agent(BaseModel):
             return self.llm.stream(**params, response_format=response_format)
         
         return self.llm.invoke(**params, response_format=response_format)
-
 
     def _run(
         self,
