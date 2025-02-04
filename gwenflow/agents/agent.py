@@ -13,7 +13,7 @@ from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.utils import merge_chunk
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_TOOLS_REACT_GUIDELINES
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK
 from gwenflow.utils import logger
 
 
@@ -160,18 +160,18 @@ class Agent(BaseModel):
 
 
     def format_context(self, context):
-        prompt  = "Use the following information from the knowledge base if it helps:\n\n<context>\n"
+        prompt  = "Use the following information if it helps:\n\n"
 
         if isinstance(context, str):
+            prompt += "<context>\n"
             prompt += context + "\n"
+            prompt += "</context>\n\n"
 
         elif isinstance(context, dict):
             for key in context.keys():
                 prompt += f"<{key}>\n"
                 prompt += context.get(key) + "\n"
                 prompt += f"</{key}>\n\n"
-
-        prompt += "</context>\n\n"
 
         return prompt
 
@@ -183,11 +183,11 @@ class Agent(BaseModel):
 
         prompt = ""
 
-        if task:
-            prompt += f"You have received the following task from your manager:\n<task>\n{task}\n</task>\n\n"
-
         if context:
             prompt += self.format_context(context)
+
+        if task:
+            prompt += PROMPT_TASK.format(task=task)
 
         return { "role": "user", "content": prompt }
 
@@ -288,6 +288,17 @@ class Agent(BaseModel):
         context: Optional[Any] = None,
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
+
+        # add reasoning
+        if self.reasoning_model:
+            reasoning_message = self.reason(task=task)
+            if reasoning_message:
+                if not context:
+                    context = {}
+                if isinstance(context, str):
+                    text = context
+                    context = { "context": text }
+                context["thinking"] = reasoning_message
 
         messages_for_model = []
 

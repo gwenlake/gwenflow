@@ -2,6 +2,12 @@ from typing import Optional, Union, Any, List, Dict
 from pydantic import BaseModel, ConfigDict
 from abc import ABC, abstractmethod
 
+import json
+
+from gwenflow.tools import BaseTool
+from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.utils import logger
+
 
 LLM_CONTEXT_WINDOW_SIZES = {
     # openai
@@ -37,7 +43,9 @@ class ChatBase(BaseModel, ABC):
     model: str
 
     system_prompt: Optional[str] = None
-    tools: Optional[List[Dict]] = None
+
+    tools: List[BaseTool] = []
+
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -53,4 +61,59 @@ class ChatBase(BaseModel, ABC):
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
-    
+
+    def get_tool_names(self):
+        return [tool.name for tool in self.tools]
+
+    def get_tools_map(self):
+        return {tool.name: tool for tool in self.tools}
+
+    def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+        
+        tool_map = self.get_tools_map()
+
+        if not tool_calls or not tool_map:
+            return []
+        
+        messages = []
+
+        for tool_call in tool_calls:
+
+            tool_name = tool_call.function.name
+            
+            if tool_name not in tool_map.keys():
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_name,
+                        "content": f"Observation: Error, tool {tool_name} not found.",
+                    }
+                )
+                logger.error(f"Tool call requested unknown tool '{tool_name}'")
+                continue
+
+            try:
+                function_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse tool arguments: {e}")
+                continue
+
+            try:
+                response = tool_map[tool_name].run(**function_args)
+                if response:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "tool_name": tool_name,
+                            "content": f"Observation: {response}",
+                        }
+                    )
+                logger.debug(f"Tool call: {tool_name}({function_args})")
+            except Exception as e:
+                logger.error(f"Error executing tool '{tool_name}': {e}")
+                continue
+            
+        return messages

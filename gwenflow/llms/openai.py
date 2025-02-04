@@ -6,6 +6,7 @@ from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
+from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.llms.base import ChatBase
 
 
@@ -151,14 +152,34 @@ class ChatOpenAI(ChatBase):
  
         model_params = self._get_model_params(**kwargs)
 
-        response = self.get_client().chat.completions.create(
+        tools = [tool.openai_schema for tool in self.tools]
+        if len(tools)>0:
+            model_params.update(
+                {
+                    "tools": tools or None,
+                    "tool_choice": self.tool_choice,
+                }
+            )
+
+        response: ChatCompletionMessage = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
             **model_params,
         )
 
+        tool_calls = response.choices[0].message.tool_calls
+
+        if not tool_calls or not self.tools:        
+            if parse_response:
+                response = self._parse_response(response, model_params.get("tools"))
+            return response
+
+        response = self.handle_tool_calls(tool_calls=tool_calls)
         if parse_response:
-            response = self._parse_response(response, model_params.get("tools"))
+            text_response = ""
+            for r in response:
+                text_response += "\n\n" + r["content"].removeprefix("Observation:").strip()
+            return text_response
 
         return response
 
