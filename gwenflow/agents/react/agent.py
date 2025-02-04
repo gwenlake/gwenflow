@@ -151,7 +151,6 @@ class ReActAgent(Agent):
                 system_message["content"] += "\n\n" + user_message["content"]
             messages_for_model.append(system_message)
             self.memory.add_message(system_message)
-
         # global loop
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:

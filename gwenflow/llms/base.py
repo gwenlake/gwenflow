@@ -43,7 +43,9 @@ class ChatBase(BaseModel, ABC):
     model: str
 
     system_prompt: Optional[str] = None
+
     tools: List[BaseTool] = []
+
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
