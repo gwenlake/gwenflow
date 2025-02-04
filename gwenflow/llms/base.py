@@ -71,7 +71,7 @@ class ChatBase(BaseModel, ABC):
         tool_map = self.get_tools_map()
 
         if not tool_calls or not tool_map:
-            return None
+            return []
         
         messages = []
 
@@ -80,29 +80,38 @@ class ChatBase(BaseModel, ABC):
             tool_name = tool_call.function.name
             
             if tool_name not in tool_map.keys():
+
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation: Error, Tool {tool_name} not found.",
+                        "content": f"Observation: Error, tool {tool_name} not found.",
                     }
                 )
+                logger.error(f"Tool call requested unknown tool '{tool_name}'")
                 continue
 
-            arguments = json.loads(tool_call.function.arguments)
-            response = tool_map[tool_name].run(**arguments)
+            try:
+                function_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse tool arguments: {e}")
+                continue
 
-            logger.debug(f"Tool call: {tool_name}({arguments})")
-
-            if response:
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "tool_name": tool_name,
-                        "content": f"Observation: {response}",
-                    }
-                )
-
+            try:
+                response = tool_map[tool_name].run(**function_args)
+                if response:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "tool_name": tool_name,
+                            "content": f"Observation: {response}",
+                        }
+                    )
+                logger.debug(f"Tool call: {tool_name}({function_args})")
+            except Exception as e:
+                logger.error(f"Error executing tool '{tool_name}': {e}")
+                continue
+            
         return messages

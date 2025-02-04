@@ -175,6 +175,11 @@ class ChatOpenAI(ChatBase):
             return response
 
         response = self.handle_tool_calls(tool_calls=tool_calls)
+        if parse_response:
+            text_response = ""
+            for r in response:
+                text_response += "\n\n" + r["content"].removeprefix("Observation:").strip()
+            return text_response
 
         return response
 
