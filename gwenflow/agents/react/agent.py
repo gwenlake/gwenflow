@@ -52,18 +52,11 @@ class ReActAgent(Agent):
 
         # handle missing tool case, skip to next tool
         if reasoning_step.action not in tool_map:
-            logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
-            return None
-            # if reasoning_step.action_input:
-            #     return {
-            #         "role": "user",
-            #         "content": f"Observation: { json.dumps(reasoning_step.action_input) }.",
-            #     }
-            # else:
-            #     return {
-            #         "role": "user",
-            #         "content": "Observation: None. Let’s proceed to the next step.",
-            #     }
+            # logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
+            return {
+                "role": "user",
+                "content": "Ok. Let’s proceed with the next step.",
+            }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
                 
