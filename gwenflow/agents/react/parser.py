@@ -54,25 +54,17 @@ def parse_action_reasoning_step(output: str) -> ActionReasoningStep:
         thought=thought, action=action, action_input=action_input_dict
     )
 
+def extract_thought(input_text: str) -> str:
+    pattern = r"\s*Thought:(.*?)$"
+    match = re.search(pattern, input_text, re.DOTALL)
+    if not match:
+        raise ValueError(f"Could not extract tought from input text: {input_text}")
+    return match.group(1).strip()
+
 class ReActOutputParser:
     """ReAct Output parser."""
 
     def parse(self, output: str) -> ActionReasoningStep:
-        """Parse output from ReAct agent.
-
-        We expect the output to be in one of the following formats:
-        1. If the agent need to use a tool to answer the question:
-            ```
-            Thought: <thought>
-            Action: <action>
-            Action Input: <action_input>
-            ```
-        2. If the agent can answer the question without any tools:
-            ```
-            Thought: <thought>
-            Final Answer: <answer>
-            ```
-        """
 
         # Agent directly outputs the answer instead of following the thought-answer format
         if "Thought:" not in output:
@@ -89,5 +81,8 @@ class ReActOutputParser:
             thought, answer = extract_final_response(output)
             return ActionReasoningStep(thought=thought, response=answer, is_done=True)
 
-        raise ValueError(f"Could not parse output: {output}")
-
+        if "Thought:" in output:
+            thought = extract_thought(output)
+            return ActionReasoningStep(thought=thought)
+        
+        return ActionReasoningStep(thought=output)
