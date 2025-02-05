@@ -192,9 +192,9 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        model_params = await self._get_model_params(**kwargs)
+        model_params = self._get_model_params(**kwargs)
 
-        response: ChatCompletionMessage = await self.get_client().chat.completions.create(
+        response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
             model=self.model,
             messages=messages,
             **model_params,
@@ -203,7 +203,7 @@ class ChatOpenAI(ChatBase):
         tool_calls = response.choices[0].message.tool_calls
         if not tool_calls or not self.tools:
             if parse_response:
-                response = await self._parse_response(response, model_params.get("tools"))
+                response = self._parse_response(response, model_params.get("tools"))
             return response
 
         response = self.handle_tool_calls(tool_calls=tool_calls)
@@ -249,7 +249,7 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        model_params = await self._get_model_params(**kwargs)
+        model_params = self._get_model_params(**kwargs)
 
         response = await self.get_client().chat.completions.create(
             model=self.model,
@@ -266,6 +266,6 @@ class ChatOpenAI(ChatBase):
                 if chunk.choices[0].delta.content:
                     content += chunk.choices[0].delta.content
                 if parse_response:
-                    chunk = await self._parse_response(chunk, model_params.get("tools"))
+                    chunk = self._parse_response(chunk, model_params.get("tools"))
                 yield chunk
  
