@@ -87,7 +87,8 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools:
-            model_params["tools"] = self.tools
+            tools = [tool.openai_schema for tool in self.tools]
+            model_params["tools"] = tools or None
             model_params["tool_choice"] = self.tool_choice
 
         if kwargs:
@@ -106,6 +107,16 @@ class ChatOpenAI(ChatBase):
 
         self.client = OpenAI(**client_params)
         return self.client
+
+    def get_async_client(self) -> AsyncOpenAI:
+
+        if self.client:
+            return self.client
+        
+        client_params = self._get_client_params()
+
+        self.async_client = AsyncOpenAI(**client_params)
+        return self.async_client
 
     def _parse_response(self, response, tools):
         """
@@ -152,15 +163,6 @@ class ChatOpenAI(ChatBase):
  
         model_params = self._get_model_params(**kwargs)
 
-        tools = [tool.openai_schema for tool in self.tools]
-        if len(tools)>0:
-            model_params.update(
-                {
-                    "tools": tools or None,
-                    "tool_choice": self.tool_choice,
-                }
-            )
-
         response: ChatCompletionMessage = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
@@ -168,10 +170,40 @@ class ChatOpenAI(ChatBase):
         )
 
         tool_calls = response.choices[0].message.tool_calls
-
-        if not tool_calls or not self.tools:        
+        if not tool_calls or not self.tools:
             if parse_response:
                 response = self._parse_response(response, model_params.get("tools"))
+            return response
+
+        response = self.handle_tool_calls(tool_calls=tool_calls)
+        if parse_response:
+            text_response = ""
+            for r in response:
+                text_response += "\n\n" + r["content"].removeprefix("Observation:").strip()
+            return text_response
+        
+        return response
+        
+
+    async def ainvoke(
+        self,
+        messages: List[Dict[str, str]],
+        parse_response: bool = True,
+        **kwargs,
+    ):
+
+        model_params = await self._get_model_params(**kwargs)
+
+        response: ChatCompletionMessage = await self.get_client().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **model_params,
+        )
+
+        tool_calls = response.choices[0].message.tool_calls
+        if not tool_calls or not self.tools:
+            if parse_response:
+                response = await self._parse_response(response, model_params.get("tools"))
             return response
 
         response = self.handle_tool_calls(tool_calls=tool_calls)
@@ -208,5 +240,32 @@ class ChatOpenAI(ChatBase):
                     content += chunk.choices[0].delta.content
                 if parse_response:
                     chunk = self._parse_response(chunk, model_params.get("tools"))
+                yield chunk
+ 
+    async def astream(
+        self,
+        messages: List[Dict[str, str]],
+        parse_response: bool = True,
+        **kwargs,
+    ):
+
+        model_params = await self._get_model_params(**kwargs)
+
+        response = await self.get_client().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **model_params,
+        )
+
+        content = ""
+        async for chunk in response:
+            if len(chunk.choices) > 0:
+                if chunk.choices[0].finish_reason == "stop":
+                    break
+                if chunk.choices[0].delta.content:
+                    content += chunk.choices[0].delta.content
+                if parse_response:
+                    chunk = await self._parse_response(chunk, model_params.get("tools"))
                 yield chunk
  

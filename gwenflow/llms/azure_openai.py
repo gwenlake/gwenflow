@@ -1,7 +1,7 @@
 import os
 from typing import Optional, Dict, Any
 
-from openai import AzureOpenAI
+from openai import AzureOpenAI, AsyncAzureOpenAI
 
 from gwenflow.llms.openai import ChatOpenAI
 
@@ -46,4 +46,14 @@ class ChatAzureOpenAI(ChatOpenAI):
 
         self.client = AzureOpenAI(**client_params)
         return self.client
+
+    def get_async_client(self) -> AsyncAzureOpenAI:
+
+        if self.async_client:
+            return self.async_client
+        
+        client_params = self._get_client_params()
+
+        self.async_client = AsyncAzureOpenAI(**client_params)
+        return self.async_client
     

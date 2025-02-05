@@ -43,9 +43,7 @@ class ChatBase(BaseModel, ABC):
     model: str
 
     system_prompt: Optional[str] = None
-
     tools: List[BaseTool] = []
-
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -55,9 +53,17 @@ class ChatBase(BaseModel, ABC):
         pass
 
     @abstractmethod
+    async def ainvoke(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
     def stream(self, *args, **kwargs) -> Any:
         pass
  
+    @abstractmethod
+    async def astream(self, *args, **kwargs) -> Any:
+        pass
+
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
