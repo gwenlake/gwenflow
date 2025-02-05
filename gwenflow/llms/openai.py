@@ -118,7 +118,7 @@ class ChatOpenAI(ChatBase):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    def _parse_response(self, response, tools):
+    def _parse_response(self, response, tools, response_format: dict = None):
         """
         Process the response based on whether tools are used or not.
 
@@ -145,13 +145,18 @@ class ChatOpenAI(ChatBase):
                     )
 
             return processed_response
-        
+
         if isinstance(response, ChatCompletionChunk):
             if response.choices[0].delta.content:
                 return response.choices[0].delta.content
             return ""
         
-        return response.choices[0].message.content
+        text_response = response.choices[0].message.content
+        if response_format:
+            if response_format.get("type") == "json_object":
+                text_response = json.loads(text_response)
+
+        return text_response
         
 
     def invoke(
@@ -172,8 +177,8 @@ class ChatOpenAI(ChatBase):
         tool_calls = response.choices[0].message.tool_calls
         if not tool_calls or not self.tools:
             if parse_response:
-                response = self._parse_response(response, model_params.get("tools"))
-            return response
+                text_response = self._parse_response(response, model_params.get("tools"), response_format=kwargs.get("response_format"))
+            return text_response
 
         response = self.handle_tool_calls(tool_calls=tool_calls)
         if parse_response:
@@ -181,7 +186,7 @@ class ChatOpenAI(ChatBase):
             for r in response:
                 text_response += "\n\n" + r["content"].removeprefix("Observation:").strip()
             return text_response
-        
+
         return response
         
 
