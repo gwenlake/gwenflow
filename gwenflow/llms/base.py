@@ -2,6 +2,7 @@ from typing import Optional, Union, Any, List, Dict
 from pydantic import BaseModel, ConfigDict
 from abc import ABC, abstractmethod
 
+import asyncio
 import json
 
 from gwenflow.tools import BaseTool
@@ -74,52 +75,70 @@ class ChatBase(BaseModel, ABC):
     def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
 
+
+    def handle_tool_call(self, tool_call) -> Dict[str, Any]:
+
+        tool_map  = self.get_tools_map()
+        tool_name = tool_call.function.name
+                    
+        if tool_name not in tool_map.keys():
+            logger.error(f"Tool call requested unknown tool '{tool_name}'")
+            return None
+
+        try:
+            function_args = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse tool arguments: {e}")
+            return None
+
+        try:
+            logger.debug(f"Tool call: {tool_name}({function_args})")
+            observation = tool_map[tool_name].run(**function_args)
+            if observation:
+                return {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "tool_name": tool_name,
+                    "content": f"Observation: {observation}",
+                }
+        except Exception as e:
+            logger.error(f"Error executing tool '{tool_name}': {e}")
+
+        return None
+
     def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
         tool_map = self.get_tools_map()
-
         if not tool_calls or not tool_map:
             return []
         
         messages = []
-
         for tool_call in tool_calls:
-
-            tool_name = tool_call.function.name
-            
-            if tool_name not in tool_map.keys():
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "tool_name": tool_name,
-                        "content": f"Observation: Error, tool {tool_name} not found.",
-                    }
-                )
-                logger.error(f"Tool call requested unknown tool '{tool_name}'")
-                continue
-
-            try:
-                function_args = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse tool arguments: {e}")
-                continue
-
-            try:
-                response = tool_map[tool_name].run(**function_args)
-                if response:
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "tool_name": tool_name,
-                            "content": f"Observation: {response}",
-                        }
-                    )
-                logger.debug(f"Tool call: {tool_name}({function_args})")
-            except Exception as e:
-                logger.error(f"Error executing tool '{tool_name}': {e}")
-                continue
+            observation = self.handle_tool_call(tool_call)
+            if observation:
+                messages.append(observation)
             
         return messages
+
+    async def ahandle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+        
+        tool_map = self.get_tools_map()
+        if not tool_calls or not tool_map:
+            return []
+
+        tasks = []
+        for tool_call in tool_calls:
+            # task = asyncio.create_task(self.handle_tool_call(tool_call))
+            task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
+            tasks.append(task)
+
+        messages = []
+
+        results = await asyncio.gather(*tasks)
+        for observation in results:
+            if observation:
+                messages.append(observation)
+
+        return messages
+    
+
