@@ -69,7 +69,8 @@ class ChatOpenAI(ChatBase):
 
         return client_params
 
-    def _get_model_params(self, **kwargs) -> Dict[str, Any]:
+    @property
+    def _get_model_params(self) -> Dict[str, Any]:
 
         model_params = {
             "temperature": self.temperature,
@@ -87,11 +88,9 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools:
-            model_params["tools"] = self.tools
-            model_params["tool_choice"] = self.tool_choice
-
-        if kwargs:
-            model_params.update(**kwargs)
+            tools = [tool.openai_schema for tool in self.tools]
+            model_params["tools"] = tools or None
+            model_params["tool_choice"] = self.tool_choice or "auto"
 
         model_params = {k: v for k, v in model_params.items() if v is not None}
 
@@ -107,41 +106,33 @@ class ChatOpenAI(ChatBase):
         self.client = OpenAI(**client_params)
         return self.client
 
-    def _parse_response(self, response, tools):
-        """
-        Process the response based on whether tools are used or not.
+    def get_async_client(self) -> AsyncOpenAI:
 
-        Args:
-            response: The raw response from API.
-            tools: The list of tools provided in the request.
-
-        Returns:
-            str or dict: The processed response.
-        """
-        if tools:
-            processed_response = {
-                "content": response.choices[0].message.content,
-                "tool_calls": [],
-            }
-
-            if response.choices[0].message.tool_calls:
-                for tool_call in response.choices[0].message.tool_calls:
-                    processed_response["tool_calls"].append(
-                        {
-                            "name": tool_call.function.name,
-                            "arguments": json.loads(tool_call.function.arguments),
-                        }
-                    )
-
-            return processed_response
+        if self.client:
+            return self.client
         
+        client_params = self._get_client_params()
+
+        self.async_client = AsyncOpenAI(**client_params)
+        return self.async_client
+
+    def _parse_response(self, response, response_format: dict = None):
+        """Process the response based on whether tools are used or not."""
+
+        text_response = ""    
+
         if isinstance(response, ChatCompletionChunk):
             if response.choices[0].delta.content:
-                return response.choices[0].delta.content
-            return ""
+                text_response = response.choices[0].delta.content
+        else:
+            if response.choices[0].message.content:
+                text_response = response.choices[0].message.content
         
-        return response.choices[0].message.content
-        
+        if response_format:
+            if response_format.get("type") == "json_object":
+                text_response = json.loads(text_response)
+
+        return text_response
 
     def invoke(
         self,
@@ -149,37 +140,59 @@ class ChatOpenAI(ChatBase):
         parse_response: bool = True,
         **kwargs,
     ):
- 
-        model_params = self._get_model_params(**kwargs)
-
-        tools = [tool.openai_schema for tool in self.tools]
-        if len(tools)>0:
-            model_params.update(
-                {
-                    "tools": tools or None,
-                    "tool_choice": self.tool_choice,
-                }
-            )
 
         response: ChatCompletionMessage = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
-            **model_params,
+            **self._get_model_params,
         )
 
         tool_calls = response.choices[0].message.tool_calls
+        if tool_calls and self.tools:
+            tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+            if len(tool_messages)>0:
+                assistant_message = response.choices[0].message
+                messages.append(json.loads(assistant_message.model_dump_json()))
+                messages.extend(tool_messages)
+                response: ChatCompletionMessage = self.get_client().chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    **self._get_model_params,
+                )
 
-        if not tool_calls or not self.tools:        
-            if parse_response:
-                response = self._parse_response(response, model_params.get("tools"))
-            return response
-
-        response = self.handle_tool_calls(tool_calls=tool_calls)
         if parse_response:
-            text_response = ""
-            for r in response:
-                text_response += "\n\n" + r["content"].removeprefix("Observation:").strip()
-            return text_response
+            response = self._parse_response(response, response_format=kwargs.get("response_format"))
+
+        return response
+
+    async def ainvoke(
+        self,
+        messages: List[Dict[str, str]],
+        parse_response: bool = True,
+        **kwargs,
+    ):
+
+        response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            **self._get_model_params,
+        )
+
+        tool_calls = response.choices[0].message.tool_calls
+        if tool_calls and self.tools:
+            tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+            if len(tool_messages)>0:
+                assistant_message = response.choices[0].message
+                messages.append(json.loads(assistant_message.model_dump_json()))
+                messages.extend(tool_messages)
+                response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    **self._get_model_params,
+                )
+
+        if parse_response:
+            response = self._parse_response(response, response_format=kwargs.get("response_format"))
 
         return response
 
@@ -190,13 +203,11 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        model_params = self._get_model_params(**kwargs)
-
         response = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
-            **model_params,
+            **self._get_model_params,
         )
 
         content = ""
@@ -207,6 +218,31 @@ class ChatOpenAI(ChatBase):
                 if chunk.choices[0].delta.content:
                     content += chunk.choices[0].delta.content
                 if parse_response:
-                    chunk = self._parse_response(chunk, model_params.get("tools"))
+                    chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
+                yield chunk
+
+    async def astream(
+        self,
+        messages: List[Dict[str, str]],
+        parse_response: bool = True,
+        **kwargs,
+    ):
+
+        response = await self.get_client().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **self._get_model_params,
+        )
+
+        content = ""
+        async for chunk in response:
+            if len(chunk.choices) > 0:
+                if chunk.choices[0].finish_reason == "stop":
+                    break
+                if chunk.choices[0].delta.content:
+                    content += chunk.choices[0].delta.content
+                if parse_response:
+                    chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
                 yield chunk
  
