@@ -203,7 +203,7 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        response = self.get_client().chat.completions.create(
+        streamed_response: ChatCompletionChunk = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
@@ -211,15 +211,20 @@ class ChatOpenAI(ChatBase):
         )
 
         content = ""
-        for chunk in response:
-            if len(chunk.choices) > 0:
+        for chunk in streamed_response:
+            try:
                 if chunk.choices[0].finish_reason == "stop":
                     break
                 if chunk.choices[0].delta.content:
                     content += chunk.choices[0].delta.content
                 if parse_response:
                     chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                yield chunk
+                    yield chunk
+                else:
+                    yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
+            
+            except Exception as e:
+                logger.warning(e)
 
     async def astream(
         self,
@@ -244,5 +249,7 @@ class ChatOpenAI(ChatBase):
                     content += chunk.choices[0].delta.content
                 if parse_response:
                     chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                yield chunk
+                    yield chunk
+                else:
+                    yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
  

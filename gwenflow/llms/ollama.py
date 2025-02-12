@@ -10,6 +10,7 @@ class ChatOllama(ChatOpenAI):
 
         client_params = {
             "base_url": self.base_url,
+            "api_key": self.api_key,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
         }
