@@ -215,7 +215,7 @@ class Qdrant(VectorStoreBase):
                 conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
         return Filter(must=conditions) if conditions else None
 
-    def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
+    def search(self, query: str, limit: int = 5, filters: dict = None, with_vectors: bool = False) -> list[Document]:
         """
         Search for similar vectors.
 
@@ -234,15 +234,16 @@ class Qdrant(VectorStoreBase):
             return []
 
         query_filter = self._create_filter(filters) if filters else None
+
         hits = self.client.search(
             collection_name=self.collection,
             query_vector=query_embedding,
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
-            with_vectors=False,
+            with_vectors=with_vectors,
         )
- 
+
         documents = []
         for d in hits:
 
@@ -261,7 +262,9 @@ class Qdrant(VectorStoreBase):
 
             if isinstance(d.id, int):
                 d.id = str(d.id)
-                
+            
+            if with_vectors:
+                d.payload["embedding"] = d.vector
 
             documents.append(
                 Document(
