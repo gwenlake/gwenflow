@@ -10,7 +10,7 @@ class ChatMessage(BaseModel):
     content: Union[str, list[Union[str, dict]]]
     role: str
     name: Optional[str] = None
-    meta: Dict[str, Any] = None
+    metadata: Dict[str, Any] = None
     attachments: Optional[list] = None
 
     def __str__(self) -> str:

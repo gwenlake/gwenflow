@@ -1,7 +1,15 @@
 
 import uuid
-from typing import Optional, Any, Dict
+import enum
+from typing import Optional, Any, Dict, List
 from pydantic import BaseModel, ConfigDict, field_validator, Field
+
+
+class DocumentCreationMode(str, enum.Enum):
+    """Enumeration for document creation modes."""
+    ONE_DOC_PER_FILE = "one-doc-per-file"
+    ONE_DOC_PER_PAGE = "one-doc-per-page"
+    ONE_DOC_PER_ELEMENT = "one-doc-per-element"
 
 
 class Document(BaseModel):
@@ -9,7 +17,8 @@ class Document(BaseModel):
 
     id: Optional[str] = Field(None, validate_default=True)
     content: str
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = None
+    embedding: List[float] = None
     score: Optional[float] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
