@@ -17,7 +17,7 @@ class Document(BaseModel):
 
     id: Optional[str] = Field(None, validate_default=True)
     content: str
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = {}
     embedding: List[float] = None
     score: Optional[float] = None
 

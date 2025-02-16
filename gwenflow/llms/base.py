@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from gwenflow.tools import BaseTool
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types import ChatMessage, ChatCompletionMessageToolCall
 from gwenflow.utils import logger
 
 
@@ -42,7 +42,6 @@ LLM_CONTEXT_WINDOW_SIZES = {
 class ChatBase(BaseModel, ABC):
  
     model: str
-
     system_prompt: Optional[str] = None
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
@@ -76,7 +75,7 @@ class ChatBase(BaseModel, ABC):
         return {tool.name: tool for tool in self.tools}
 
 
-    def handle_tool_call(self, tool_call) -> Dict[str, Any]:
+    def handle_tool_call(self, tool_call) -> ChatMessage:
 
         tool_map  = self.get_tools_map()
         tool_name = tool_call.function.name
@@ -95,12 +94,12 @@ class ChatBase(BaseModel, ABC):
             logger.debug(f"Tool call: {tool_name}({function_args})")
             observation = tool_map[tool_name].run(**function_args)
             if observation:
-                return {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "tool_name": tool_name,
-                    "content": f"Observation: {observation}",
-                }
+                return ChatMessage(
+                    role="tool",
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_name,
+                    content=f"Observation: {observation}",
+                )
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
 
@@ -116,7 +115,7 @@ class ChatBase(BaseModel, ABC):
         for tool_call in tool_calls:
             observation = self.handle_tool_call(tool_call)
             if observation:
-                messages.append(observation)
+                messages.append(observation.to_dict())
             
         return messages
 
@@ -128,7 +127,6 @@ class ChatBase(BaseModel, ABC):
 
         tasks = []
         for tool_call in tool_calls:
-            # task = asyncio.create_task(self.handle_tool_call(tool_call))
             task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
             tasks.append(task)
 

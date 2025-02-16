@@ -4,9 +4,8 @@ import json
 
 from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types import ChatCompletionMessage, ChatCompletion, ChatCompletionChunk
 from gwenflow.llms.base import ChatBase
 
 
@@ -122,11 +121,13 @@ class ChatOpenAI(ChatBase):
         text_response = ""    
 
         if isinstance(response, ChatCompletionChunk):
-            if response.choices[0].delta.content:
-                text_response = response.choices[0].delta.content
+            if len(response.choices)>0:
+                if response.choices[0].delta.content:
+                    text_response = response.choices[0].delta.content
         else:
-            if response.choices[0].message.content:
-                text_response = response.choices[0].message.content
+            if len(response.choices)>0:
+                if response.choices[0].message.content:
+                    text_response = response.choices[0].message.content
         
         if response_format:
             if response_format.get("type") == "json_object":
@@ -141,20 +142,21 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        response: ChatCompletionMessage = self.get_client().chat.completions.create(
+        response = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
             **self._get_model_params,
         )
 
+        response = ChatCompletion(**response.model_dump())
+
         tool_calls = response.choices[0].message.tool_calls
         if tool_calls and self.tools:
             tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
             if len(tool_messages)>0:
-                assistant_message = response.choices[0].message
-                messages.append(json.loads(assistant_message.model_dump_json()))
+                messages.append(response.choices[0].message.model_dump())
                 messages.extend(tool_messages)
-                response: ChatCompletionMessage = self.get_client().chat.completions.create(
+                response = self.get_client().chat.completions.create(
                     model=self.model,
                     messages=messages,
                     **self._get_model_params,
@@ -172,20 +174,21 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
+        response = await self.get_async_client().chat.completions.create(
             model=self.model,
             messages=messages,
             **self._get_model_params,
         )
 
+        response = ChatCompletion(**response.model_dump())
+
         tool_calls = response.choices[0].message.tool_calls
         if tool_calls and self.tools:
             tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
             if len(tool_messages)>0:
-                assistant_message = response.choices[0].message
-                messages.append(json.loads(assistant_message.model_dump_json()))
+                messages.append(response.choices[0].message.model_dump())
                 messages.extend(tool_messages)
-                response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
+                response = await self.get_async_client().chat.completions.create(
                     model=self.model,
                     messages=messages,
                     **self._get_model_params,
@@ -203,26 +206,24 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        streamed_response: ChatCompletionChunk = self.get_client().chat.completions.create(
+        response = self.get_client().chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
+            stream_options={"include_usage": True},
             **self._get_model_params,
         )
 
-        content = ""
-        for chunk in streamed_response:
+        for chunk in response:
             try:
-                if chunk.choices[0].finish_reason == "stop":
-                    break
-                if chunk.choices[0].delta.content:
-                    content += chunk.choices[0].delta.content
+                chunk = chunk.model_dump()
+                chunk.pop("object")
+                chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
                 if parse_response:
                     chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
                     yield chunk
                 else:
                     yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
-            
             except Exception as e:
                 logger.warning(e)
 
@@ -237,19 +238,19 @@ class ChatOpenAI(ChatBase):
             model=self.model,
             messages=messages,
             stream=True,
+            stream_options={"include_usage": True},
             **self._get_model_params,
         )
 
-        content = ""
         async for chunk in response:
-            if len(chunk.choices) > 0:
-                if chunk.choices[0].finish_reason == "stop":
-                    break
-                if chunk.choices[0].delta.content:
-                    content += chunk.choices[0].delta.content
+            try:
+                chunk = chunk.model_dump()
+                chunk.pop("object")
+                chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
                 if parse_response:
                     chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
                     yield chunk
                 else:
                     yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
- 
+            except Exception as e:
+                logger.warning(e)
