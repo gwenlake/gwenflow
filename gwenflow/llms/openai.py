@@ -1,6 +1,6 @@
 import os
 import logging
-# import json
+import json as jsonbasic
 import dirtyjson as json
 
 from collections import defaultdict
@@ -148,25 +148,33 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        response = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        response = ChatCompletion(**response.model_dump())
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **self._get_model_params,
+            )
 
-        tool_calls = response.choices[0].message.tool_calls
-        if tool_calls and self.tools:
-            tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
-            if len(tool_messages)>0:
-                messages.append(response.choices[0].message.model_dump())
-                messages.extend(tool_messages)
-                response = self.get_client().chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    **self._get_model_params,
-                )
+            response = ChatCompletion(**response.model_dump())
+
+            if not response.choices[0].message.tool_calls:
+                break
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(response.choices[0].message.model_dump())
+                    messages.extend(tool_messages)
+
+                # if show_tool_calls:
+                #     for tool_call in tool_calls:
+                #         content = f"""**Calling:** { tool_call["function"]["name"] }({ tool_call["function"]["arguments"] })"""
+
+
+            loop += 1
 
         if parse_response:
             response = self._parse_response(response, response_format=kwargs.get("response_format"))
@@ -180,25 +188,26 @@ class ChatOpenAI(ChatBase):
         **kwargs,
     ):
 
-        response = await self.get_async_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        response = ChatCompletion(**response.model_dump())
+            response = await self.get_async_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **self._get_model_params,
+            )
 
-        tool_calls = response.choices[0].message.tool_calls
-        if tool_calls and self.tools:
-            tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
-            if len(tool_messages)>0:
-                messages.append(response.choices[0].message.model_dump())
-                messages.extend(tool_messages)
-                response = await self.get_async_client().chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    **self._get_model_params,
-                )
+            response = ChatCompletion(**response.model_dump())
+
+            if not response.choices[0].message.tool_calls:
+                break
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(response.choices[0].message.model_dump())
+                    messages.extend(tool_messages)
 
         if parse_response:
             response = self._parse_response(response, response_format=kwargs.get("response_format"))
