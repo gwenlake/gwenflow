@@ -9,7 +9,7 @@ from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
-from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS, PROMPT_REASONNING
+from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
 from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import logger
 
@@ -55,7 +55,7 @@ class ReActAgent(Agent):
             # logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
                 "role": "user",
-                "content": f"Tool {reasoning_step.action} does not exist",
+                "content": "Ok. Let’s proceed with the next step.",
             }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
@@ -69,6 +69,7 @@ class ReActAgent(Agent):
 
         params = {
             "messages": messages,
+            "parse_response": False,
         }
 
         response_format = None
@@ -87,22 +88,23 @@ class ReActAgent(Agent):
         
         user_prompt = ""
         
-        # if self.tools:
-        #     tools = self.get_tools_text_schema()
-        #     user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
+        if self.tools:
+            tools = self.get_tools_text_schema()
+            user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
 
         user_prompt += PROMPT_TASK.format(task=task).strip()
-        user_prompt += "\n\n" + PROMPT_REASONNING 
+        user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
 
         params = {
             "messages": [{"role": "user", "content": user_prompt}],
+            "parse_response": True,
         }
 
         logger.debug("Reasoning.")
         response = self.reasoning_model.invoke(**params)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.choices[0].message.content, flags=re.DOTALL)
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
         if not reasoning_content:
             return None
         
@@ -149,7 +151,6 @@ class ReActAgent(Agent):
                 system_message["content"] += "\n\n" + user_message["content"]
             messages_for_model.append(system_message)
             self.memory.add_message(system_message)
-        
         # global loop
         init_len = len(messages_for_model)
         while len(messages_for_model) - init_len < MAX_TURNS:
@@ -157,6 +158,7 @@ class ReActAgent(Agent):
             if stream:
                 message = {
                     "content": "",
+                    "sender": self.name,
                     "role": "assistant",
                 }
 
@@ -165,6 +167,8 @@ class ReActAgent(Agent):
                 for chunk in completion:
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
+                        if delta["role"] == "assistant":
+                            delta["sender"] = self.name
                         if delta["content"]:
                             yield AgentResponse(
                                 delta=delta["content"],
@@ -172,16 +176,8 @@ class ReActAgent(Agent):
                                 agent=self,
                                 tools=self.tools,
                             )
-                        elif delta["tool_calls"] and self.show_tool_calls:
-                            if delta["tool_calls"][0]["function"]["name"] and not delta["tool_calls"][0]["function"]["arguments"]:
-                                response = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                                yield AgentResponse(
-                                    delta=response,
-                                    messages=None,
-                                    agent=self,
-                                    tools=self.tools,
-                                )
                         delta.pop("role", None)
+                        delta.pop("sender", None)
                         merge_chunk(message, delta)
 
                 message = ChatCompletionMessage(**message)
@@ -189,6 +185,7 @@ class ReActAgent(Agent):
             else:
                 completion = self.invoke(messages=messages_for_model)                
                 message = completion.choices[0].message
+                message.sender = self.name
 
             # add messages to the current message stack
             message_dict = json.loads(message.model_dump_json())
@@ -199,7 +196,7 @@ class ReActAgent(Agent):
             self.reasoning_steps.append(reasoning_step)
 
             # show response
-            logger.debug(f"{ reasoning_step.thought }")
+            logger.debug(f"\n---\nThought: { reasoning_step.thought }")
 
             # final answer ?
             if reasoning_step.is_done:
