@@ -77,6 +77,9 @@ class ChatBase(BaseModel, ABC):
 
     def handle_tool_call(self, tool_call) -> ChatMessage:
 
+        if isinstance(tool_call, dict):
+            tool_call = ChatCompletionMessageToolCall(**tool_call)
+    
         tool_map  = self.get_tools_map()
         tool_name = tool_call.function.name
                     

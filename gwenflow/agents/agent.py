@@ -12,9 +12,9 @@ from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
-from gwenflow.agents.utils import merge_chunk
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK
 from gwenflow.utils import logger
+from gwenflow.utils.chunks import merge_chunk
 
 
 MAX_TURNS = float('inf') #10

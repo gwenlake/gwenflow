@@ -10,7 +10,7 @@ from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
 from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
-from gwenflow.agents.utils import merge_chunk
+from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import logger
 
 
