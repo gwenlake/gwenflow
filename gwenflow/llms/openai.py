@@ -1,6 +1,7 @@
 import os
 import logging
-import json
+# import json
+import dirtyjson as json
 
 from collections import defaultdict
 from typing import Optional, Union, Any, List, Dict
@@ -9,6 +10,7 @@ from openai import OpenAI, AsyncOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletion, ChatCompletionChunk, ChatCompletionMessageToolCall
 from gwenflow.llms.base import ChatBase
 from gwenflow.utils.chunks import merge_chunk
+from gwenflow.utils import extract_json_str
 
 
 logger = logging.getLogger(__name__)
@@ -134,7 +136,8 @@ class ChatOpenAI(ChatBase):
         
         if response_format:
             if response_format.get("type") == "json_object":
-                text_response = json.loads(text_response)
+                json_str = extract_json_str(text_response)
+                text_response = json.loads(json_str)
 
         return text_response
 
