@@ -158,7 +158,7 @@ class ReActAgent(Agent):
             if stream:
                 message = {
                     "content": "",
-                    "sender": self.name,
+                    # "sender": self.name,
                     "role": "assistant",
                 }
 
@@ -167,8 +167,8 @@ class ReActAgent(Agent):
                 for chunk in completion:
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
-                        if delta["role"] == "assistant":
-                            delta["sender"] = self.name
+                        # if delta["role"] == "assistant":
+                        #     delta["sender"] = self.name
                         if delta["content"]:
                             yield AgentResponse(
                                 delta=delta["content"],
@@ -185,7 +185,7 @@ class ReActAgent(Agent):
             else:
                 completion = self.invoke(messages=messages_for_model)                
                 message = completion.choices[0].message
-                message.sender = self.name
+                # message.sender = self.name
 
             # add messages to the current message stack
             message_dict = json.loads(message.model_dump_json())
