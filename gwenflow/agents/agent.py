@@ -332,10 +332,7 @@ class Agent(BaseModel):
                 completion = self.invoke(messages=messages_for_model, stream=True)
 
                 for chunk in completion:
-
-                    chunk = chunk.replace("data: ", "")
-                    chunk = ChatCompletionChunk(**json.loads(chunk))
-
+                    
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
                         if delta["content"]:
