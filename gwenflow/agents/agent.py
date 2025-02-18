@@ -240,7 +240,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Tool {tool_name} does not exist",
+                        "content": f"Observation: Error, Tool {tool_name} not found.",
                     }
                 )
                 continue
@@ -254,7 +254,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation: {observation}",
+                        "content": f"Observation:\n{observation}",
                     }
                 )
 
@@ -268,6 +268,7 @@ class Agent(BaseModel):
             "messages": messages,
             "tools": tools or None,
             "tool_choice": self.tool_choice,
+            "parse_response": False,
         }
 
         response_format = None
@@ -318,6 +319,7 @@ class Agent(BaseModel):
             if stream:
                 message = {
                     "content": "",
+                    "sender": self.name,
                     "role": "assistant",
                     "function_call": None,
                     "tool_calls": defaultdict(
@@ -332,9 +334,14 @@ class Agent(BaseModel):
                 completion = self.invoke(messages=messages_for_model, stream=True)
 
                 for chunk in completion:
-                    
+
+                    chunk = chunk.replace("data: ", "")
+                    chunk = ChatCompletionChunk(**json.loads(chunk))
+
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
+                        if delta["role"] == "assistant":
+                            delta["sender"] = self.name
                         if delta["content"]:
                             yield AgentResponse(
                                 delta=delta["content"],
