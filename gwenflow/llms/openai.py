@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
 
-from gwenflow.types import ChatCompletionMessage, ChatCompletion, ChatCompletionChunk, ChatCompletionMessageToolCall
+from gwenflow.types import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.llms.base import ChatBase
 from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import extract_json_str
@@ -123,7 +123,10 @@ class ChatOpenAI(ChatBase):
     def _parse_response(self, response, response_format: dict = None):
         """Process the response based on whether tools are used or not."""
 
-        text_response = ""    
+        if not response_format:
+            return response        
+
+        text_response = None
 
         if isinstance(response, ChatCompletionChunk):
             if len(response.choices)>0:
@@ -133,20 +136,26 @@ class ChatOpenAI(ChatBase):
             if len(response.choices)>0:
                 if response.choices[0].message.content:
                     text_response = response.choices[0].message.content
-        
-        if response_format:
-            if response_format.get("type") == "json_object":
-                json_str = extract_json_str(text_response)
-                text_response = dirtyjson.loads(json_str)
 
-        return text_response
+        if not text_response:
+            return response
+
+        if response_format.get("type") == "json_object":
+            json_str = extract_json_str(text_response)
+            text_response = dirtyjson.loads(json_str)
+
+        if isinstance(response, ChatCompletionChunk):
+            response.choices[0].delta.content = text_response
+        else:
+            response.choices[0].message.content = text_response
+
+        return response
 
     def invoke(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         **kwargs,
-    ):
+    ) -> ChatCompletion:
 
         loop = 1
         while loop < MAX_LOOPS:
@@ -171,17 +180,15 @@ class ChatOpenAI(ChatBase):
 
             loop += 1
         
-        if parse_response:
-            response = self._parse_response(response, response_format=kwargs.get("response_format"))
+        response = self._parse_response(response, response_format=kwargs.get("response_format"))
 
         return response
 
     async def ainvoke(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         **kwargs,
-    ):
+    ) -> ChatCompletion:
 
         loop = 1
         while loop < MAX_LOOPS:
@@ -206,15 +213,13 @@ class ChatOpenAI(ChatBase):
 
             loop += 1
 
-        if parse_response:
-            response = self._parse_response(response, response_format=kwargs.get("response_format"))
+        response = self._parse_response(response, response_format=kwargs.get("response_format"))
 
         return response
 
     def stream(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         show_tool_calls: bool = True,
         **kwargs,
     ):
@@ -248,14 +253,10 @@ class ChatOpenAI(ChatBase):
                     delta = json.loads(chunk.choices[0].delta.json())
                     if delta["content"]:
                         try:
-                            chunk = chunk.model_dump()
-                            chunk.pop("object")
-                            chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
-                            if parse_response:
-                                chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                                yield chunk
-                            else:
-                                yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
+                            chunk = ChatCompletionChunk(**chunk.model_dump())
+                            chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
+                            # yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
+                            yield chunk
                         except Exception as e:
                             logger.warning(e)
 
@@ -275,17 +276,11 @@ class ChatOpenAI(ChatBase):
                     messages.append(message)
                     messages.extend(tool_messages)
 
-                if show_tool_calls:
-                    for tool_call in tool_calls:
-                        content = f"""**Calling:** { tool_call["function"]["name"] }({ tool_call["function"]["arguments"] })"""
-                        if parse_response:
-                            yield f"{content}\n\n"
-                        else:
-                            chunk = chunk.model_dump()
-                            chunk.pop("object")
-                            chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
-                            chunk.choices[0].delta.content = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                            yield f"data: { json.dumps(delta) }\n\n"
+                # if show_tool_calls:
+                #     for tool_call in tool_calls:
+                #         chunk = ChatCompletionChunk(**chunk.model_dump())
+                #         chunk.choices[0].delta.content = f"""**Calling:** {tool_call["function"]["name"]}"""
+                #         yield chunk
 
             loop += 1
     
@@ -326,14 +321,10 @@ class ChatOpenAI(ChatBase):
                     delta = json.loads(chunk.choices[0].delta.json())
                     if delta["content"]:
                         try:
-                            chunk = chunk.model_dump()
-                            chunk.pop("object")
-                            chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
-                            if parse_response:
-                                chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                                yield chunk
-                            else:
-                                yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
+                            chunk = ChatCompletionChunk(**chunk.model_dump())
+                            chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
+                            # yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
+                            yield chunk
                         except Exception as e:
                             logger.warning(e)
 
@@ -353,17 +344,12 @@ class ChatOpenAI(ChatBase):
                     messages.append(message)
                     messages.extend(tool_messages)
 
-                if show_tool_calls:
-                    for tool_call in tool_calls:
-                        content = f"""**Calling:** { tool_call["function"]["name"] }({ tool_call["function"]["arguments"] })"""
-                        if parse_response:
-                            yield f"{content}\n\n"
-                        else:
-                            chunk = chunk.model_dump()
-                            chunk.pop("object")
-                            chunk = ChatCompletionChunk(**chunk, object="chat.completion.chunk")
-                            chunk.choices[0].delta.content = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                            yield f"data: { json.dumps(delta) }\n\n"
+                # if show_tool_calls:
+                #     for tool_call in tool_calls:
+                #         chunk = ChatCompletionChunk(**chunk.model_dump())
+                #         chunk.choices[0].delta.content = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
+                #         # yield f"data: { json.dumps(delta) }\n\n"
+                #         yield chunk
 
             loop += 1
     

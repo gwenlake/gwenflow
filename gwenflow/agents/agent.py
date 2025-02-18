@@ -268,7 +268,6 @@ class Agent(BaseModel):
             "messages": messages,
             "tools": tools or None,
             "tool_choice": self.tool_choice,
-            "parse_response": False,
         }
 
         response_format = None

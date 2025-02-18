@@ -1,14 +1,13 @@
-from gwenflow.types.chat_message import ChatMessage
-from gwenflow.types.chat_completion import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall, Function
+from gwenflow.types.message import ChatMessage
+from gwenflow.types.model import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.types.document import Document
 
 
 __all__ = [
     "ChatMessage",
-    "ChatCompletion",
-    "ChatCompletionChunk",
     "ChatCompletionMessage",
     "ChatCompletionMessageToolCall",
+    "ChatCompletion",
+    "ChatCompletionChunk",
     "Document",
-    "Function",
 ]

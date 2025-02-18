@@ -69,7 +69,6 @@ class ReActAgent(Agent):
 
         params = {
             "messages": messages,
-            "parse_response": False,
         }
 
         response_format = None
@@ -97,7 +96,6 @@ class ReActAgent(Agent):
 
         params = {
             "messages": [{"role": "user", "content": user_prompt}],
-            "parse_response": True,
         }
 
         logger.debug("Reasoning.")
