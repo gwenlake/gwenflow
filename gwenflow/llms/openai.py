@@ -348,4 +348,3 @@ class ChatOpenAI(ChatBase):
                 #         yield chunk
 
             loop += 1
-    
