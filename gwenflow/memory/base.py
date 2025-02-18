@@ -32,8 +32,13 @@ class BaseChatMemory(BaseModel):
 
     def add_messages(self, messages: list[ChatMessage]):
         for message in messages:
-            self.messages.append(ChatMessage(**message))
+            self.add_message(message)
 
     def add_message(self, message: ChatMessage):
-        self.messages.append(ChatMessage(**message))
+        if isinstance(message, ChatMessage):
+            self.messages.append(message)
+        elif isinstance(message, dict):
+            self.messages.append(ChatMessage(**message))
+        else:
+            self.messages.append(ChatMessage(**message.__dict__))
 

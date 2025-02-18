@@ -8,13 +8,13 @@ from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
 
 from gwenflow.llms import ChatOpenAI
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall, ChatCompletionChunk
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
-from gwenflow.agents.utils import merge_chunk
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK
 from gwenflow.utils import logger
+from gwenflow.utils.chunks import merge_chunk
 
 
 MAX_TURNS = float('inf') #10
@@ -210,7 +210,6 @@ class Agent(BaseModel):
         return [tool.name for tool in self.tools]
 
     def execute_tool_call(self, tool_name: str, arguments: Dict[str, str]) -> Any:
-
         available_tools = self.get_tools_map()
         if tool_name not in available_tools:
             logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
@@ -269,7 +268,6 @@ class Agent(BaseModel):
             "messages": messages,
             "tools": tools or None,
             "tool_choice": self.tool_choice,
-            "parse_response": False,
         }
 
         response_format = None
@@ -320,7 +318,6 @@ class Agent(BaseModel):
             if stream:
                 message = {
                     "content": "",
-                    "sender": self.name,
                     "role": "assistant",
                     "function_call": None,
                     "tool_calls": defaultdict(
@@ -335,10 +332,9 @@ class Agent(BaseModel):
                 completion = self.invoke(messages=messages_for_model, stream=True)
 
                 for chunk in completion:
+                    
                     if len(chunk.choices) > 0:
                         delta = json.loads(chunk.choices[0].delta.json())
-                        if delta["role"] == "assistant":
-                            delta["sender"] = self.name
                         if delta["content"]:
                             yield AgentResponse(
                                 delta=delta["content"],
@@ -356,7 +352,6 @@ class Agent(BaseModel):
                                     tools=self.tools,
                                 )
                         delta.pop("role", None)
-                        delta.pop("sender", None)
                         merge_chunk(message, delta)
 
                 message["tool_calls"] = list(message.get("tool_calls", {}).values())
@@ -365,7 +360,6 @@ class Agent(BaseModel):
             else:
                 completion = self.invoke(messages=messages_for_model)
                 message = completion.choices[0].message
-                message.sender = self.name
 
             # add messages to the current message stack
             message_dict = json.loads(message.model_dump_json())

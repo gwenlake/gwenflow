@@ -1,17 +1,21 @@
 import os
 import logging
 import json
+import dirtyjson
 
+from collections import defaultdict
 from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
-from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types import ChatCompletion, ChatCompletionChunk
 from gwenflow.llms.base import ChatBase
+from gwenflow.utils.chunks import merge_chunk
+from gwenflow.utils import extract_json_str
 
 
 logger = logging.getLogger(__name__)
 
+MAX_LOOPS = 10
 
 class ChatOpenAI(ChatBase):
  
@@ -119,137 +123,228 @@ class ChatOpenAI(ChatBase):
     def _parse_response(self, response, response_format: dict = None):
         """Process the response based on whether tools are used or not."""
 
-        text_response = ""    
+        if not response_format:
+            return response        
+
+        text_response = None
 
         if isinstance(response, ChatCompletionChunk):
-            if response.choices[0].delta.content:
-                text_response = response.choices[0].delta.content
+            if len(response.choices)>0:
+                if response.choices[0].delta.content:
+                    text_response = response.choices[0].delta.content
         else:
-            if response.choices[0].message.content:
-                text_response = response.choices[0].message.content
-        
-        if response_format:
-            if response_format.get("type") == "json_object":
-                text_response = json.loads(text_response)
+            if len(response.choices)>0:
+                if response.choices[0].message.content:
+                    text_response = response.choices[0].message.content
 
-        return text_response
+        if not text_response:
+            return response
+
+        if response_format.get("type") == "json_object":
+            json_str = extract_json_str(text_response)
+            text_response = dirtyjson.loads(json_str)
+
+        if isinstance(response, ChatCompletionChunk):
+            response.choices[0].delta.content = text_response
+        else:
+            response.choices[0].message.content = text_response
+
+        return response
 
     def invoke(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         **kwargs,
-    ):
+    ) -> ChatCompletion:
 
-        response: ChatCompletionMessage = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        tool_calls = response.choices[0].message.tool_calls
-        if tool_calls and self.tools:
-            tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
-            if len(tool_messages)>0:
-                assistant_message = response.choices[0].message
-                messages.append(json.loads(assistant_message.model_dump_json()))
-                messages.extend(tool_messages)
-                response: ChatCompletionMessage = self.get_client().chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    **self._get_model_params,
-                )
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **self._get_model_params,
+            )
 
-        if parse_response:
-            response = self._parse_response(response, response_format=kwargs.get("response_format"))
+            response = ChatCompletion(**response.model_dump())
+
+            if not response.choices[0].message.tool_calls:
+                break
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(response.choices[0].message.model_dump())
+                    messages.extend(tool_messages)
+
+            loop += 1
+        
+        response = self._parse_response(response, response_format=kwargs.get("response_format"))
 
         return response
 
     async def ainvoke(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         **kwargs,
-    ):
+    ) -> ChatCompletion:
 
-        response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        tool_calls = response.choices[0].message.tool_calls
-        if tool_calls and self.tools:
-            tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
-            if len(tool_messages)>0:
-                assistant_message = response.choices[0].message
-                messages.append(json.loads(assistant_message.model_dump_json()))
-                messages.extend(tool_messages)
-                response: ChatCompletionMessage = await self.get_async_client().chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    **self._get_model_params,
-                )
+            response = await self.get_async_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **self._get_model_params,
+            )
 
-        if parse_response:
-            response = self._parse_response(response, response_format=kwargs.get("response_format"))
+            response = ChatCompletion(**response.model_dump())
+
+            if not response.choices[0].message.tool_calls:
+                break
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(response.choices[0].message.model_dump())
+                    messages.extend(tool_messages)
+
+            loop += 1
+
+        response = self._parse_response(response, response_format=kwargs.get("response_format"))
 
         return response
 
     def stream(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
+        show_tool_calls: bool = True,
         **kwargs,
     ):
 
-        streamed_response: ChatCompletionChunk = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        content = ""
-        for chunk in streamed_response:
-            try:
-                if chunk.choices[0].finish_reason == "stop":
-                    break
-                if chunk.choices[0].delta.content:
-                    content += chunk.choices[0].delta.content
-                if parse_response:
-                    chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                    yield chunk
-                else:
-                    yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
-            
-            except Exception as e:
-                logger.warning(e)
+            message = {
+                "content": "",
+                "role": "assistant",
+                "function_call": None,
+                "tool_calls": defaultdict(
+                    lambda: {
+                        "function": {"arguments": "", "name": ""},
+                        "id": "",
+                        "type": "",
+                    }
+                ),
+            }
 
+            response = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._get_model_params,
+            )
+
+            for chunk in response:
+                if len(chunk.choices) > 0:
+                    delta = json.loads(chunk.choices[0].delta.json())
+                    if delta["content"]:
+                        try:
+                            chunk = ChatCompletionChunk(**chunk.model_dump())
+                            chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
+                            yield chunk
+                        except Exception as e:
+                            logger.warning(e)
+
+                    delta.pop("role", None)
+                    merge_chunk(message, delta)
+
+            if not message["tool_calls"]:
+                break
+
+            message["tool_calls"] = list(message.get("tool_calls", {}).values())
+            tool_calls = message["tool_calls"]
+
+            if tool_calls and self.tools:
+
+                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(message)
+                    messages.extend(tool_messages)
+
+                # if show_tool_calls:
+                #     for tool_call in tool_calls:
+                #         chunk = ChatCompletionChunk(**chunk.model_dump())
+                #         chunk.choices[0].delta.content = f"""**Calling:** {tool_call["function"]["name"]}"""
+                #         yield chunk
+
+            loop += 1
+    
     async def astream(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
+        show_tool_calls: bool = True,
         **kwargs,
     ):
 
-        response = await self.get_client().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
-            **self._get_model_params,
-        )
+        loop = 1
+        while loop < MAX_LOOPS:
 
-        content = ""
-        async for chunk in response:
-            if len(chunk.choices) > 0:
-                if chunk.choices[0].finish_reason == "stop":
-                    break
-                if chunk.choices[0].delta.content:
-                    content += chunk.choices[0].delta.content
-                if parse_response:
-                    chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                    yield chunk
-                else:
-                    yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
- 
+            message = {
+                "content": "",
+                "role": "assistant",
+                "function_call": None,
+                "tool_calls": defaultdict(
+                    lambda: {
+                        "function": {"arguments": "", "name": ""},
+                        "id": "",
+                        "type": "",
+                    }
+                ),
+            }
+
+            response = await self.get_async_client().chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._get_model_params,
+            )
+
+            async for chunk in response:
+                if len(chunk.choices) > 0:
+                    delta = json.loads(chunk.choices[0].delta.json())
+                    if delta["content"]:
+                        try:
+                            chunk = ChatCompletionChunk(**chunk.model_dump())
+                            chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
+                            yield chunk
+                        except Exception as e:
+                            logger.warning(e)
+
+                    delta.pop("role", None)
+                    merge_chunk(message, delta)
+
+            if not message["tool_calls"]:
+                break
+
+            message["tool_calls"] = list(message.get("tool_calls", {}).values())
+            tool_calls = message["tool_calls"]
+
+            if tool_calls and self.tools:
+
+                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages.append(message)
+                    messages.extend(tool_messages)
+
+                # if show_tool_calls:
+                #     for tool_call in tool_calls:
+                #         chunk = ChatCompletionChunk(**chunk.model_dump())
+                #         chunk.choices[0].delta.content = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
+                #         yield chunk
+
+            loop += 1

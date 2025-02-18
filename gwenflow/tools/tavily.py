@@ -29,7 +29,7 @@ class TavilyBaseTool(BaseTool):
 class TavilyWebSearchTool(TavilyBaseTool):
 
     name: str = "TavilyWebSearchTool"
-    description: str = "Use this function to search the web for a given query."
+    description: str = "Use this function to search Google for fully-formed URL to enhance your knowledge."
 
     def _run(self, query: str = Field(description="Query to search for.")) -> str:
         search_depth = "advanced"
