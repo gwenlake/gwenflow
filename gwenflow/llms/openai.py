@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
 
-from gwenflow.types import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types import ChatCompletion, ChatCompletionChunk
 from gwenflow.llms.base import ChatBase
 from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import extract_json_str
@@ -255,7 +255,6 @@ class ChatOpenAI(ChatBase):
                         try:
                             chunk = ChatCompletionChunk(**chunk.model_dump())
                             chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                            # yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
                             yield chunk
                         except Exception as e:
                             logger.warning(e)
@@ -287,7 +286,6 @@ class ChatOpenAI(ChatBase):
     async def astream(
         self,
         messages: List[Dict[str, str]],
-        parse_response: bool = True,
         show_tool_calls: bool = True,
         **kwargs,
     ):
@@ -323,7 +321,6 @@ class ChatOpenAI(ChatBase):
                         try:
                             chunk = ChatCompletionChunk(**chunk.model_dump())
                             chunk = self._parse_response(chunk, response_format=kwargs.get("response_format"))
-                            # yield f"data: { json.dumps(chunk.model_dump()) }\n\n"
                             yield chunk
                         except Exception as e:
                             logger.warning(e)
@@ -348,7 +345,6 @@ class ChatOpenAI(ChatBase):
                 #     for tool_call in tool_calls:
                 #         chunk = ChatCompletionChunk(**chunk.model_dump())
                 #         chunk.choices[0].delta.content = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                #         # yield f"data: { json.dumps(delta) }\n\n"
                 #         yield chunk
 
             loop += 1

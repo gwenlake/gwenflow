@@ -1,5 +1,5 @@
 from gwenflow.types.message import ChatMessage
-from gwenflow.types.model import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall
+from gwenflow.types.completion import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage, ChatCompletionMessageToolCall
 from gwenflow.types.document import Document
 
 
