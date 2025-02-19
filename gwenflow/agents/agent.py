@@ -240,7 +240,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation: Error, Tool {tool_name} not found.",
+                        "content": f"Tool {tool_name} does not exist",
                     }
                 )
                 continue
@@ -254,7 +254,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation:\n{observation}",
+                        "content": f"Observation: {observation}",
                     }
                 )
 

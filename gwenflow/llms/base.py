@@ -84,14 +84,24 @@ class ChatBase(BaseModel, ABC):
         tool_name = tool_call.function.name
                     
         if tool_name not in tool_map.keys():
-            logger.error(f"Tool call requested unknown tool '{tool_name}'")
-            return None
+            logger.error(f"Tool {tool_name} does not exist")
+            return ChatMessage(
+                role="tool",
+                tool_call_id=tool_call.id,
+                tool_name=tool_name,
+                content=f"Tool {tool_name} does not exist",
+            )
 
         try:
             function_args = json.loads(tool_call.function.arguments)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse tool arguments: {e}")
-            return None
+            return ChatMessage(
+                role="tool",
+                tool_call_id=tool_call.id,
+                tool_name=tool_name,
+                content=f"Failed to parse tool arguments: {e}",
+            )
 
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
@@ -106,7 +116,13 @@ class ChatBase(BaseModel, ABC):
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
 
-        return None
+        return ChatMessage(
+            role="tool",
+            tool_call_id=tool_call.id,
+            tool_name=tool_name,
+            content=f"Error executing tool '{tool_name}'",
+        )
+
 
     def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
