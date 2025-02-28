@@ -9,7 +9,7 @@ from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
-from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
+from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS, PROMPT_REASONNING
 from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import logger
 
@@ -87,12 +87,12 @@ class ReActAgent(Agent):
         
         user_prompt = ""
         
-        if self.tools:
-            tools = self.get_tools_text_schema()
-            user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
+        # if self.tools:
+        #     tools = self.get_tools_text_schema()
+        #     user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
 
         user_prompt += PROMPT_TASK.format(task=task).strip()
-        user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
+        user_prompt += "\n\n" + PROMPT_REASONNING 
 
         params = {
             "messages": [{"role": "user", "content": user_prompt}],
@@ -102,7 +102,7 @@ class ReActAgent(Agent):
         response = self.reasoning_model.invoke(**params)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response.choices[0].message.content, flags=re.DOTALL)
         if not reasoning_content:
             return None
         

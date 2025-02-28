@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, cast
 import os
 import re
 import requests
-
+from tenacity import retry, stop_after_attempt, wait_fixed
 from gwenflow.embeddings.base import Embeddings
 
 EMBEDDING_DIMS = {
@@ -31,6 +31,7 @@ class GwenlakeEmbeddings(Embeddings):
         values["dimensions"] = EMBEDDING_DIMS[ values["model"] ]
         return values
 
+    @retry(stop=stop_after_attempt(5), wait=wait_fixed(1))
     def _embed(self, input: List[str]) -> List[List[float]]:
 
         api_key = cast(SecretStr, self.api_key).get_secret_value()
@@ -65,6 +66,7 @@ class GwenlakeEmbeddings(Embeddings):
         
         return embeddings
 
+    
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Call out to Gwenlake's embedding endpoint.
 
