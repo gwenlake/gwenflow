@@ -23,7 +23,7 @@ PROMPT_TASK = """
 
 PROMPT_TOOLS = """
 ## Tools
-Your objective is to thoroughly research your task using the following tools as your primary source and provide a detailed and informative answer.
+Your objective is to thoroughly research your <task> using the following tools as your primary source and provide a detailed and informative answer.
 
 You have access to the following tools:
 <tools>
@@ -36,4 +36,13 @@ The tool call you write is an 'Action'. After the tool is executed, you will get
 This Action/Observation can repeat N times. You should take several steps when needed.
 You can use the result of the previous 'Action' as input for the next 'Action'.
 The 'Observation' will always be a string. Then you can use it as input for the next 'Action'.
+"""
+
+PROMPT_REASONNING = """
+I am building a reAct agent. You are the thinker of the agent.  
+Instructions:
+- Given <task>, provide a very simple structured approach to solve the <task>.
+- Enumerate your steps in one list.
+- DO NOT answer to <task>.
+- You are answering to a large language model.
 """
