@@ -55,7 +55,7 @@ class ReActAgent(Agent):
             # logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
                 "role": "user",
-                "content": "Ok. Let’s proceed with the next step.",
+                "content": f"Tool {reasoning_step.action} does not exist",
             }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
