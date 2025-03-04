@@ -159,13 +159,15 @@ class ChatOpenAI(ChatBase):
 
         loop = 1
         while loop < MAX_LOOPS:
-
-            response = self.get_client().chat.completions.create(
-                model=self.model,
-                messages=messages,
-                **self._get_model_params,
-            )
-
+            try:
+                response = self.get_client().chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    **self._get_model_params,
+                )
+            except Exception as e:
+                raise RuntimeError(f"Error in calling openai API: {e}")
+            
             response = ChatCompletion(**response.model_dump())
 
             if not response.choices[0].message.tool_calls:
@@ -240,13 +242,16 @@ class ChatOpenAI(ChatBase):
                 ),
             }
 
-            response = self.get_client().chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True,
-                stream_options={"include_usage": True},
-                **self._get_model_params,
-            )
+            try:
+                response = self.get_client().chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **self._get_model_params,
+                )
+            except Exception as e:
+                raise RuntimeError(f"Error in calling openai API: {e}")
 
             for chunk in response:
                 if len(chunk.choices) > 0:
