@@ -9,8 +9,7 @@ PROMPT_STEPS = """Before providing your final answer, follow these steps:
 4. Identify any contradictions or gaps in the information you've found.
 5. Summarize your key findings and how they relate to the task.
 
-This structured approach will help you organize your thoughts and ensure a thorough response.
-"""
+This structured approach will help you organize your thoughts and ensure a thorough response."""
 
 
 PROMPT_TASK = """

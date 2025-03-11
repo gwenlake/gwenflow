@@ -7,7 +7,7 @@ from collections import defaultdict
 from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
 
-from gwenflow.llms import ChatOpenAI
+from gwenflow.llms import BaseModel, ChatOpenAI
 from gwenflow.types import ChatCompletionMessage, ChatCompletionMessageToolCall, ChatCompletionChunk
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
@@ -40,7 +40,7 @@ class Agent(BaseModel):
     system_prompt_allowed: bool = True
  
     # --- Agent Model and Tools
-    llm: Optional[Any] = Field(None, validate_default=True)
+    llm: Optional[BaseModel] = Field(None, validate_default=True)
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     show_tool_calls: bool = False
@@ -88,75 +88,61 @@ class Agent(BaseModel):
     def get_system_message(self, context: Optional[Any] = None):
         """Return the system message for the Agent."""
 
+        prompt = ""
+
         if self.system_prompt is not None:
-            return dict(role="system", content=self.system_prompt)
+            prompt = self.system_prompt.strip()
+            prompt += "\n"
+        else:
+            prompt += f"You are an AI agent named '{self.name}'.\n"
+            if self.role:
+                prompt += f"Your role is: {self.role.strip('.')}.\n"
+            if self.description:
+                prompt += f"{self.description.strip('.')}.\n"
+            if self.add_datetime_to_instructions:
+                prompt += f"The current date and time is: { datetime.now() }\n"
+            prompt += "\n"
 
-        system_message_lines = []
-
-        # name, role and description
-        txt = f"You are an AI agent named '{self.name}'."
-        if self.role:
-            txt += f" Your role is: {self.role.strip('.')}."
-        if self.description:
-            txt += f" {self.description.strip('.')}."
-        system_message_lines.append(f"{txt}\n")
-
-        if self.add_datetime_to_instructions:
-            txt = f"The current date and time is:\n<current_date>\n{ datetime.now() }\n</current_date>\n"
-            system_message_lines.append(txt)
-
-        # tools
-        if self.tools:
-            if self.is_react:
-                tools = self.get_tools_text_schema()
-                system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
-                system_message_lines.append(PROMPT_TOOLS_REACT_GUIDELINES)
-                system_message_lines.append("")
-            else:
-                tools = ",".join(self.get_tool_names())
-                system_message_lines.append(PROMPT_TOOLS.format(tools=tools).strip())
-                system_message_lines.append("")
+        # tools: TODO REMOVE ?
+        if self.tools and self.is_react:
+            tools = self.get_tools_text_schema()
+            prompt += PROMPT_TOOLS.format(tools=tools).strip()
+            prompt += PROMPT_TOOLS_REACT_GUIDELINES
 
         # instructions
-        instructions = []        
+        guidelines = []        
         if self.response_model:
-            instructions.append("Use JSON to format your answers.")
+            guidelines.append("Use JSON to format your answers.")
         elif self.markdown:
-            instructions.append("Use markdown to format your answers.")
+            guidelines.append("Use markdown to format your answers.")
         if self.tools is not None:
-            instructions.append("Only use the tools you are provided.")
+            guidelines.append("Only use the tools you are provided.")
         if context is not None:
-            instructions.append("Always prefer information from the provided context over your own knowledge.")
+            guidelines.append("Always prefer information from the provided context over your own knowledge.")
 
         if len(self.instructions) > 0:
-            instructions += self.instructions
+            guidelines += self.instructions
 
-        if len(instructions) > 0:
-            system_message_lines.append("## Guidelines:")
-            system_message_lines.extend([f"- {instruction}" for instruction in instructions])
-            system_message_lines.append("")
+        if len(guidelines) > 0:
+            prompt += "## Guidelines:\n"
+            prompt += "\n".join([f"- {instruction}" for instruction in guidelines])
+            prompt += "\n"
 
         if self.response_model:
-            system_message_lines.append("## Provide your output using the following JSON schema:")
-            system_message_lines.append("<json_schema>")
-            system_message_lines.append(json.dumps(self.response_model, indent=4))
-            system_message_lines.append("</json_schema>")
-            system_message_lines.append("")
+            prompt += "## Provide your output using the following JSON schema:\n"
+            prompt += "<json_schema>\n"
+            prompt += json.dumps(self.response_model, indent=4) + "\n"
+            prompt += "</json_schema>\n\n"
 
         if self.follow_steps:
             if len(self.steps) > 0:
-                system_message_lines.append("## Follow these steps:\n")
-                system_message_lines.extend([f"{i+1}. {step}" for i, step in enumerate(self.steps)])
-                system_message_lines.append("")
+                prompt += "## Follow these steps:\n"
+                prompt += "\n".join([f"{i+1}. {step}" for i, step in enumerate(self.steps)])
+                prompt += "\n"
             else:
-                system_message_lines.append(PROMPT_STEPS.strip())
-                system_message_lines.append("")
-
-        # final system prompt
-        if len(system_message_lines) > 0:
-            return dict(role="system", content=("\n".join(system_message_lines)).strip())
+                prompt += PROMPT_STEPS.strip() + "\n"
         
-        return None
+        return dict(role="system", content=prompt.strip())
 
 
     def format_context(self, context):
@@ -191,7 +177,17 @@ class Agent(BaseModel):
 
         return { "role": "user", "content": prompt }
 
-    
+    def get_messages_for_model(self, task: Optional[str] = None, context: Optional[Any] = None):
+        messages_for_model = []
+
+        system_message = self.get_system_message(context=context)
+        if system_message:
+            messages_for_model.append(system_message)
+
+        messages_for_model.extend(self.memory.get())
+        
+        return messages_for_model
+
     def get_tools_openai_schema(self):
         return [tool.openai_schema for tool in self.tools]
 
@@ -240,7 +236,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation: Error, Tool {tool_name} not found.",
+                        "content": f"Tool {tool_name} does not exist",
                     }
                 )
                 continue
@@ -254,7 +250,7 @@ class Agent(BaseModel):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "tool_name": tool_name,
-                        "content": f"Observation:\n{observation}",
+                        "content": f"Observation: {observation}",
                     }
                 )
 
@@ -270,15 +266,32 @@ class Agent(BaseModel):
             "tool_choice": self.tool_choice,
         }
 
-        response_format = None
         if self.response_model:
-            response_format = {"type": "json_object"}
+            params["response_format"] = {"type": "json_object"}
 
         if stream:
-            return self.llm.stream(**params, response_format=response_format)
+            return self.llm.stream(**params)
         
-        return self.llm.invoke(**params, response_format=response_format)
+        return self.llm.invoke(**params)
 
+    async def ainvoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
+
+        tools = self.get_tools_openai_schema()
+
+        params = {
+            "messages": messages,
+            "tools": tools or None,
+            "tool_choice": self.tool_choice,
+        }
+
+        if self.response_model:
+            params["response_format"] = {"type": "json_object"}
+
+        if stream:
+            return self.llm.astream(**params)
+        
+        return self.llm.ainvoke(**params)
+    
     def _run(
         self,
         task: Optional[str] = None,
@@ -298,18 +311,20 @@ class Agent(BaseModel):
                     context = { "context": text }
                 context["thinking"] = reasoning_message
 
-        messages_for_model = []
+        user_message = self.get_user_message(task=task, context=context)
+        self.memory.add_message(user_message)
+        messages_for_model = self.get_messages_for_model(task=task, context=context)
 
         # system messages
-        system_message = self.get_system_message(context=context)
-        if system_message:
-            messages_for_model.append(system_message)
+        # system_message = self.get_system_message(context=context)
+        # if system_message:
+        #     messages_for_model.append(system_message)
 
-        # user messages
-        user_message = self.get_user_message(task=task, context=context)
-        if user_message:
-            messages_for_model.append(user_message)
-            self.memory.add_message(user_message)
+        # # user messages
+        # user_message = self.get_user_message(task=task, context=context)
+        # if user_message:
+        #     messages_for_model.append(user_message)
+        #     self.memory.add_message(user_message)
 
         # global loop
         init_len = len(messages_for_model)
@@ -318,7 +333,6 @@ class Agent(BaseModel):
             if stream:
                 message = {
                     "content": "",
-                    "sender": self.name,
                     "role": "assistant",
                     "function_call": None,
                     "tool_calls": defaultdict(
@@ -332,32 +346,45 @@ class Agent(BaseModel):
 
                 completion = self.invoke(messages=messages_for_model, stream=True)
 
+                tool_calls = []
                 for chunk in completion:
-                    
-                    if len(chunk.choices) > 0:
-                        delta = json.loads(chunk.choices[0].delta.json())
-                        if delta["role"] == "assistant":
-                            delta["sender"] = self.name
-                        if delta["content"]:
-                            yield AgentResponse(
-                                delta=delta["content"],
-                                messages=None,
-                                agent=self,
-                                tools=self.tools,
-                            )
-                        elif delta["tool_calls"] and self.show_tool_calls:
-                            if delta["tool_calls"][0]["function"]["name"] and not delta["tool_calls"][0]["function"]["arguments"]:
-                                response = f"""**Calling:** {delta["tool_calls"][0]["function"]["name"]}"""
-                                yield AgentResponse(
-                                    delta=response,
-                                    messages=None,
-                                    agent=self,
-                                    tools=self.tools,
-                                )
-                        delta.pop("role", None)
-                        merge_chunk(message, delta)
 
-                message["tool_calls"] = list(message.get("tool_calls", {}).values())
+                    chunk = ChatCompletionChunk(**chunk.model_dump())
+                    text_response = None
+                    text_reasoning = None
+
+                    if len(chunk.choices) > 0:
+
+                        delta = json.loads(chunk.choices[0].delta.json())
+
+                        if delta["content"]:
+                            text_response = delta["content"]
+
+                        elif delta["tool_calls"] and self.show_tool_calls:
+
+                            if delta["tool_calls"][0]["id"]:
+                                text_reasoning = f"""**Calling** {delta["tool_calls"][0]["function"]["name"]}"""
+                                tool_call = delta["tool_calls"][0]
+                                tool_calls.append(tool_call)
+
+                            elif delta["tool_calls"][0]["function"]["arguments"]:
+                                if len(tool_calls)>0:
+                                    current_tool = len(tool_calls) - 1
+                                    tool_calls[current_tool]["function"]["arguments"] += delta["tool_calls"][0]["function"]["arguments"]
+
+                        delta.pop("role")
+                        delta.pop("tool_calls")
+                        merge_chunk(message, delta)
+                        message["tool_calls"] = tool_calls
+
+                    yield AgentResponse(
+                        delta=text_response,
+                        delta_reasoning=text_reasoning,
+                        messages=None,
+                        agent=self,
+                        tools=self.tools,
+                    )
+
                 message = ChatCompletionMessage(**message)
             
             else:
@@ -374,8 +401,10 @@ class Agent(BaseModel):
                 break
 
             # handle tool calls and switching agents
-            tool_response_messages = self.handle_tool_calls(message.tool_calls)
-            messages_for_model.extend(tool_response_messages)
+            tool_messages = self.handle_tool_calls(message.tool_calls)
+            if len(tool_messages)>0:
+                messages_for_model.extend(tool_messages)
+
 
         content = messages_for_model[-1]["content"]
         if self.response_model:

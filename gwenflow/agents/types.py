@@ -8,6 +8,8 @@ class AgentResponse(BaseModel):
     content: Optional[Any] = None
     content_type: str = "str"
     delta: Optional[str] = None
+    reasoning: Optional[str] = None
+    delta_reasoning: Optional[str] = None
     messages: Optional[List] = None
     agent: Optional[Any] = None
     tools: Optional[List[Any]] = None
