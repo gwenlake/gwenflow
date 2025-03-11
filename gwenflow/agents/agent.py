@@ -351,7 +351,6 @@ class Agent(BaseModel):
 
                     chunk = ChatCompletionChunk(**chunk.model_dump())
                     text_response = None
-                    text_reasoning = None
 
                     if len(chunk.choices) > 0:
 
@@ -363,7 +362,6 @@ class Agent(BaseModel):
                         elif delta["tool_calls"] and self.show_tool_calls:
 
                             if delta["tool_calls"][0]["id"]:
-                                text_reasoning = f"""**Calling** {delta["tool_calls"][0]["function"]["name"]}"""
                                 tool_call = delta["tool_calls"][0]
                                 tool_calls.append(tool_call)
 
@@ -371,6 +369,10 @@ class Agent(BaseModel):
                                 if len(tool_calls)>0:
                                     current_tool = len(tool_calls) - 1
                                     tool_calls[current_tool]["function"]["arguments"] += delta["tool_calls"][0]["function"]["arguments"]
+                                    if delta["tool_calls"][0]["function"]["arguments"].endswith("}"):
+                                        arguments = json.loads(tool_calls[current_tool]["function"]["arguments"])
+                                        arguments = ", ".join(arguments.values())
+                                        text_response = f"""<thinking>**Calling** { tool_calls[current_tool]["function"]["name"].replace("Tool","") } on '{ arguments }'</thinking>\n"""
 
                         delta.pop("role")
                         delta.pop("tool_calls")
@@ -379,7 +381,6 @@ class Agent(BaseModel):
 
                     yield AgentResponse(
                         delta=text_response,
-                        delta_reasoning=text_reasoning,
                         messages=None,
                         agent=self,
                         tools=self.tools,
