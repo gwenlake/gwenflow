@@ -3,13 +3,11 @@ import logging
 import json
 import dirtyjson
 
-from collections import defaultdict
 from typing import Optional, Union, Any, List, Dict
 from openai import OpenAI, AsyncOpenAI
 
 from gwenflow.types import ChatCompletion, ChatCompletionChunk
 from gwenflow.llms.base import ChatBase
-from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import extract_json_str
 
 
@@ -73,7 +71,6 @@ class ChatOpenAI(ChatBase):
 
         return client_params
 
-    # @property
     def _get_model_params(self, tools: list = None, tool_choice: str = None, response_format: str = None) -> Dict[str, Any]:
 
         model_params = {
