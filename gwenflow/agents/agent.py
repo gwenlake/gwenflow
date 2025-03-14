@@ -2,23 +2,22 @@
 import uuid
 import json
 import inspect
+import asyncio
+
 from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
 from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
 from datetime import datetime
 
-from gwenflow.llms import BaseModel, ChatOpenAI
-from gwenflow.types import Message, ChatCompletionMessage, ChatCompletionMessageToolCall, ChatCompletionChunk
+from gwenflow.llms import ChatBase, ChatOpenAI
+from gwenflow.types import Message, ChatCompletionChunk
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_GUIDELINES, PROMPT_JSON_SCHEMA, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK, PROMPT_REASONING_STEPS_TOOLS
 from gwenflow.utils import logger
-from gwenflow.utils.chunks import merge_chunk
 from gwenflow.types import Message
 
-
-MAX_TURNS = float('inf') #10
 
 
 class Agent(BaseModel):
@@ -39,7 +38,7 @@ class Agent(BaseModel):
     system_prompt_allowed: bool = True
  
     # --- Agent Model and Tools
-    llm: Optional[BaseModel] = Field(None, validate_default=True)
+    llm: Optional[ChatBase] = Field(None, validate_default=True)
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     show_tool_calls: bool = False
@@ -181,70 +180,159 @@ class Agent(BaseModel):
             descriptions.append(description)
         return "\n".join(descriptions)
 
-    def get_tool_map(self):
+    def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
 
-    def get_tool_names(self):
+    def get_tools_names(self):
         return [tool.name for tool in self.tools]
 
-    def execute_tool_call(self, tool_name: str, arguments: Dict[str, str]) -> Any:
-        available_tools = self.get_tool_map()
-        if tool_name not in available_tools:
-            logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
-            return None
+    # def execute_tool_call(self, tool_name: str, arguments: Dict[str, str]) -> Any:
+    #     available_tools = self.get_tool_map()
+    #     if tool_name not in available_tools:
+    #         logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
+    #         return None
 
-        logger.debug(f"Tool call: {tool_name}({arguments})")
-        observation = available_tools[tool_name].run(**arguments)
+    #     logger.debug(f"Tool call: {tool_name}({arguments})")
+    #     observation = available_tools[tool_name].run(**arguments)
 
-        return observation
+    #     return observation
 
-    def handle_tool_calls(
-        self,
-        tool_calls: List[ChatCompletionMessageToolCall],
-    ) -> List[Message]:
+    def handle_tool_call(self, tool_call) -> Message:
+   
+        if not isinstance(tool_call, dict):
+            tool_call = tool_call.model_dump()
+            
+        tool_map  = self.get_tools_map()
+        tool_name = tool_call["function"]["name"]
+                    
+        if tool_name not in tool_map.keys():
+            logger.error(f"Tool {tool_name} does not exist")
+            return Message(
+                role="tool",
+                tool_call_id=tool_call["id"],
+                tool_name=tool_name,
+                content=f"Tool {tool_name} does not exist",
+            )
+
+        try:
+            function_args = json.loads(tool_call["function"]["arguments"])
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse tool arguments: {e}")
+            return Message(
+                role="tool",
+                tool_call_id=tool_call["id"],
+                tool_name=tool_name,
+                content=f"Failed to parse tool arguments: {e}",
+            )
+
+        try:
+            logger.debug(f"Tool call: {tool_name}({function_args})")
+            observation = tool_map[tool_name].run(**function_args)
+            if observation:
+                return Message(
+                    role="tool",
+                    tool_call_id=tool_call["id"],
+                    tool_name=tool_name,
+                    content=f"Observation: {observation}",
+                )
+        except Exception as e:
+            logger.error(f"Error executing tool '{tool_name}': {e}")
+
+        return Message(
+            role="tool",
+            tool_call_id=tool_call["id"],
+            tool_name=tool_name,
+            content=f"Error executing tool '{tool_name}'",
+        )
+
+
+    def handle_tool_calls(self, tool_calls: list) -> List:
         
-        tool_map = self.get_tool_map()
-
+        tool_map = self.get_tools_map()
+        if not tool_calls or not tool_map:
+            return []
+        
         messages = []
         for tool_call in tool_calls:
-
-            tool_name = tool_call.function.name
-
-            # handle missing tool case, skip to next tool
-            if tool_name not in tool_map.keys():
-                logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
-                messages.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_name,
-                        content=f"Tool {tool_name} does not exist",
-                    )
-                )
-                continue
-
-            arguments = json.loads(tool_call.function.arguments)
-            observation = self.execute_tool_call(tool_name, arguments)
-            
+            observation = self.handle_tool_call(tool_call)
             if observation:
-                messages.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_name,
-                        content=f"Observation: {observation}",
-                    )
-                )
-
+                messages.append(observation)
+            
         return messages
 
-    def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
+    async def ahandle_tool_calls(self, tool_calls: list) -> List:
+        
+        tool_map = self.get_tools_map()
+        if not tool_calls or not tool_map:
+            return []
 
-        tools = self.get_tools_openai_schema()
+        tasks = []
+        for tool_call in tool_calls:
+            task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
+            tasks.append(task)
+
+        messages = []
+        results = await asyncio.gather(*tasks)
+        for observation in results:
+            if observation:
+                messages.append(observation)
+
+        return messages
+    
+    # def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Message]:
+        
+    #     tool_map = self.get_tool_map()
+
+    #     messages = []
+    #     for tool_call in tool_calls:
+
+    #         tool_name = tool_call.function.name
+
+    #         # handle missing tool case, skip to next tool
+    #         if tool_name not in tool_map.keys():
+    #             logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
+    #             messages.append(
+    #                 Message(
+    #                     role="tool",
+    #                     tool_call_id=tool_call.id,
+    #                     tool_name=tool_name,
+    #                     content=f"Tool {tool_name} does not exist",
+    #                 )
+    #             )
+    #             continue
+
+    #         arguments = json.loads(tool_call.function.arguments)
+    #         observation = self.execute_tool_call(tool_name, arguments)
+            
+    #         if observation:
+    #             messages.append(
+    #                 Message(
+    #                     role="tool",
+    #                     tool_call_id=tool_call.id,
+    #                     tool_name=tool_name,
+    #                     content=f"Observation: {observation}",
+    #                 )
+    #             )
+
+    #     return messages
+
+    def _get_thinking(self, tool_calls):
+        thinking = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                tool_call = tool_call.model_dump()
+            arguments = json.loads(tool_call["function"]["arguments"])
+            arguments = ", ".join(arguments.values())
+            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
+        if len(thinking)>0:
+            return "\n".join(thinking)
+        return None
+    
+    def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
 
         params = {
             "messages": messages,
-            "tools": tools or None,
+            "tools": self.tools or None,
             "tool_choice": self.tool_choice,
         }
 
@@ -273,7 +361,7 @@ class Agent(BaseModel):
             return self.llm.astream(**params)
         
         return self.llm.ainvoke(**params)
-    
+
     def _run(
         self,
         task: Optional[str] = None,
@@ -298,28 +386,13 @@ class Agent(BaseModel):
         agent_response = AgentResponse()
 
         # global loop
-        loop = 1
-        while loop < MAX_TURNS:
+        while True:
 
             messages_for_model = self.memory.get()
 
             if stream:
-                message = {
-                    "content": "",
-                    "role": "assistant",
-                    "function_call": None,
-                    "tool_calls": defaultdict(
-                        lambda: {
-                            "function": {"arguments": "", "name": ""},
-                            "id": "",
-                            "type": "",
-                        }
-                    ),
-                }
 
-                content = ""
-                tool_calls = []
-
+                message = Message(role="assistant", content="", delta="", tool_calls=[])
                 for chunk in self.invoke(messages=messages_for_model, stream=True):
 
                     chunk = ChatCompletionChunk(**chunk.model_dump())
@@ -329,56 +402,56 @@ class Agent(BaseModel):
 
                     if len(chunk.choices) > 0:
 
-                        delta = json.loads(chunk.choices[0].delta.json())
+                        if chunk.choices[0].delta.content:
+                            agent_response.delta = chunk.choices[0].delta.content
+                            message.content     += chunk.choices[0].delta.content
 
-                        if delta["content"]:
-                            agent_response.delta = delta["content"]
-                            content += delta["content"]
+                        elif chunk.choices[0].delta.tool_calls:
 
-                        elif delta["tool_calls"]:
+                            if chunk.choices[0].delta.tool_calls[0].id:
+                                message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
 
-                            if delta["tool_calls"][0]["id"]:
-                                tool_call = delta["tool_calls"][0]
-                                tool_calls.append(tool_call)
+                            if chunk.choices[0].delta.tool_calls[0].function.arguments:
+                                current_tool = len(message.tool_calls) - 1
+                                message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
 
-                            elif delta["tool_calls"][0]["function"]["arguments"]:
-                                if len(tool_calls)>0:
-                                    current_tool = len(tool_calls) - 1
-                                    tool_calls[current_tool]["function"]["arguments"] += delta["tool_calls"][0]["function"]["arguments"]
-                                    if delta["tool_calls"][0]["function"]["arguments"].endswith("}") and self.show_tool_calls:
-                                        arguments = json.loads(tool_calls[current_tool]["function"]["arguments"])
-                                        arguments = ", ".join(arguments.values())
-                                        agent_response.thinking = f"""**Calling** { tool_calls[current_tool]["function"]["name"].replace("Tool","") } on '{ arguments }'"""
+                            # elif delta["tool_calls"][0]["function"]["arguments"]:
+                            #     if len(tool_calls)>0:
+                            #         current_tool = len(tool_calls) - 1
+                            #         tool_calls[current_tool]["function"]["arguments"] += delta["tool_calls"][0]["function"]["arguments"]
+                            #         if delta["tool_calls"][0]["function"]["arguments"].endswith("}") and self.show_tool_calls:
+                            #             arguments = json.loads(tool_calls[current_tool]["function"]["arguments"])
+                            #             arguments = ", ".join(arguments.values())
+                            #             agent_response.thinking = f"""**Calling** { tool_calls[current_tool]["function"]["name"].replace("Tool","") } on '{ arguments }'"""
 
-                        delta.pop("role")
-                        delta.pop("tool_calls")
-                        merge_chunk(message, delta)
-                        message["tool_calls"] = tool_calls
+                        # delta.pop("role")
+                        # delta.pop("tool_calls")
+                        # merge_chunk(message, delta)
+                        # message["tool_calls"] = tool_calls
 
-                    if agent_response.content or agent_response.delta or agent_response.thinking:
-                        yield agent_response
+                    # if agent_response.content or agent_response.delta or agent_response.thinking:
+                    #     yield agent_response
+                    
+                    yield agent_response
 
-                message = ChatCompletionMessage(**message)
-                agent_response.content = content
+                # message = Message(**message)
             
             else:
                 completion = self.invoke(messages=messages_for_model)
-                message = ChatCompletionMessage(**completion.choices[0].message.model_dump())
-                agent_response.content = completion.choices[0].message.content
+                message = Message(**completion.choices[0].message.model_dump())
 
             # add messages to the current message stack
-            self.memory.add_message(Message(**message.model_dump()))
+            self.memory.add_message(message)
 
             if not message.tool_calls:
                 logger.debug("Task done.")
+                agent_response.content = message.content
                 break
 
             # handle tool calls and switching agents
             tool_messages = self.handle_tool_calls(message.tool_calls)
             if len(tool_messages)>0:
                 self.memory.add_messages(tool_messages)
-
-            loop += 1
 
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
