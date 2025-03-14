@@ -19,7 +19,6 @@ from gwenflow.utils import logger
 from gwenflow.types import Message
 
 
-
 class Agent(BaseModel):
 
     # --- Agent Settings
@@ -186,17 +185,6 @@ class Agent(BaseModel):
     def get_tools_names(self):
         return [tool.name for tool in self.tools]
 
-    # def execute_tool_call(self, tool_name: str, arguments: Dict[str, str]) -> Any:
-    #     available_tools = self.get_tool_map()
-    #     if tool_name not in available_tools:
-    #         logger.error(f"Unknown tool {tool_name}, should be instead one of { available_tools.keys() }.")
-    #         return None
-
-    #     logger.debug(f"Tool call: {tool_name}({arguments})")
-    #     observation = available_tools[tool_name].run(**arguments)
-
-    #     return observation
-
     def handle_tool_call(self, tool_call) -> Message:
    
         if not isinstance(tool_call, dict):
@@ -278,43 +266,6 @@ class Agent(BaseModel):
                 messages.append(observation)
 
         return messages
-    
-    # def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Message]:
-        
-    #     tool_map = self.get_tool_map()
-
-    #     messages = []
-    #     for tool_call in tool_calls:
-
-    #         tool_name = tool_call.function.name
-
-    #         # handle missing tool case, skip to next tool
-    #         if tool_name not in tool_map.keys():
-    #             logger.warning(f"Unknown tool {tool_name}, should be instead one of { tool_map.keys() }.")
-    #             messages.append(
-    #                 Message(
-    #                     role="tool",
-    #                     tool_call_id=tool_call.id,
-    #                     tool_name=tool_name,
-    #                     content=f"Tool {tool_name} does not exist",
-    #                 )
-    #             )
-    #             continue
-
-    #         arguments = json.loads(tool_call.function.arguments)
-    #         observation = self.execute_tool_call(tool_name, arguments)
-            
-    #         if observation:
-    #             messages.append(
-    #                 Message(
-    #                     role="tool",
-    #                     tool_call_id=tool_call.id,
-    #                     tool_name=tool_name,
-    #                     content=f"Observation: {observation}",
-    #                 )
-    #             )
-
-    #     return messages
 
     def _get_thinking(self, tool_calls):
         thinking = []
@@ -330,37 +281,31 @@ class Agent(BaseModel):
     
     def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
 
-        params = {
-            "messages": messages,
-            "tools": self.tools or None,
-            "tool_choice": self.tool_choice,
-        }
+        self.llm.tools = self.tools
+        self.llm.tool_choice = self.tool_choice
 
+        self.llm.response_format = None
         if self.response_model:
-            params["response_format"] = {"type": "json_object"}
+            self.llm.response_format = {"type": "json_object"}
 
         if stream:
-            return self.llm.stream(**params)
+            return self.llm.stream(messages=messages)
         
-        return self.llm.invoke(**params)
+        return self.llm.invoke(messages=messages)
 
     async def ainvoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
 
-        tools = self.get_tools_openai_schema()
+        self.llm.tools = self.tools
+        self.llm.tool_choice = self.tool_choice
 
-        params = {
-            "messages": messages,
-            "tools": tools or None,
-            "tool_choice": self.tool_choice,
-        }
-
+        self.llm.response_format = None
         if self.response_model:
-            params["response_format"] = {"type": "json_object"}
+            self.llm.response_format = {"type": "json_object"}
 
         if stream:
-            return self.llm.astream(**params)
+            return self.llm.astream(messages=messages)
         
-        return self.llm.ainvoke(**params)
+        return self.llm.ainvoke(messages=messages)
 
     def _run(
         self,
@@ -393,6 +338,7 @@ class Agent(BaseModel):
             if stream:
 
                 message = Message(role="assistant", content="", delta="", tool_calls=[])
+
                 for chunk in self.invoke(messages=messages_for_model, stream=True):
 
                     chunk = ChatCompletionChunk(**chunk.model_dump())
@@ -401,40 +347,16 @@ class Agent(BaseModel):
                     agent_response.thinking = None
 
                     if len(chunk.choices) > 0:
-
                         if chunk.choices[0].delta.content:
                             agent_response.delta = chunk.choices[0].delta.content
                             message.content     += chunk.choices[0].delta.content
-
+                            yield agent_response
                         elif chunk.choices[0].delta.tool_calls:
-
                             if chunk.choices[0].delta.tool_calls[0].id:
                                 message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-
                             if chunk.choices[0].delta.tool_calls[0].function.arguments:
                                 current_tool = len(message.tool_calls) - 1
                                 message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
-
-                            # elif delta["tool_calls"][0]["function"]["arguments"]:
-                            #     if len(tool_calls)>0:
-                            #         current_tool = len(tool_calls) - 1
-                            #         tool_calls[current_tool]["function"]["arguments"] += delta["tool_calls"][0]["function"]["arguments"]
-                            #         if delta["tool_calls"][0]["function"]["arguments"].endswith("}") and self.show_tool_calls:
-                            #             arguments = json.loads(tool_calls[current_tool]["function"]["arguments"])
-                            #             arguments = ", ".join(arguments.values())
-                            #             agent_response.thinking = f"""**Calling** { tool_calls[current_tool]["function"]["name"].replace("Tool","") } on '{ arguments }'"""
-
-                        # delta.pop("role")
-                        # delta.pop("tool_calls")
-                        # merge_chunk(message, delta)
-                        # message["tool_calls"] = tool_calls
-
-                    # if agent_response.content or agent_response.delta or agent_response.thinking:
-                    #     yield agent_response
-                    
-                    yield agent_response
-
-                # message = Message(**message)
             
             else:
                 completion = self.invoke(messages=messages_for_model)
@@ -447,6 +369,10 @@ class Agent(BaseModel):
                 logger.debug("Task done.")
                 agent_response.content = message.content
                 break
+
+            # thinking
+            agent_response.thinking = self._get_thinking(message.tool_calls)
+            yield agent_response
 
             # handle tool calls and switching agents
             tool_messages = self.handle_tool_calls(message.tool_calls)

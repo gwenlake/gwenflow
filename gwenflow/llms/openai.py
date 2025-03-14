@@ -3,7 +3,7 @@ import logging
 import json
 import dirtyjson
 
-from typing import Optional, Union, Any, List, Dict
+from typing import Optional, Union, Any, List, Dict, Iterator
 from openai import OpenAI, AsyncOpenAI
 
 from gwenflow.types import Message, ChatCompletion, ChatCompletionChunk
@@ -70,7 +70,8 @@ class ChatOpenAI(ChatBase):
 
         return client_params
 
-    def _get_model_params(self, tools: list = None, tool_choice: str = None, response_format: str = None) -> Dict[str, Any]:
+    @property
+    def _model_params(self) -> Dict[str, Any]:
 
         model_params = {
             "temperature": self.temperature,
@@ -87,19 +88,11 @@ class ChatOpenAI(ChatBase):
             "top_logprobs": self.top_logprobs,
         }
 
-        if tools:
-            openai_schema = [tool.openai_schema for tool in tools]
-            model_params["tools"] = openai_schema
-            model_params["tool_choice"] = tool_choice or "auto"
-    
-        elif self.tools:
+        if self.tools:
             openai_schema = [tool.openai_schema for tool in self.tools]
             model_params["tools"] = openai_schema or None
             model_params["tool_choice"] = self.tool_choice or "auto"
         
-        if response_format:
-            model_params["response_format"] = response_format
-
         model_params = {k: v for k, v in model_params.items() if v is not None}
 
         return model_params
@@ -160,301 +153,39 @@ class ChatOpenAI(ChatBase):
 
         return message_dict
 
-    # def _get_thinking(self, tool_calls):
-    #     thinking = []
-    #     for tool_call in tool_calls:
-    #         if not isinstance(tool_call, dict):
-    #             tool_call = tool_call.model_dump()
-    #         arguments = json.loads(tool_call["function"]["arguments"])
-    #         arguments = ", ".join(arguments.values())
-    #         thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
-    #     if len(thinking)>0:
-    #         return "\n".join(thinking)
-    #     return None
-
-    # def invoke(
-    #     self,
-    #     messages: Union[str, List[Message], List[Dict[str, str]]],
-    #     tools: list = None,
-    #     tool_choice: str = None,
-    #     response_format: str = None,
-    # ) -> ModelResponse:
-
-    #     messages_for_model = self._cast_messages(messages)
-
-    #     model_response = ModelResponse()
-    #     model_usage = ModelUsage()
-
-    #     while True:
-                        
-    #         completion = self.get_client().chat.completions.create(
-    #             model=self.model,
-    #             messages=[self._format_message(m) for m in messages_for_model],
-    #             **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
-    #         )
-
-    #         model_usage.prompt_tokens     += completion.usage.prompt_tokens
-    #         model_usage.completion_tokens += completion.usage.completion_tokens
-    #         model_usage.total_tokens      += completion.usage.total_tokens
-
-    #         if not completion.choices[0].message.tool_calls:
-    #             model_response.content = completion.choices[0].message.content
-    #             model_response.usage = model_usage
-    #             break
-
-    #         tool_calls = completion.choices[0].message.tool_calls
-    #         model_response.thinking = self._get_thinking(tool_calls=tool_calls)
-
-    #         observations = self.handle_tool_calls(tool_calls=tool_calls)
-    #         if len(observations)>0:
-    #             messages_for_model.append(Message(**completion.choices[0].message.model_dump()))
-    #             messages_for_model.extend(observations)
-        
-    #     if self.response_format or response_format:
-    #         _response_format = response_format or self.response_format
-    #         model_response.content = self._parse_response(model_response.content, response_format=_response_format)
-
-    #     return model_response
-
-    # async def ainvoke(
-    #     self,
-    #     messages: Union[str, List[Message], List[Dict[str, str]]],
-    #     tools: list = None,
-    #     tool_choice: str = None,
-    #     response_format: str = None,
-    # ) -> ModelResponse:
-
-    #     messages_for_model = self._cast_messages(messages)
-
-    #     model_response = ModelResponse()
-    #     model_usage = ModelUsage()
-
-    #     while True:
-
-    #         completion = await self.get_async_client().chat.completions.create(
-    #             model=self.model,
-    #             messages=[self._format_message(m) for m in messages_for_model],
-    #             **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
-    #         )
-
-    #         model_usage.prompt_tokens     += completion.usage.prompt_tokens
-    #         model_usage.completion_tokens += completion.usage.completion_tokens
-    #         model_usage.total_tokens      += completion.usage.total_tokens
-
-    #         if not completion.choices[0].message.tool_calls:
-    #             model_response.content = completion.choices[0].message.content
-    #             model_response.usage = model_usage
-    #             break
-
-    #         tool_calls = completion.choices[0].message.tool_calls
-    #         model_response.thinking = self._get_thinking(tool_calls=tool_calls)
-
-    #         observations = self.handle_tool_calls(tool_calls=tool_calls)
-    #         if len(observations)>0:
-    #             messages_for_model.append(Message(**completion.choices[0].message.model_dump()))
-    #             messages_for_model.extend(observations)
-
-    #     if self.response_format or response_format:
-    #         _response_format = response_format or self.response_format
-    #         model_response.content = self._parse_response(model_response.content, response_format=_response_format)
-
-    #     return model_response
-
-    # def stream(
-    #     self,
-    #     messages: Union[str, List[Message], List[Dict[str, str]]],
-    #     tools: list = None,
-    #     tool_choice: str = None,
-    #     response_format: str = None,
-    # ):
-
-    #     messages_for_model = self._cast_messages(messages)
-
-    #     model_response = ModelResponse()
-    #     model_usage = ModelUsage()
-
-    #     while True:
-
-    #         message = Message(role="assistant", content="", delta="", tool_calls=[])
-
-    #         completion = self.get_client().chat.completions.create(
-    #             model=self.model,
-    #             messages=[self._format_message(m) for m in messages_for_model],
-    #             stream=True,
-    #             stream_options={"include_usage": True},
-    #             **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
-    #         )
-
-    #         for chunk in completion:
-    #             model_response.delta = ""
-    #             model_response.thinking = ""
-    #             if len(chunk.choices)>0:
-    #                 if chunk.choices[0].delta.content:
-    #                     model_response.delta = chunk.choices[0].delta.content
-    #                     message.content     += chunk.choices[0].delta.content
-    #                 if chunk.choices[0].delta.tool_calls:
-    #                     if chunk.choices[0].delta.tool_calls[0].id:
-    #                         message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-    #                     if chunk.choices[0].delta.tool_calls[0].function.arguments:
-    #                         current_tool = len(message.tool_calls) - 1
-    #                         message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
-
-    #             if model_response.delta:
-    #                 yield model_response
-
-    #             if chunk.model_dump().get("usage"):
-    #                 model_usage.prompt_tokens     += chunk.usage.prompt_tokens
-    #                 model_usage.completion_tokens += chunk.usage.completion_tokens
-    #                 model_usage.total_tokens      += chunk.usage.total_tokens
-
-    #         if not message.tool_calls:
-    #             model_response.content = message.content
-    #             model_response.delta = None
-    #             model_response.finish_reason = "stop"
-    #             model_response.usage = model_usage
-    #             break
-
-    #         tool_calls = message.tool_calls
-    #         model_response.thinking = self._get_thinking(tool_calls=tool_calls)
- 
-    #         if model_response.thinking:
-    #             yield model_response
-
-    #         observations = self.handle_tool_calls(tool_calls=tool_calls)
-    #         if len(observations)>0:
-    #             messages_for_model.append(message)
-    #             messages_for_model.extend(observations)
-
-    #     if self.response_format or response_format:
-    #         _response_format = response_format or self.response_format
-    #         model_response.content = self._parse_response(model_response.content, response_format=_response_format)
-
-    #     yield model_response
-
-    # async def astream(
-    #     self,
-    #     messages: Union[str, List[Message], List[Dict[str, str]]],
-    #     tools: list = None,
-    #     tool_choice: str = None,
-    #     response_format: str = None,
-    # ):
-
-    #     messages_for_model = self._cast_messages(messages)
-
-    #     model_response = ModelResponse()
-    #     model_usage = ModelUsage()
-
-    #     while True:
-
-    #         message = Message(role="assistant", content="", delta="", tool_calls=[])
-
-    #         completion = self.get_client().chat.completions.create(
-    #             model=self.model,
-    #             messages=[self._format_message(m) for m in messages_for_model],
-    #             stream=True,
-    #             stream_options={"include_usage": True},
-    #             **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
-    #         )
-
-    #         async for chunk in completion:
-    #             model_response.delta = ""
-    #             model_response.thinking = ""
-    #             if len(chunk.choices)>0:
-    #                 if chunk.choices[0].delta.content:
-    #                     model_response.delta = chunk.choices[0].delta.content
-    #                     message.content     += chunk.choices[0].delta.content
-    #                 if chunk.choices[0].delta.tool_calls:
-    #                     if chunk.choices[0].delta.tool_calls[0].id:
-    #                         message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-    #                     if chunk.choices[0].delta.tool_calls[0].function.arguments:
-    #                         current_tool = len(message.tool_calls) - 1
-    #                         message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
-
-    #             if model_response.delta:
-    #                 yield model_response
-
-    #             if chunk.model_dump().get("usage"):
-    #                 model_usage.prompt_tokens     += chunk.usage.prompt_tokens
-    #                 model_usage.completion_tokens += chunk.usage.completion_tokens
-    #                 model_usage.total_tokens      += chunk.usage.total_tokens
-
-    #         if not message.tool_calls:
-    #             model_response.content = message.content
-    #             model_response.delta = None
-    #             model_response.finish_reason = "stop"
-    #             model_response.usage = model_usage
-    #             break
-
-    #         tool_calls = message.tool_calls
-    #         model_response.thinking = self._get_thinking(tool_calls=tool_calls)
-
-    #         if model_response.thinking:
-    #             yield model_response
-
-    #         observations = await self.ahandle_tool_calls(tool_calls=tool_calls)
-    #         if len(observations)>0:
-    #             messages_for_model.append(message)
-    #             messages_for_model.extend(observations)
-
-    #     if self.response_format or response_format:
-    #         _response_format = response_format or self.response_format
-    #         model_response.content = self._parse_response(model_response.content, response_format=_response_format)
-
-    #     yield model_response
-
-    def invoke(
-        self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
-        tools: list = None,
-        tool_choice: str = None,
-        response_format: str = None,
-    ) -> ChatCompletion:
+    def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
                     
         completion = self.get_client().chat.completions.create(
             model=self.model,
             messages=[self._format_message(m) for m in messages_for_model],
-            **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
+            **self._model_params,
         )
 
         completion = ChatCompletion(**completion.model_dump())
 
-        if self.response_format or response_format:
-            _response_format = response_format or self.response_format
-            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=_response_format)
+        if self.response_format:
+            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
 
         return completion
 
-    async def ainvoke(
-        self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
-        tools: list = None,
-        tool_choice: str = None,
-        response_format: str = None,
-    ) -> ChatCompletion:
+    async def ainvoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
 
         completion = await self.get_async_client().chat.completions.create(
             model=self.model,
             messages=[self._format_message(m) for m in messages_for_model],
-            **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
+            **self._model_params,
         )
 
         completion = ChatCompletion(**completion.model_dump())
 
-        if self.response_format or response_format:
-            _response_format = response_format or self.response_format
-            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=_response_format)
+        if self.response_format:
+            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
 
         return completion
 
-    def stream(
-        self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
-        tools: list = None,
-        tool_choice: str = None,
-        response_format: str = None,
-    ):
+    def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Iterator[ChatCompletionChunk]:
         messages_for_model = self._cast_messages(messages)
 
         completion = self.get_client().chat.completions.create(
@@ -462,25 +193,14 @@ class ChatOpenAI(ChatBase):
             messages=[self._format_message(m) for m in messages_for_model],
             stream=True,
             stream_options={"include_usage": True},
-            **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
+            **self._model_params,
         )
 
         for chunk in completion:
             chunk = ChatCompletionChunk(**chunk.model_dump())
             yield chunk
 
-        if self.response_format or response_format:
-            _response_format = response_format or self.response_format
-            chunk.choices[0].message.content = self._parse_response(chunk.choices[0].message.content, response_format=_response_format)
-            yield chunk
-
-    async def astream(
-        self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
-        tools: list = None,
-        tool_choice: str = None,
-        response_format: str = None,
-    ):
+    async def astream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         messages_for_model = self._cast_messages(messages)
 
         completion = await self.get_client().chat.completions.create(
@@ -488,14 +208,9 @@ class ChatOpenAI(ChatBase):
             messages=[self._format_message(m) for m in messages_for_model],
             stream=True,
             stream_options={"include_usage": True},
-            **self._get_model_params(tools=tools, tool_choice=tool_choice, response_format=response_format),
+            **self._model_params,
         )
 
         async for chunk in completion:
             chunk = ChatCompletionChunk(**chunk.model_dump())
-            yield chunk
-
-        if self.response_format or response_format:
-            _response_format = response_format or self.response_format
-            chunk.choices[0].message.content = self._parse_response(chunk.choices[0].message.content, response_format=_response_format)
             yield chunk
