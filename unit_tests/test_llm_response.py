@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from syrupy.matchers import path_type
 
 from gwenflow import ChatAzureOpenAI
-from gwenflow.tools import WebsiteReaderTool, DuckDuckGoNewsTool
+from gwenflow.tools import DuckDuckGoNewsTool
 
 # Load environment variables
 load_dotenv(override=True)
@@ -14,7 +14,7 @@ load_dotenv(override=True)
 @pytest.fixture
 def chat_model_tools():
     """Fixture to initialize the ChatAzureOpenAI model."""
-    return ChatAzureOpenAI(model="gpt-4o-mini", tools=[DuckDuckGoNewsTool(), WebsiteReaderTool()], temperature=0)
+    return ChatAzureOpenAI(model="gpt-4o-mini", tools=[DuckDuckGoNewsTool()], temperature=0)
 
 @pytest.fixture
 def chat_model():
