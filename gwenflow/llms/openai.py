@@ -1,15 +1,14 @@
-import os
-import logging
-import json
 import dirtyjson
-
+import json
+import logging
+import os
 from typing import Optional, Union, Any, List, Dict, Iterator
-from openai import OpenAI, AsyncOpenAI
 
-from gwenflow.types import Message, ChatCompletion, ChatCompletionChunk
 from gwenflow.llms import ChatBase
 from gwenflow.llms.response import ModelResponse
+from gwenflow.types import Message, ChatCompletion, ChatCompletionChunk
 from gwenflow.utils import extract_json_str
+from openai import OpenAI, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -168,12 +167,17 @@ class ChatOpenAI(ChatBase):
     
     def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
+
+        try:
                     
-        completion = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=[self._format_message(m) for m in messages_for_model],
-            **self._model_params,
-        )
+            completion = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=[self._format_message(m) for m in messages_for_model],
+                **self._model_params,
+            )
+
+        except Exception as e:
+            raise RuntimeError(f"Error in calling openai API: {e}")
 
         completion = ChatCompletion(**completion.model_dump())
 
@@ -185,11 +189,15 @@ class ChatOpenAI(ChatBase):
     async def ainvoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
 
-        completion = await self.get_async_client().chat.completions.create(
-            model=self.model,
-            messages=[self._format_message(m) for m in messages_for_model],
-            **self._model_params,
-        )
+        try:
+
+            completion = await self.get_async_client().chat.completions.create(
+                model=self.model,
+                messages=[self._format_message(m) for m in messages_for_model],
+                **self._model_params,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error in calling openai API: {e}")
 
         completion = ChatCompletion(**completion.model_dump())
 
@@ -201,13 +209,16 @@ class ChatOpenAI(ChatBase):
     def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
         messages_for_model = self._cast_messages(messages)
 
-        completion = self.get_client().chat.completions.create(
-            model=self.model,
-            messages=[self._format_message(m) for m in messages_for_model],
-            stream=True,
-            stream_options={"include_usage": True},
-            **self._model_params,
-        )
+        try:
+            completion = self.get_client().chat.completions.create(
+                model=self.model,
+                messages=[self._format_message(m) for m in messages_for_model],
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._model_params,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error in calling openai API: {e}")
 
         for chunk in completion:
             chunk = ChatCompletionChunk(**chunk.model_dump())
@@ -216,13 +227,17 @@ class ChatOpenAI(ChatBase):
     async def astream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         messages_for_model = self._cast_messages(messages)
 
-        completion = await self.get_client().chat.completions.create(
-            model=self.model,
-            messages=[self._format_message(m) for m in messages_for_model],
-            stream=True,
-            stream_options={"include_usage": True},
-            **self._model_params,
-        )
+        try:
+
+            completion = await self.get_client().chat.completions.create(
+                model=self.model,
+                messages=[self._format_message(m) for m in messages_for_model],
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._model_params,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error in calling openai API: {e}")
 
         async for chunk in completion:
             chunk = ChatCompletionChunk(**chunk.model_dump())
@@ -297,7 +312,7 @@ class ChatOpenAI(ChatBase):
                             message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
 
             if not message.tool_calls:
-                model_response.content = message.content
+                model_response.content = None
                 model_response.finish_reason = "stop"
                 break
 
@@ -339,7 +354,7 @@ class ChatOpenAI(ChatBase):
                             message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
 
             if not message.tool_calls:
-                model_response.content = message.content
+                model_response.content = None
                 model_response.finish_reason = "stop"
                 break
 
