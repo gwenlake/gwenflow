@@ -1,0 +1,24 @@
+name: all-tests
+
+# We use this in other workflows as a validation
+# step. E.g. before building images.
+on: [ workflow_call ]
+
+jobs:
+  test-all:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.25"
+          enable-cache: true
+
+      - name: Gwenflow tests
+        run: uv run --record-mode=none
