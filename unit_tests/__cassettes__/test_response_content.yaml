@@ -1,0 +1,109 @@
+interactions:
+- request:
+    body: '{"messages":[{"role":"user","content":"How to make cookies?"}],"model":"gpt-4o-mini","temperature":0.0}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      api-key:
+      - 6500996fc5934fc5a91aec1cfafa2335
+      authorization:
+      - Bearer 6500996fc5934fc5a91aec1cfafa2335
+      connection:
+      - keep-alive
+      content-length:
+      - '103'
+      content-type:
+      - application/json
+      host:
+      - gwenlake.openai.azure.com
+      user-agent:
+      - AzureOpenAI/Python 1.59.5
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - 'false'
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - MacOS
+      x-stainless-package-version:
+      - 1.59.5
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.11.10
+    method: POST
+    uri: https://gwenlake.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview
+  response:
+    body:
+      string: "{\"choices\":[{\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"protected_material_code\":{\"filtered\":false,\"detected\":false},\"protected_material_text\":{\"filtered\":false,\"detected\":false},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null,\"message\":{\"content\":\"Making
+        cookies is a fun and straightforward process! Here\u2019s a basic recipe for
+        classic chocolate chip cookies:\\n\\n### Ingredients:\\n- 1 cup (2 sticks)
+        unsalted butter, softened\\n- 3/4 cup granulated sugar\\n- 3/4 cup packed
+        brown sugar\\n- 1 teaspoon vanilla extract\\n- 2 large eggs\\n- 2 1/4 cups
+        all-purpose flour\\n- 1 teaspoon baking soda\\n- 1/2 teaspoon salt\\n- 2 cups
+        chocolate chips (semi-sweet or your choice)\\n- Optional: 1 cup chopped nuts
+        (like walnuts or pecans)\\n\\n### Instructions:\\n\\n1. **Preheat the Oven**:
+        Preheat your oven to 375\xB0F (190\xB0C).\\n\\n2. **Mix Wet Ingredients**:
+        In a large bowl, cream together the softened butter, granulated sugar, brown
+        sugar, and vanilla extract until smooth. Beat in the eggs one at a time.\\n\\n3.
+        **Combine Dry Ingredients**: In another bowl, whisk together the flour, baking
+        soda, and salt.\\n\\n4. **Combine Mixtures**: Gradually add the dry ingredients
+        to the wet mixture, mixing until just combined. Be careful not to overmix.\\n\\n5.
+        **Add Chocolate Chips**: Stir in the chocolate chips and nuts (if using) until
+        evenly distributed.\\n\\n6. **Scoop the Dough**: Drop rounded tablespoons
+        of dough onto ungreased baking sheets, leaving space between each cookie to
+        allow for spreading.\\n\\n7. **Bake**: Bake in the preheated oven for 9 to
+        11 minutes, or until the edges are golden brown. The centers may look slightly
+        underbaked; they will continue to cook on the baking sheet after being removed
+        from the oven.\\n\\n8. **Cool**: Let the cookies cool on the baking sheet
+        for a few minutes before transferring them to wire racks to cool completely.\\n\\n###
+        Tips:\\n- For softer cookies, do not overbake them.\\n- You can chill the
+        dough for 30 minutes before baking for thicker cookies.\\n- Experiment with
+        different types of chocolate chips or add-ins like dried fruit or coconut.\\n\\nEnjoy
+        your homemade cookies!\",\"refusal\":null,\"role\":\"assistant\"}}],\"created\":1742232535,\"id\":\"chatcmpl-BC8YhMKdZgln53r3GvnDbeAKjdXoL\",\"model\":\"gpt-4o-mini-2024-07-18\",\"object\":\"chat.completion\",\"prompt_filter_results\":[{\"prompt_index\":0,\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"jailbreak\":{\"filtered\":false,\"detected\":false},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}}}],\"system_fingerprint\":\"fp_b705f0c291\",\"usage\":{\"completion_tokens\":433,\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0},\"prompt_tokens\":12,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":0},\"total_tokens\":445}}\n"
+    headers:
+      Content-Length:
+      - '3048'
+      Content-Type:
+      - application/json
+      Date:
+      - Mon, 17 Mar 2025 17:29:01 GMT
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      apim-request-id:
+      - 82fd0c35-d77a-485a-9f1a-a0b0a9979369
+      azureml-model-session:
+      - v20250225-1-161802030
+      cmp-upstream-response-duration:
+      - '6010'
+      ms-azureml-model-time:
+      - '6113'
+      x-accel-buffering:
+      - 'no'
+      x-aml-cluster:
+      - hyena-westeurope-01
+      x-content-type-options:
+      - nosniff
+      x-envoy-upstream-service-time:
+      - '6115'
+      x-ms-client-request-id:
+      - 82fd0c35-d77a-485a-9f1a-a0b0a9979369
+      x-ms-rai-invoked:
+      - 'true'
+      x-ms-region:
+      - France Central
+      x-ratelimit-remaining-requests:
+      - '39999'
+      x-ratelimit-remaining-tokens:
+      - '3999354'
+      x-request-id:
+      - bbd77e1b-02a8-418a-b293-c3e709b9a98f
+    status:
+      code: 200
+      message: OK
+version: 1
