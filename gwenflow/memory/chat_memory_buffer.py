@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Optional
 from pydantic import field_validator, Field
 
 from gwenflow.types import Message
@@ -19,7 +19,9 @@ class ChatMemoryBuffer(BaseChatMemory):
         return token_limit
     
     def get(self):
+
         initial_token_count = 0
+
         if self.system_prompt:
             initial_token_count = self._token_count_for_messages([Message(role="system", content=self.system_prompt)])
         if initial_token_count > self.token_limit:
@@ -39,7 +41,7 @@ class ChatMemoryBuffer(BaseChatMemory):
             token_count = self._token_count_for_messages(cur_messages) + initial_token_count
 
         # catch one message longer than token limit
-        if token_count > self.token_limit or message_count <= 0:
+        if token_count > self.token_limit or (message_count <= 0 and not self.system_prompt):
             return []
 
         if self.system_prompt:

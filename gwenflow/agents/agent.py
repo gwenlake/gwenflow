@@ -83,7 +83,7 @@ class Agent(BaseModel):
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
         return self
     
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self, task: str) -> str:
         """Return the system message for the Agent."""
 
         prompt = ""
@@ -100,6 +100,9 @@ class Agent(BaseModel):
             prompt += "\n\n"
             if self.add_datetime_to_instructions:
                 prompt += f"The current date and time is: { datetime.now() }\n"
+
+        # Task
+        # prompt += PROMPT_TASK.format(task=task)
 
         # tools: TODO REMOVE ?
         if self.tools and self.is_react:
@@ -132,7 +135,10 @@ class Agent(BaseModel):
         if self.response_model:
             prompts += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4))
             prompt += "\n"
-        
+
+        if self.context:
+            prompt += self.get_context()
+
         return prompt.strip()
 
 
@@ -152,21 +158,10 @@ class Agent(BaseModel):
 
         return prompt
 
-    def get_user_message(self, task: Optional[str] = None) -> Message:
-        """Return the user message for the Agent."""
-
-        if not task and not self.context:
-            raise ValueError("You need a task or a context (or both) to run the agent!")
-
-        prompt = ""
-
-        if self.context:
-            prompt += self.get_context()
-
-        if task:
-            prompt += PROMPT_TASK.format(task=task)
-
-        return Message(role="user", content=prompt)
+    # def get_user_message(self, task: Optional[str] = None) -> Message:
+    #     """Return the user message for the Agent."""
+    #     prompt = PROMPT_TASK.format(task=task)
+    #     return Message(role="user", content=prompt)
 
     def get_tools_openai_schema(self):
         return [tool.openai_schema for tool in self.tools]
@@ -309,9 +304,9 @@ class Agent(BaseModel):
 
     def _run(
         self,
-        task: Optional[str] = None,
+        task: str,
         stream: Optional[bool] = False,
-        chat_history: Optional[List] = None,
+        chat_history: Optional[list] = [],
     ) ->  Iterator[AgentResponse]:
 
         # add reasoning steps
@@ -321,11 +316,11 @@ class Agent(BaseModel):
             if len(completion.choices)>0:
                 self.reasoning_steps = completion.choices[0].message.content
 
-        # store messages in memory
-        self.memory.system_prompt = self.get_system_prompt()
-        if chat_history:
+        # prepare memory (system+history+task)
+        self.memory.system_prompt = self.get_system_prompt(task=task)
+        if len(chat_history)>0:
             self.memory.add_messages(chat_history)
-        self.memory.add_message(self.get_user_message(task=task))
+        self.memory.add_message(Message(role="user", content=task))
 
         # init agent response
         agent_response = AgentResponse()
@@ -338,7 +333,6 @@ class Agent(BaseModel):
             if stream:
 
                 message = Message(role="assistant", content="", delta="", tool_calls=[])
-
                 for chunk in self.invoke(messages=messages_for_model, stream=True):
 
                     chunk = ChatCompletionChunk(**chunk.model_dump())
@@ -361,6 +355,7 @@ class Agent(BaseModel):
             else:
                 completion = self.invoke(messages=messages_for_model)
                 message = Message(**completion.choices[0].message.model_dump())
+                message.tool_calls = completion.choices[0].message.model_dump()["tool_calls"]
 
             # add messages to the current message stack
             self.memory.add_message(message)
@@ -371,8 +366,13 @@ class Agent(BaseModel):
                 break
 
             # thinking
-            agent_response.thinking = self._get_thinking(message.tool_calls)
-            yield agent_response
+            try:
+                agent_response.thinking = self._get_thinking(message.tool_calls)
+            except:
+                pass
+            if stream:
+                if agent_response.thinking:
+                    yield agent_response
 
             # handle tool calls and switching agents
             tool_messages = self.handle_tool_calls(message.tool_calls)
@@ -389,9 +389,9 @@ class Agent(BaseModel):
 
     def run(
         self,
-        task: Optional[str] = None,
+        task: str,
         stream: Optional[bool] = False,
-        chat_history: Optional[List] = None,
+        chat_history: Optional[list] = [],
     ) ->  Union[AgentResponse, Iterator[AgentResponse]]:
 
         logger.debug("")
@@ -401,8 +401,8 @@ class Agent(BaseModel):
         logger.debug("")
 
         if stream:
-            response = self._run(task=task, chat_history=chat_history, stream=True)
+            response = self._run(task=task, stream=True, chat_history=chat_history)
             return response
     
-        response = self._run(task=task, chat_history=chat_history, stream=False)
+        response = self._run(task=task, stream=False, chat_history=chat_history)
         return next(response)
