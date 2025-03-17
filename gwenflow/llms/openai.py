@@ -8,8 +8,8 @@ from openai import OpenAI, AsyncOpenAI
 
 from gwenflow.types import Message, ChatCompletion, ChatCompletionChunk
 from gwenflow.llms import ChatBase
+from gwenflow.llms.response import ModelResponse
 from gwenflow.utils import extract_json_str
-
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,19 @@ class ChatOpenAI(ChatBase):
 
         return message_dict
 
+    def _get_thinking(self, tool_calls) -> list:
+        thinking = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                tool_call = tool_call.model_dump()
+            arguments = json.loads(tool_call["function"]["arguments"])
+            arguments = ", ".join(arguments.values())
+            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
+        if len(thinking)>0:
+            # return "\n".join(thinking)
+            return thinking
+        return []
+    
     def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
                     
@@ -185,7 +198,7 @@ class ChatOpenAI(ChatBase):
 
         return completion
 
-    def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Iterator[ChatCompletionChunk]:
+    def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
         messages_for_model = self._cast_messages(messages)
 
         completion = self.get_client().chat.completions.create(
@@ -214,3 +227,131 @@ class ChatOpenAI(ChatBase):
         async for chunk in completion:
             chunk = ChatCompletionChunk(**chunk.model_dump())
             yield chunk
+
+    def response(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
+        messages_for_model = self._cast_messages(messages)
+        model_response = ModelResponse()
+
+        while True:
+
+            response = self.invoke(messages=messages_for_model)
+            
+            if not response.choices[0].message.tool_calls:
+                model_response.content = response.choices[0].message.content
+                break
+
+            model_response.thinking.extend(self._get_thinking(response.choices[0].message.tool_calls))
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages_for_model.append(response.choices[0].message.model_dump())
+                    messages_for_model.extend(tool_messages)
+        
+        return model_response
+
+    async def aresponse(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
+        messages_for_model = self._cast_messages(messages)
+        model_response = ModelResponse()
+
+        while True:
+
+            response = await self.ainvoke(messages=messages_for_model)
+
+            if not response.choices[0].message.tool_calls:
+                model_response.content = response.choices[0].message.content
+                break
+
+            model_response.thinking.extend(self._get_thinking(response.choices[0].message.tool_calls))
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages_for_model.append(response.choices[0].message.model_dump())
+                    messages_for_model.extend(tool_messages)
+
+        return model_response
+
+    def response_stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
+        messages_for_model = self._cast_messages(messages)
+        model_response = ModelResponse()
+
+        while True:
+
+            message = Message(role="assistant", content="", delta="", tool_calls=[])
+
+            for chunk in self.stream(messages=messages_for_model):
+                chunk = ChatCompletionChunk(**chunk.model_dump())
+                if len(chunk.choices) > 0:
+                    if chunk.choices[0].delta.content:
+                        message.content += chunk.choices[0].delta.content
+                        model_response.content = chunk.choices[0].delta.content
+                        yield model_response
+                    elif chunk.choices[0].delta.tool_calls:
+                        if chunk.choices[0].delta.tool_calls[0].id:
+                            message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
+                        if chunk.choices[0].delta.tool_calls[0].function.arguments:
+                            current_tool = len(message.tool_calls) - 1
+                            message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
+
+            if not message.tool_calls:
+                model_response.content = message.content
+                model_response.finish_reason = "stop"
+                break
+
+            model_response.thinking = self._get_thinking(message.tool_calls)
+            if model_response.thinking:
+                yield model_response
+
+            tool_calls = message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages_for_model.append(message)
+                    messages_for_model.extend(tool_messages)
+
+        yield model_response
+
+    async def aresponse_stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
+        messages_for_model = self._cast_messages(messages)
+        model_response = ModelResponse()
+
+        while True:
+
+            model_response.thinking = []
+
+            message = Message(role="assistant", content="", delta="", tool_calls=[])
+
+            for chunk in await self.astream(messages=messages_for_model):
+                chunk = ChatCompletionChunk(**chunk.model_dump())
+                if len(chunk.choices) > 0:
+                    if chunk.choices[0].delta.content:
+                        message.content += chunk.choices[0].delta.content
+                        model_response.content = chunk.choices[0].delta.content
+                        yield model_response
+                    elif chunk.choices[0].delta.tool_calls:
+                        if chunk.choices[0].delta.tool_calls[0].id:
+                            message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
+                        if chunk.choices[0].delta.tool_calls[0].function.arguments:
+                            current_tool = len(message.tool_calls) - 1
+                            message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
+
+            if not message.tool_calls:
+                model_response.content = message.content
+                model_response.finish_reason = "stop"
+                break
+
+            model_response.thinking = self._get_thinking(message.tool_calls)
+            if model_response.thinking:
+                yield model_response
+
+            tool_calls = message.tool_calls
+            if tool_calls and self.tools:
+                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                if len(tool_messages)>0:
+                    messages_for_model.append(message)
+                    messages_for_model.extend(tool_messages)
+
+        yield model_response
