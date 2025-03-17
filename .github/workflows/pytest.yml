@@ -21,4 +21,4 @@ jobs:
           enable-cache: true
 
       - name: Gwenflow tests
-        run: uv run --record-mode=none
+        run: uv run pytest --record-mode=none
