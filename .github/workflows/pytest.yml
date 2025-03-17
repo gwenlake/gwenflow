@@ -2,7 +2,7 @@ name: all-tests
 
 # We use this in other workflows as a validation
 # step. E.g. before building images.
-on: [ workflow_call ]
+on: push
 
 jobs:
   test-all:
