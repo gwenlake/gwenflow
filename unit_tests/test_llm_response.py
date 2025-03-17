@@ -9,7 +9,7 @@ from gwenflow import ChatAzureOpenAI
 from gwenflow.tools import WebsiteReaderTool, DuckDuckGoNewsTool
 
 # Load environment variables
-load_dotenv(override=True)
+load_dotenv(override=True, dotenv_path=".env.test")
 
 @pytest.fixture
 def chat_model_tools():
