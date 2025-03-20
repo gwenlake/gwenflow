@@ -5,9 +5,9 @@ from gwenflow.tools import BaseTool
 from gwenflow.readers.website import WebsiteReader
 
 
-class WebsiteTool(BaseTool):
+class WebsiteReaderTool(BaseTool):
 
-    name: str = "WebsiteTool"
+    name: str = "WebsiteReaderTool"
     description: str = "Fetches and returns the content of a given URL."
 
     def _run(self, url: str = Field(description="The url of the website to read.")) -> str:

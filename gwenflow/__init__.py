@@ -9,10 +9,10 @@ except importlib.metadata.PackageNotFoundError:
 
 from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.readers import SimpleDirectoryReader
-from gwenflow.agents import Agent, ReActAgent
+from gwenflow.agents import Agent, ChatAgent
 from gwenflow.tools import Tool
 from gwenflow.flows import Flow, AutoFlow
-from gwenflow.types import Document
+from gwenflow.types import Document, Message
 from gwenflow.knowledge import Knowledge
 
 
@@ -22,9 +22,11 @@ __all__ = [
     "ChatAzureOpenAI",
     "ChatOllama",
     "Document",
+    "Message",
     "SimpleDirectoryReader",
     "Agent",
-    "ReActAgent",
+    "ChatAgent",
+    # "ReActAgent",
     "Tool",
     "Flow",
     "AutoFlow",

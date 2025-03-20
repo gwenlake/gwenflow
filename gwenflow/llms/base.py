@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from gwenflow.tools import BaseTool
-from gwenflow.types import ChatMessage, ChatCompletionMessageToolCall
+from gwenflow.types import Message, ChatCompletionMessageToolCall
 from gwenflow.utils import logger
 
 
@@ -18,6 +18,7 @@ LLM_CONTEXT_WINDOW_SIZES = {
     "gpt-4-turbo": 128000,
     "o1-preview": 128000,
     "o1-mini": 128000,
+    "o3-mini": 128000,
     # deepseek
     "deepseek-chat": 128000,
     "deepseek-r1": 128000,
@@ -68,14 +69,23 @@ class ChatBase(BaseModel, ABC):
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
 
+    def _cast_messages(self, messages: Union[str, List[Message], List[Dict[str, str]]],) -> List[Message]:
+        if isinstance(messages, str):
+            _messages = [Message(role="user", content=messages)]
+        else:
+            _messages = messages
+            for i, message in enumerate(_messages):
+                if not isinstance(message, Message):
+                    _messages[i] = Message(**message)
+        return _messages
+
     def get_tool_names(self):
         return [tool.name for tool in self.tools]
 
     def get_tools_map(self):
         return {tool.name: tool for tool in self.tools}
 
-
-    def handle_tool_call(self, tool_call) -> ChatMessage:
+    def handle_tool_call(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
@@ -85,7 +95,7 @@ class ChatBase(BaseModel, ABC):
                     
         if tool_name not in tool_map.keys():
             logger.error(f"Tool {tool_name} does not exist")
-            return ChatMessage(
+            return Message(
                 role="tool",
                 tool_call_id=tool_call.id,
                 tool_name=tool_name,
@@ -96,7 +106,7 @@ class ChatBase(BaseModel, ABC):
             function_args = json.loads(tool_call.function.arguments)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse tool arguments: {e}")
-            return ChatMessage(
+            return Message(
                 role="tool",
                 tool_call_id=tool_call.id,
                 tool_name=tool_name,
@@ -107,7 +117,7 @@ class ChatBase(BaseModel, ABC):
             logger.debug(f"Tool call: {tool_name}({function_args})")
             observation = tool_map[tool_name].run(**function_args)
             if observation:
-                return ChatMessage(
+                return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
                     tool_name=tool_name,
@@ -116,7 +126,7 @@ class ChatBase(BaseModel, ABC):
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
 
-        return ChatMessage(
+        return Message(
             role="tool",
             tool_call_id=tool_call.id,
             tool_name=tool_name,
@@ -157,5 +167,3 @@ class ChatBase(BaseModel, ABC):
                 messages.append(observation)
 
         return messages
-    
-

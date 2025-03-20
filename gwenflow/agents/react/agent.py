@@ -9,7 +9,7 @@ from gwenflow.agents.agent import Agent
 from gwenflow.agents.react.types import ActionReasoningStep
 from gwenflow.agents.react.parser import ReActOutputParser
 from gwenflow.agents.react.prompts import PROMPT_REACT
-from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS, PROMPT_REASONNING
+from gwenflow.agents.prompts import PROMPT_TASK, PROMPT_TOOLS
 from gwenflow.utils.chunks import merge_chunk
 from gwenflow.utils import logger
 
@@ -55,7 +55,7 @@ class ReActAgent(Agent):
             # logger.warning(f"Unknown tool {reasoning_step.action}, should be instead one of { tool_map.keys() }.")
             return {
                 "role": "user",
-                "content": f"Tool {reasoning_step.action} does not exist",
+                "content": "Ok. Let’s proceed with the next step.",
             }
 
         observation = self.execute_tool_call(reasoning_step.action, reasoning_step.action_input)
@@ -87,12 +87,12 @@ class ReActAgent(Agent):
         
         user_prompt = ""
         
-        # if self.tools:
-        #     tools = self.get_tools_text_schema()
-        #     user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
+        if self.tools:
+            tools = self.get_tools_text_schema()
+            user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
 
         user_prompt += PROMPT_TASK.format(task=task).strip()
-        user_prompt += "\n\n" + PROMPT_REASONNING 
+        user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
 
         params = {
             "messages": [{"role": "user", "content": user_prompt}],
@@ -102,7 +102,7 @@ class ReActAgent(Agent):
         response = self.reasoning_model.invoke(**params)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.choices[0].message.content, flags=re.DOTALL)
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
         if not reasoning_content:
             return None
         
@@ -129,26 +129,29 @@ class ReActAgent(Agent):
                 if isinstance(context, str):
                     text = context
                     context = { "context": text }
-                context["thinking"] = reasoning_message
+                context["thinking"] = reasoning_message # modifier en guidelines ?
 
         # messages for model
-        messages_for_model = []
-        system_message = self.get_system_message(context=context)
         user_message = self.get_user_message(task=task, context=context)
+        self.memory.add_message(user_message)
+        messages_for_model = self.get_messages_for_model(task=task, context=context)
+
+        # system_message = self.get_system_message(context=context)
+        # user_message = self.get_user_message(task=task, context=context)
 
         # check if system prompt is allow and add messages to messages_for_model
-        if self.system_prompt_allowed:
-            if system_message:
-                messages_for_model.append(system_message)
-            if user_message:
-                messages_for_model.append(user_message)
-                self.memory.add_message(user_message)
-        else:
-            system_message["role"] = "user"
-            if user_message:
-                system_message["content"] += "\n\n" + user_message["content"]
-            messages_for_model.append(system_message)
-            self.memory.add_message(system_message)
+        # if self.system_prompt_allowed:
+        #     if system_message:
+        #         messages_for_model.append(system_message)
+        #     if user_message:
+        #         messages_for_model.append(user_message)
+        #         self.memory.add_message(user_message)
+        # else:
+        #     system_message["role"] = "user"
+        #     if user_message:
+        #         system_message["content"] += "\n\n" + user_message["content"]
+        #     messages_for_model.append(system_message)
+        #     self.memory.add_message(system_message)
         
         # global loop
         init_len = len(messages_for_model)

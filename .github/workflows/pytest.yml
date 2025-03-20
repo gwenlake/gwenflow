@@ -11,6 +11,9 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      TEST_ENV: "github"
+
     steps:
       - uses: actions/checkout@v4
 

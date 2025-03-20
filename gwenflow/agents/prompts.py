@@ -1,13 +1,14 @@
-PROMPT_STEPS = """Before providing your final answer, follow these steps:
+PROMPT_GUIDELINES = """
+## Guidelines:
+{guidelines}
+"""
 
-1. List the key topics or concepts you've identified from the task.
-2. For each topic, list potential information you plan to search.
-3. For each information:
-   a. Note the most relevant information you find.
-   b. Include any important quotes, with proper citation.
-   c. Highlight any statistical data or key facts.
-4. Identify any contradictions or gaps in the information you've found.
-5. Summarize your key findings and how they relate to the task.
+PROMPT_STEPS = """
+## Before providing your final answer, follow these steps:
+
+<steps>
+{reasoning_steps}
+</steps>
 
 This structured approach will help you organize your thoughts and ensure a thorough response.
 """
@@ -26,9 +27,30 @@ PROMPT_TOOLS = """
 Your objective is to thoroughly research your <task> using the following tools as your primary source and provide a detailed and informative answer.
 
 You have access to the following tools:
+
 <tools>
 {tools}
 </tools>
+"""
+
+PROMPT_JSON_SCHEMA = """
+## Provide your output using the following JSON schema:
+
+<json_schema>
+{json_schema}
+</json_schema>
+"""
+
+PROMPT_REASONING_STEPS_TOOLS = """
+Your objective is to thoroughly research your task using the following tools as your primary source and provide a detailed and informative answer.
+
+You have access to the following tools:
+
+<tools>
+{tools}
+</tools>
+
+Please provide the detailed steps that are needed to achieve your task accurately and efficiently.
 """
 
 PROMPT_TOOLS_REACT_GUIDELINES = """
