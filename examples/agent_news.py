@@ -1,7 +1,7 @@
 import dotenv
 
 from gwenflow import ChatOpenAI, Agent
-from gwenflow.tools import WebsiteTool, DuckDuckGoNewsTool
+from gwenflow.tools import WebsiteReaderTool, DuckDuckGoNewsTool
 from gwenflow.utils import set_log_level_to_debug
 
 
@@ -14,7 +14,7 @@ agent = Agent(
     name="News",
     role="You get some information about a topic.",
     llm=ChatOpenAI(model="gpt-4o-mini"),
-    tools=[DuckDuckGoNewsTool(), WebsiteTool()],
+    tools=[DuckDuckGoNewsTool(), WebsiteReaderTool()],
     instructions = "If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.",
 )
 

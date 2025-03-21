@@ -8,19 +8,19 @@ from gwenflow.llms.openai import ChatOpenAI
 logger = logging.getLogger(__name__)
 
 
-class ChatMistralAI(ChatOpenAI):
+class ChatGemini(ChatOpenAI):
  
-    model: str = "open-mistral-7b"
-    base_url: str = "https://api.mistral.ai"
+    model: str = "gemini-1.5-flash"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     def _get_client_params(self) -> Dict[str, Any]:
 
         api_key = self.api_key
         if api_key is None:
-            api_key = os.environ.get("MISTRAL_API_KEY")
+            api_key = os.environ.get("GOOGLE_API_KEY")
         if api_key is None:
             raise ValueError(
-                "The api_key client option must be set either by passing api_key to the client or by setting the MISTRAL_API_KEY environment variable"
+                "The api_key client option must be set either by passing api_key to the client or by setting the GOOGLE_API_KEY environment variable"
             )
 
         client_params = {
