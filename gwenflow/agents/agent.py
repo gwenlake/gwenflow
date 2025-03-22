@@ -3,10 +3,11 @@ import uuid
 import json
 import inspect
 import asyncio
+import mem0
 
 from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
-from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
+from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
 from datetime import datetime
 
 from gwenflow.llms import ChatBase, ChatOpenAI
@@ -14,7 +15,7 @@ from gwenflow.types import Message, ChatCompletionChunk
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.agents.types import AgentResponse
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_GUIDELINES, PROMPT_JSON_SCHEMA, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK, PROMPT_REASONING_STEPS_TOOLS
+from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_GUIDELINES, PROMPT_JSON_SCHEMA, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK, PROMPT_REASONING_STEPS_TOOLS, PROMPT_PREVIOUS_INTERACTIONS
 from gwenflow.utils import logger
 from gwenflow.types import Message
 
@@ -49,12 +50,14 @@ class Agent(BaseModel):
     # --- Task, Context and Memory
     context: Optional[Any] = None
     memory: Optional[ChatMemoryBuffer] = None
+    long_term_memory: Optional[mem0.Memory] = None
     metadata: Optional[Dict[str, Any]] = None
     # knowledge: Optional[Knowledge] = None
 
     # --- Team of agents
     team: Optional[List["Agent"]] = None
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @field_validator("id", mode="before")
     @classmethod
@@ -81,9 +84,11 @@ class Agent(BaseModel):
         if self.memory is None and self.llm is not None:
              token_limit = self.llm.get_context_window_size()
              self.memory = ChatMemoryBuffer(token_limit=token_limit)
+        if self.long_term_memory is None:
+             self.long_term_memory = mem0.Memory()
         return self
     
-    def get_system_prompt(self, task: str) -> str:
+    def get_system_prompt(self, task: str, chat_history: Optional[list] = []) -> str:
         """Return the system message for the Agent."""
 
         prompt = ""
@@ -102,7 +107,7 @@ class Agent(BaseModel):
                 prompt += f"The current date and time is: { datetime.now() }\n"
 
         # Task
-        # prompt += PROMPT_TASK.format(task=task)
+        prompt += PROMPT_TASK.format(task=task)
 
         # tools: TODO REMOVE ?
         if self.tools and self.is_react:
@@ -125,7 +130,8 @@ class Agent(BaseModel):
             guidelines += self.instructions
 
         if len(guidelines) > 0:
-            prompt += PROMPT_GUIDELINES.format(guidelines="\n".join([f"- {g}" for g in guidelines]))
+            guidelines = "\n".join([f"- {g}" for g in guidelines])
+            prompt += PROMPT_GUIDELINES.format(guidelines=guidelines)
             prompt += "\n"
 
         if self.reasoning_steps:
@@ -138,6 +144,12 @@ class Agent(BaseModel):
 
         if self.context:
             prompt += self.get_context()
+
+        if chat_history:
+            self.long_term_memory.add([m.to_dict() for m in chat_history], user_id=str(self.id))
+            relevant_memories = self.long_term_memory.search(query=task, user_id=str(self.id))
+            relevant_memories = "\n".join([f"- {m["memory"]}" for m in relevant_memories["results"]])
+            prompt += PROMPT_PREVIOUS_INTERACTIONS.format(previous_interactions=relevant_memories)
 
         return prompt.strip()
 
@@ -317,10 +329,7 @@ class Agent(BaseModel):
                 self.reasoning_steps = completion.choices[0].message.content
 
         # prepare memory (system+history+task)
-        self.memory.system_prompt = self.get_system_prompt(task=task)
-        if len(chat_history)>0:
-            self.memory.add_messages(chat_history)
-        self.memory.add_message(Message(role="user", content=task))
+        self.memory.system_prompt = self.get_system_prompt(task=task, chat_history=chat_history)
 
         # init agent response
         agent_response = AgentResponse()

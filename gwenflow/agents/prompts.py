@@ -1,6 +1,9 @@
 PROMPT_GUIDELINES = """
 ## Guidelines:
+
+<guidelines>
 {guidelines}
+</guidelines>
 """
 
 PROMPT_STEPS = """
@@ -20,6 +23,14 @@ PROMPT_TASK = """
 <task>
 {task}
 </task>
+"""
+
+PROMPT_PREVIOUS_INTERACTIONS = """
+## Answer the question considering the previous interactions:
+
+<previous_interactions>
+{previous_interactions}
+</previous_interactions>
 """
 
 PROMPT_TOOLS = """

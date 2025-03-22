@@ -82,7 +82,7 @@ class ChatBase(BaseModel, ABC):
     def get_tool_names(self):
         return [tool.name for tool in self.tools]
 
-    def get_tools_map(self):
+    def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
 
     def handle_tool_call(self, tool_call) -> Message:
@@ -115,13 +115,13 @@ class ChatBase(BaseModel, ABC):
 
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
-            observation = tool_map[tool_name].run(**function_args)
-            if observation:
+            result = tool_map[tool_name].run(**function_args)
+            if result:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
                     tool_name=tool_name,
-                    content=f"Observation: {observation}",
+                    content=str(result),
                 )
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")

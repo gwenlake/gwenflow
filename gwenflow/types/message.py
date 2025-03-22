@@ -36,4 +36,3 @@ class Message(BaseModel):
             k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
         }
         return message_dict
-
