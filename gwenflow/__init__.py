@@ -13,7 +13,7 @@ from gwenflow.agents import Agent, ChatAgent
 from gwenflow.tools import Tool
 from gwenflow.flows import Flow, AutoFlow
 from gwenflow.types import Document, Message
-from gwenflow.knowledge import Knowledge
+from gwenflow.retriever import Retriever
 
 
 __all__ = [
@@ -24,11 +24,10 @@ __all__ = [
     "Document",
     "Message",
     "SimpleDirectoryReader",
+    "Retriever",
     "Agent",
     "ChatAgent",
-    # "ReActAgent",
     "Tool",
     "Flow",
     "AutoFlow",
-    "Knowledge",
 ]

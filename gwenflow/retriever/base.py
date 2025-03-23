@@ -3,7 +3,6 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict
 
 import hashlib
-import uuid
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from gwenflow.types.document import Document
@@ -17,14 +16,15 @@ from gwenflow.utils import logger
 MIN_CONTENT_LENGTH = 20
 
 
-class Knowledge(BaseModel):
+class Retriever(BaseModel):
 
     name: str
 
-    uri: Optional[str] = None
+    pathname: Optional[str] = None
     vector_db: Optional[VectorStoreBase] = None
     chunk_size: Optional[int] = 500
     chunk_overlap: Optional[int] = 100
+    top_k: Optional[int] = 5
 
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
    
@@ -32,24 +32,20 @@ class Knowledge(BaseModel):
     def model_valid(self) -> Any:
         if not self.vector_db:
             try:
-                uri = self.uri or f"./{ self.name }"
+                uri = self.pathname or f"./{ self.name }"
                 self.vector_db = LanceDB(uri=uri,
                                          embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"),
                                          reranker=GwenlakeReranker(model="BAAI/bge-reranker-v2-m3"))
             except Exception as e:
-                logger.error(f"Error creating knowledge: {e}")
+                logger.error(f"Error creating retriver: {e}")
         return self
     
-    def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
+    def search(self, query: str, filters: dict = None) -> list[Document]:
         try:
             if not self.vector_db:
                 return []
-            documents = self.vector_db.search(query, limit=10*limit, filters=filters)
-            documents.sort(
-                key=lambda x: x.score if x.score is not None else float("-inf"),
-                reverse=True,
-            )
-            return documents[:limit]
+            documents = self.vector_db.search(query, limit=10*self.top_k, filters=filters)
+            return documents[:self.top_k]
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
         return []

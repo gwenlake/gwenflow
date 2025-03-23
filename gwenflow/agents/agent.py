@@ -12,7 +12,7 @@ from gwenflow.llms import ChatBase, ChatOpenAI, ModelResponse
 from gwenflow.types import Message
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.knowledge import Knowledge
+from gwenflow.retriever import Retriever
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.prompts import PROMPT_ROLE, PROMPT_STEPS, PROMPT_INSTRUCTIONS, PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.utils import logger
@@ -29,6 +29,9 @@ class Agent(BaseModel):
 
     description: str | None = None
     """A description of the agent, used as a handoff, so that the manager knows what it does."""
+
+    system_prompt: str | None = None
+    """Systtem prompt."""
 
     instructions: (str | List[str] | None) = None
     """The instructions for the agent."""
@@ -54,8 +57,8 @@ class Agent(BaseModel):
     history: ChatMemoryBuffer | None = None
     """Historcal messages for the agent."""
 
-    knowledge: Optional[Knowledge] = None
-    """Knowledge for the agent."""
+    retriever: Optional[Retriever] = None
+    """Retriever for the agent."""
 
     team: List["Agent"] | None = None
     """Team of agents."""
@@ -108,27 +111,32 @@ class Agent(BaseModel):
                 text += f"</{key}>\n\n"
         return text
     
-    def get_system_prompt(self, context: Optional[Union[str, Dict[str, str]]] = None, references: Optional[List[str]] = None) -> str:
+    def get_system_prompt(self, task: str, context: Optional[Union[str, Dict[str, str]]] = None,) -> str:
         """Get the system prompt for the agent."""
 
-        prompt = PROMPT_ROLE.format(name=self.name, date=datetime.now()).strip()
-        prompt += "\n\n"
-
-        # instructions
-        instructions = []
-        if self.response_model:
-            instructions.append("Use JSON to format your answers.")    
-        if context is not None:
-            instructions.append("Always prefer information from the provided context over your own knowledge.")
-        if self.instructions:
-            if isinstance(self.instructions, str):
-                instructions += [self.instructions]
-            elif isinstance(self.instructions, list):
-                instructions += self.instructions
-        if len(instructions) > 0:
-            instructions = "\n".join([f"- {i}" for i in instructions])
-            prompt += PROMPT_INSTRUCTIONS.format(instructions=instructions).strip()
+        if self.system_prompt:
+            prompt = self.system_prompt
             prompt += "\n\n"
+        
+        else:
+            prompt = PROMPT_ROLE.format(name=self.name, date=datetime.now()).strip()
+            prompt += "\n\n"
+
+            # instructions
+            instructions = []
+            if self.response_model:
+                instructions.append("Use JSON to format your answers.")    
+            if context is not None:
+                instructions.append("Always prefer information from the provided context over your own knowledge.")
+            if self.instructions:
+                if isinstance(self.instructions, str):
+                    instructions += [self.instructions]
+                elif isinstance(self.instructions, list):
+                    instructions += self.instructions
+            if len(instructions) > 0:
+                instructions = "\n".join([f"- {i}" for i in instructions])
+                prompt += PROMPT_INSTRUCTIONS.format(instructions=instructions).strip()
+                prompt += "\n\n"
 
         # reasoning steps
         if self.reasoning_steps:
@@ -141,9 +149,12 @@ class Agent(BaseModel):
             prompt += "\n\n"
 
         # references
-        if references:
-            prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
-            prompt += "\n\n"
+        if self.retriever:
+            references = self.retriever.search(query=task)
+            if len(references)>0:
+                references = [r.content for r in references]
+                prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
+                prompt += "\n\n"
 
         # context
         if context is not None:
@@ -205,15 +216,10 @@ class Agent(BaseModel):
         #         self.reasoning_steps = completion.choices[0].message.content
 
         # search for references
-        references = None
-        if self.knowledge:
-            query = messages[-1].content
-            references = self.knowledge.search(query=query, limit=10)
-            if len(references)>0:
-                references = [r.content for r in references]
+        task = messages[-1].content
 
         # history
-        self.history.system_prompt = self.get_system_prompt(context=context, references=references)
+        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
         # format messages
