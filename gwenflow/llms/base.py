@@ -65,6 +65,22 @@ class ChatBase(BaseModel, ABC):
     async def astream(self, *args, **kwargs) -> Any:
         pass
 
+    @abstractmethod
+    def response(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    async def aresponse(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    def response_stream(self, *args, **kwargs) -> Any:
+        pass
+ 
+    @abstractmethod
+    async def aresponse_stream(self, *args, **kwargs) -> Any:
+        pass
+
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
@@ -90,7 +106,7 @@ class ChatBase(BaseModel, ABC):
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
     
-        tool_map  = self.get_tools_map()
+        tool_map  = self.get_tool_map()
         tool_name = tool_call.function.name
                     
         if tool_name not in tool_map.keys():
@@ -136,7 +152,7 @@ class ChatBase(BaseModel, ABC):
 
     def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
-        tool_map = self.get_tools_map()
+        tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
             return []
         
@@ -150,7 +166,7 @@ class ChatBase(BaseModel, ABC):
 
     async def ahandle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
-        tool_map = self.get_tools_map()
+        tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
             return []
 

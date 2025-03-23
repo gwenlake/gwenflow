@@ -152,7 +152,7 @@ class ChatOpenAI(ChatBase):
 
         return message_dict
 
-    def _get_thinking(self, tool_calls) -> list:
+    def _get_thinking(self, tool_calls) -> str:
         thinking = []
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
@@ -161,9 +161,8 @@ class ChatOpenAI(ChatBase):
             arguments = ", ".join(arguments.values())
             thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
         if len(thinking)>0:
-            # return "\n".join(thinking)
-            return thinking
-        return []
+            return "\n".join(thinking)
+        return ""
     
     def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         messages_for_model = self._cast_messages(messages)
@@ -255,7 +254,7 @@ class ChatOpenAI(ChatBase):
                 model_response.content = response.choices[0].message.content
                 break
 
-            model_response.thinking.extend(self._get_thinking(response.choices[0].message.tool_calls))
+            model_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
@@ -278,7 +277,7 @@ class ChatOpenAI(ChatBase):
                 model_response.content = response.choices[0].message.content
                 break
 
-            model_response.thinking.extend(self._get_thinking(response.choices[0].message.tool_calls))
+            model_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
@@ -303,6 +302,7 @@ class ChatOpenAI(ChatBase):
                     if chunk.choices[0].delta.content:
                         message.content += chunk.choices[0].delta.content
                         model_response.content = chunk.choices[0].delta.content
+                        model_response.thinking = None
                         yield model_response
                     elif chunk.choices[0].delta.tool_calls:
                         if chunk.choices[0].delta.tool_calls[0].id:
@@ -345,6 +345,7 @@ class ChatOpenAI(ChatBase):
                     if chunk.choices[0].delta.content:
                         message.content += chunk.choices[0].delta.content
                         model_response.content = chunk.choices[0].delta.content
+                        model_response.thinking = None
                         yield model_response
                     elif chunk.choices[0].delta.tool_calls:
                         if chunk.choices[0].delta.tool_calls[0].id:

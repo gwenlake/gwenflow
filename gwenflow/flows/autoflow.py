@@ -13,34 +13,34 @@ from gwenflow.utils import logger
 EXAMPLE = [
     {
         "name": "Biographer",
-        "role": "Write two paragraphs of max 500 words each",
+        "task": "Write two paragraphs of max 500 words each",
         "tools": ["wikipedia"],
-        "context": [],
+        "depends_on": [],
     },
     { 
         "name": "Summarizer",
-        "role": "List of 10 bullet points",
+        "task": "List of 10 bullet points",
         "tools": None,
-        "context": ["Biographer"],
+        "depends_on": ["Biographer"],
     },
     {
         "name": "RelatedTopics",
-        "role": "Generate a list of 5 related topics",
+        "task": "Generate a list of 5 related topics",
         "tools": None,
-        "context": ["Summarizer"],
+        "depends_on": ["Summarizer"],
     },
     {
         "name": "Final Report",
-        "role": "Produce a final report in a Powerpoint file (pptx format)",
+        "task": "Produce a final report in a Powerpoint file (pptx format)",
         "tools": ["wikipedia","python"],
-        "context": ["Biographer","Summarizer","RelatedTopics"],
+        "depends_on": ["Biographer","Summarizer","RelatedTopics"],
     }
 ]
 
 
 TASK_GENERATOR = """
-You are an AI Agent creator tasked with generating a list of AI Agents based on a given set of tasks. \
-    Your goal is to create a JSON array of Agent objects, each designed to accomplish a specific task within a larger objective.
+You are an AI Agent creator tasked with generating a list of AI Agents based on a given set of tasks.
+Your goal is to create a JSON array of Agent objects, each designed to accomplish a specific task within a larger objective.
 
 Available Tools:
 <tools>
@@ -52,20 +52,19 @@ Tasks to Accomplish:
 {tasks}
 </tasks>
 
-Instructions for Creating AI Agents:
+Instructions for creating AI Agents:
 
 1. Analyze the given tasks and break them down into discrete steps that can be assigned to individual AI Agents.
 
 2. For each task, create an Agent with the following properties:
    - name: A descriptive name for the Agent
-   - role: A descriptive role for the Agent
    - task: A detailed description of what the Agent needs to accomplish
-   - context: An array of Agent names whose results this Agent depends on (can be empty)
+   - depends_on: An array of Agent names whose results this Agent depends on (can be empty)
    - tools: An array of tools the Agent can use to complete its task (can be empty)
-   - description: The task formulated as a question to ask the user
 
 3. Adhere to these guidelines:
    - Create Agents based on the tasks provided
+   - Do not call any tool provided in this prompt. Just create the list of AI Agents
    - Limit Agents to those that can be completed with the available tools listed above
    - Ensure all tasks are detailed and specific
    - When multiple searches are required, use the tools multiple times
@@ -105,16 +104,16 @@ Now, please create the list of AI Agents based on the provided tasks.
 
 class AutoFlow(Flow):
 
-    def run(self, user_prompt: str, output_file: Optional[str] = None) -> str:
+    def run(self, query: str) -> str:
 
         tools = [ tool.name for tool in self.tools ]
         tools = ", ".join(tools)
 
-        task_prompt = TASK_GENERATOR.format(tasks=user_prompt, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
-        agents_json = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
-        agents_json = parse_json_markdown(agents_json)
+        task_prompt = TASK_GENERATOR.format(tasks=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
+        response = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
+        response = parse_json_markdown(response.choices[0].message.content)
         
-        for agent_json in agents_json:
+        for agent_json in response:
 
             tools = []
             if agent_json.get("tools"):
@@ -123,15 +122,19 @@ class AutoFlow(Flow):
                         tools.append(t)
 
             agent = Agent(
-                llm=self.llm,
                 name=agent_json.get("name"),
-                role=agent_json.get("role"),
+                llm=self.llm,
                 tools=tools,
-                context_vars=agent_json.get("context"),
             )
 
-            self.agents.append(agent)
+            self.steps.append(
+                { 
+                    "agent": agent,
+                    "task": agent_json.get("task"),
+                    "depends_on": agent_json.get("depends_on") 
+                }
+            )
 
         self.describe()
 
-        return super().run(user_prompt=user_prompt, output_file=output_file)
+        return super().run(query)

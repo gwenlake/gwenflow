@@ -1,61 +1,64 @@
 
 import uuid
 import json
-import inspect
 import asyncio
-import mem0
+# import mem0
 
-from typing import List, Union, Optional, Any, Dict, Iterator
-from collections import defaultdict
+from typing import List, Union, Optional, Any, Dict, Iterator, Literal
 from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
 from datetime import datetime
 
-from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Message, ChatCompletionChunk
+from gwenflow.llms import ChatBase, ChatOpenAI, ModelResponse
+from gwenflow.types import Message
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
+from gwenflow.knowledge import Knowledge
 from gwenflow.agents.types import AgentResponse
-from gwenflow.agents.prompts import PROMPT_TOOLS, PROMPT_STEPS, PROMPT_GUIDELINES, PROMPT_JSON_SCHEMA, PROMPT_TOOLS_REACT_GUIDELINES, PROMPT_TASK, PROMPT_REASONING_STEPS_TOOLS, PROMPT_PREVIOUS_INTERACTIONS
+from gwenflow.agents.prompts import PROMPT_ROLE, PROMPT_STEPS, PROMPT_INSTRUCTIONS, PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.utils import logger
 from gwenflow.types import Message
 
 
 class Agent(BaseModel):
 
-    # --- Agent Settings
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
-    name: str = Field(description="Name of the agent")
-    role: str = Field(description="Role of the agent")
-    description: Optional[str] = Field(default=None, description="Description of the agent")
+    """The unique id of the agent."""
 
-    # --- Settings for system message
-    system_prompt: Optional[str] = None
-    instructions: Optional[Union[str, List[str]]] = []
-    add_datetime_to_instructions: bool = True
-    markdown: bool = False
-    response_model: Optional[dict] = None
-    is_react: bool = False
-    system_prompt_allowed: bool = True
- 
-    # --- Agent Model and Tools
+    name: str
+    """The name of the agent."""
+
+    description: str | None = None
+    """A description of the agent, used as a handoff, so that the manager knows what it does."""
+
+    instructions: (str | List[str] | None) = None
+    """The instructions for the agent."""
+
+    response_model: Dict | None = None
+    """Response model."""
+
     llm: Optional[ChatBase] = Field(None, validate_default=True)
-    tools: List[BaseTool] = []
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    show_tool_calls: bool = False
+    """The model implementation to use when invoking the LLM."""
 
-    # --- Reasoning models
-    reasoning_steps: Optional[str] = None
+    tools: List[BaseTool] | None = None
+    """A list of tools that the agent can use."""
+    
+    tool_choice: Literal["auto", "required", "none"] | str | None = None
+    """The tool choice to use when calling the model."""
+
     reasoning_model: Optional[Any] = Field(None, validate_default=True)
+    """Reasoning model."""
 
-    # --- Task, Context and Memory
-    context: Optional[Any] = None
-    memory: Optional[ChatMemoryBuffer] = None
-    long_term_memory: Optional[mem0.Memory] = None
-    metadata: Optional[Dict[str, Any]] = None
-    # knowledge: Optional[Knowledge] = None
+    reasoning_steps: str | None = None
+    """Reasoning steps."""
 
-    # --- Team of agents
-    team: Optional[List["Agent"]] = None
+    history: ChatMemoryBuffer | None = None
+    """Historcal messages for the agent."""
+
+    knowledge: Optional[Knowledge] = None
+    """Knowledge for the agent."""
+
+    team: List["Agent"] | None = None
+    """Team of agents."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -81,313 +84,162 @@ class Agent(BaseModel):
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
-        if self.memory is None and self.llm is not None:
-             token_limit = self.llm.get_context_window_size()
-             self.memory = ChatMemoryBuffer(token_limit=token_limit)
-        if self.long_term_memory is None:
-             self.long_term_memory = mem0.Memory()
+        if self.llm:
+            if self.history is None:
+                token_limit = self.llm.get_context_window_size()
+                self.history = ChatMemoryBuffer(token_limit=token_limit)
+            if self.response_model:
+                self.llm.response_format = {"type": "json_object"}
+            if self.tools:
+                self.llm.tools = self.tools
+                self.llm.tool_choice = self.tool_choice
+        # if self.short_term_memory is None:
+        #      self.short_term_memory = mem0.Memory()
         return self
+
+    def _format_context(self, context: Optional[Union[str, Dict[str, str]]]) -> str:
+        text = ""
+        if isinstance(context, str):
+            text = f"<context>\n{ context }\n</context>\n\n"
+        elif isinstance(context, dict):
+            for key in context.keys():
+                text += f"<{key}>\n"
+                text += context.get(key) + "\n"
+                text += f"</{key}>\n\n"
+        return text
     
-    def get_system_prompt(self, task: str, chat_history: Optional[list] = []) -> str:
-        """Return the system message for the Agent."""
+    def get_system_prompt(self, context: Optional[Union[str, Dict[str, str]]] = None, references: Optional[List[str]] = None) -> str:
+        """Get the system prompt for the agent."""
 
-        prompt = ""
-
-        if self.system_prompt is not None:
-            prompt = self.system_prompt.strip()
-            prompt += "\n"
-        else:
-            prompt += f"You are an AI agent named '{self.name}'."
-            if self.role:
-                prompt += f" {self.role.strip('.')}."
-            if self.description:
-                prompt += f" {self.description.strip('.')}."
-            prompt += "\n\n"
-            if self.add_datetime_to_instructions:
-                prompt += f"The current date and time is: { datetime.now() }\n"
-
-        # Task
-        prompt += PROMPT_TASK.format(task=task)
-
-        # tools: TODO REMOVE ?
-        if self.tools and self.is_react:
-            tools = self.get_tools_text_schema()
-            prompt += PROMPT_TOOLS.format(tools=tools).strip()
-            prompt += PROMPT_TOOLS_REACT_GUIDELINES
+        prompt = PROMPT_ROLE.format(name=self.name, date=datetime.now()).strip()
+        prompt += "\n\n"
 
         # instructions
-        guidelines = []        
+        instructions = []
         if self.response_model:
-            guidelines.append("Use JSON to format your answers.")
-        elif self.markdown:
-            guidelines.append("Use markdown to format your answers.")
-        if self.tools is not None:
-            guidelines.append("Only use the tools you are provided.")
-        if self.context is not None:
-            guidelines.append("Always prefer information from the provided context over your own knowledge.")
+            instructions.append("Use JSON to format your answers.")    
+        if context is not None:
+            instructions.append("Always prefer information from the provided context over your own knowledge.")
+        if self.instructions:
+            if isinstance(self.instructions, str):
+                instructions += [self.instructions]
+            elif isinstance(self.instructions, list):
+                instructions += self.instructions
+        if len(instructions) > 0:
+            instructions = "\n".join([f"- {i}" for i in instructions])
+            prompt += PROMPT_INSTRUCTIONS.format(instructions=instructions).strip()
+            prompt += "\n\n"
 
-        if len(self.instructions) > 0:
-            guidelines += self.instructions
-
-        if len(guidelines) > 0:
-            guidelines = "\n".join([f"- {g}" for g in guidelines])
-            prompt += PROMPT_GUIDELINES.format(guidelines=guidelines)
-            prompt += "\n"
-
+        # reasoning steps
         if self.reasoning_steps:
-            prompt += PROMPT_STEPS.format(reasoning_steps=self.reasoning_steps)
-            prompt += "\n"
+            prompt += PROMPT_STEPS.format(reasoning_steps=self.reasoning_steps).strip()
+            prompt += "\n\n"
 
+        # response model
         if self.response_model:
-            prompts += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4))
-            prompt += "\n"
+            prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
+            prompt += "\n\n"
 
-        if self.context:
-            prompt += self.get_context()
+        # references
+        if references:
+            prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
+            prompt += "\n\n"
 
-        if chat_history:
-            self.long_term_memory.add([m.to_dict() for m in chat_history], user_id=str(self.id))
-            relevant_memories = self.long_term_memory.search(query=task, user_id=str(self.id))
-            relevant_memories = "\n".join([f"- {m["memory"]}" for m in relevant_memories["results"]])
-            prompt += PROMPT_PREVIOUS_INTERACTIONS.format(previous_interactions=relevant_memories)
+        # context
+        if context is not None:
+            prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
+            prompt += "\n\n"
 
         return prompt.strip()
-
-
-    def get_context(self):
-        prompt  = "Use the following information if it helps:\n\n"
-
-        if isinstance(self.context, str):
-            prompt += "<context>\n"
-            prompt += self.context + "\n"
-            prompt += "</context>\n\n"
-
-        elif isinstance(self.context, dict):
-            for key in self.context.keys():
-                prompt += f"<{key}>\n"
-                prompt += self.context.get(key) + "\n"
-                prompt += f"</{key}>\n\n"
-
-        return prompt
-
-    # def get_user_message(self, task: Optional[str] = None) -> Message:
-    #     """Return the user message for the Agent."""
-    #     prompt = PROMPT_TASK.format(task=task)
-    #     return Message(role="user", content=prompt)
-
-    def get_tools_openai_schema(self):
-        return [tool.openai_schema for tool in self.tools]
-
-    def get_tools_text_schema(self) -> str:
-        descriptions = []
-        for tool in self.tools:
-            sig = inspect.signature(tool._run)
-            description = f"{tool.name}{sig} - {tool.description}"
-            descriptions.append(description)
-        return "\n".join(descriptions)
-
-    def get_tools_map(self):
-        return {tool.name: tool for tool in self.tools}
-
-    def get_tools_names(self):
-        return [tool.name for tool in self.tools]
-
-    def handle_tool_call(self, tool_call) -> Message:
-   
-        if not isinstance(tool_call, dict):
-            tool_call = tool_call.model_dump()
-            
-        tool_map  = self.get_tools_map()
-        tool_name = tool_call["function"]["name"]
-                    
-        if tool_name not in tool_map.keys():
-            logger.error(f"Tool {tool_name} does not exist")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call["id"],
-                tool_name=tool_name,
-                content=f"Tool {tool_name} does not exist",
-            )
-
-        try:
-            function_args = json.loads(tool_call["function"]["arguments"])
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse tool arguments: {e}")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call["id"],
-                tool_name=tool_name,
-                content=f"Failed to parse tool arguments: {e}",
-            )
-
-        try:
-            logger.debug(f"Tool call: {tool_name}({function_args})")
-            observation = tool_map[tool_name].run(**function_args)
-            if observation:
-                return Message(
-                    role="tool",
-                    tool_call_id=tool_call["id"],
-                    tool_name=tool_name,
-                    content=f"Observation: {observation}",
-                )
-        except Exception as e:
-            logger.error(f"Error executing tool '{tool_name}': {e}")
-
-        return Message(
-            role="tool",
-            tool_call_id=tool_call["id"],
-            tool_name=tool_name,
-            content=f"Error executing tool '{tool_name}'",
-        )
-
-
-    def handle_tool_calls(self, tool_calls: list) -> List:
-        
-        tool_map = self.get_tools_map()
-        if not tool_calls or not tool_map:
-            return []
-        
-        messages = []
-        for tool_call in tool_calls:
-            observation = self.handle_tool_call(tool_call)
-            if observation:
-                messages.append(observation)
-            
-        return messages
-
-    async def ahandle_tool_calls(self, tool_calls: list) -> List:
-        
-        tool_map = self.get_tools_map()
-        if not tool_calls or not tool_map:
-            return []
-
-        tasks = []
-        for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
-            tasks.append(task)
-
-        messages = []
-        results = await asyncio.gather(*tasks)
-        for observation in results:
-            if observation:
-                messages.append(observation)
-
-        return messages
-
-    def _get_thinking(self, tool_calls):
-        thinking = []
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                tool_call = tool_call.model_dump()
-            arguments = json.loads(tool_call["function"]["arguments"])
-            arguments = ", ".join(arguments.values())
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
-        if len(thinking)>0:
-            return "\n".join(thinking)
-        return None
     
-    def invoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
+    # def reason(self, task: str):
 
-        self.llm.tools = self.tools
-        self.llm.tool_choice = self.tool_choice
-
-        self.llm.response_format = None
-        if self.response_model:
-            self.llm.response_format = {"type": "json_object"}
-
-        if stream:
-            return self.llm.stream(messages=messages)
+    #     if self.reasoning_model is None:
+    #         return None
         
-        return self.llm.invoke(messages=messages)
-
-    async def ainvoke(self, messages: list, stream: bool = False) ->  Union[Any, Iterator[Any]]:
-
-        self.llm.tools = self.tools
-        self.llm.tool_choice = self.tool_choice
-
-        self.llm.response_format = None
-        if self.response_model:
-            self.llm.response_format = {"type": "json_object"}
-
-        if stream:
-            return self.llm.astream(messages=messages)
+    #     user_prompt = ""
         
-        return self.llm.ainvoke(messages=messages)
+    #     if self.tools:
+    #         tools = self.get_tools_text_schema()
+    #         user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
 
+    #     user_prompt += PROMPT_TASK.format(task=task).strip()
+    #     user_prompt += "\n\nPlease help me with some thoughts, steps and guidelines to answer accurately and precisely to this task."
+
+    #     params = {
+    #         "messages": [{"role": "user", "content": user_prompt}],
+    #     }
+
+    #     logger.debug("Reasoning.")
+    #     response = self.reasoning_model.invoke(**params)
+
+    #     # only keep text outside <think>
+    #     reasoning_content = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+    #     if not reasoning_content:
+    #         return None
+        
+    #     reasoning_content = reasoning_content.strip()
+        
+    #     logger.debug("Thought: " + reasoning_content)
+
+    #     return reasoning_content
+    
     def _run(
         self,
-        task: str,
+        messages: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
         stream: Optional[bool] = False,
-        chat_history: Optional[list] = [],
     ) ->  Iterator[AgentResponse]:
 
-        # add reasoning steps
-        if self.reasoning_model:
-            tools = self.get_tools_text_schema()
-            completion = self.invoke(PROMPT_REASONING_STEPS_TOOLS.format(task=task, tools=tools))
-            if len(completion.choices)>0:
-                self.reasoning_steps = completion.choices[0].message.content
+        messages = self.llm._cast_messages(messages)
 
-        # prepare memory (system+history+task)
-        self.memory.system_prompt = self.get_system_prompt(task=task, chat_history=chat_history)
-
-        # init agent response
+        # init agent and model response
         agent_response = AgentResponse()
+        model_response = ModelResponse()
 
-        # global loop
-        while True:
+        # add reasoning steps
+        # if self.reasoning_model:
+        #     tools = self.get_tools_text_schema()
+        #     completion = self.invoke(PROMPT_REASONING_STEPS_TOOLS.format(task=task, tools=tools))
+        #     if len(completion.choices)>0:
+        #         self.reasoning_steps = completion.choices[0].message.content
 
-            messages_for_model = self.memory.get()
+        # search for references
+        references = None
+        if self.knowledge:
+            query = messages[-1].content
+            references = self.knowledge.search(query=query, limit=20)
+            if len(references)>0:
+                references = [r.content for r in references]
 
-            if stream:
+        # history
+        self.history.system_prompt = self.get_system_prompt(context=context, references=references)
+        self.history.add_messages(messages)
 
-                message = Message(role="assistant", content="", delta="", tool_calls=[])
-                for chunk in self.invoke(messages=messages_for_model, stream=True):
+        # format messages
+        messages_for_model = [m.to_dict() for m in self.history.get()]
 
-                    chunk = ChatCompletionChunk(**chunk.model_dump())
+        # call llm and tool
+        if stream:
+            for chunk in self.llm.response_stream(messages=messages_for_model):
+                agent_response.content = None
+                agent_response.thinking = None
+                if chunk.content:
+                    model_response.content += chunk.content
+                    agent_response.content  = chunk.content
+                if chunk.thinking:
+                    model_response.thinking += chunk.thinking
+                    agent_response.thinking  = chunk.thinking
+                yield agent_response
+        
+        else:
+            model_response = self.llm.response(messages=messages_for_model)
+            agent_response.content = model_response.content
 
-                    agent_response.delta = None
-                    agent_response.thinking = None
+        # add messages to the current message stack
+        self.history.add_message(Message(role="assistant", content=model_response.content))
 
-                    if len(chunk.choices) > 0:
-                        if chunk.choices[0].delta.content:
-                            agent_response.delta = chunk.choices[0].delta.content
-                            message.content     += chunk.choices[0].delta.content
-                            yield agent_response
-                        elif chunk.choices[0].delta.tool_calls:
-                            if chunk.choices[0].delta.tool_calls[0].id:
-                                message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-                            if chunk.choices[0].delta.tool_calls[0].function.arguments:
-                                current_tool = len(message.tool_calls) - 1
-                                message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
-            
-            else:
-                completion = self.invoke(messages=messages_for_model)
-                message = Message(**completion.choices[0].message.model_dump())
-                message.tool_calls = completion.choices[0].message.model_dump()["tool_calls"]
-
-            # add messages to the current message stack
-            self.memory.add_message(message)
-
-            if not message.tool_calls:
-                logger.debug("Task done.")
-                agent_response.content = message.content
-                break
-
-            # thinking
-            try:
-                agent_response.thinking = self._get_thinking(message.tool_calls)
-            except:
-                pass
-            if stream:
-                if agent_response.thinking:
-                    yield agent_response
-
-            # handle tool calls and switching agents
-            tool_messages = self.handle_tool_calls(message.tool_calls)
-            if len(tool_messages)>0:
-                self.memory.add_messages(tool_messages)
-
+        # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
@@ -398,9 +250,9 @@ class Agent(BaseModel):
 
     def run(
         self,
-        task: str,
+        messages: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
         stream: Optional[bool] = False,
-        chat_history: Optional[list] = [],
     ) ->  Union[AgentResponse, Iterator[AgentResponse]]:
 
         logger.debug("")
@@ -410,8 +262,8 @@ class Agent(BaseModel):
         logger.debug("")
 
         if stream:
-            response = self._run(task=task, stream=True, chat_history=chat_history)
+            response = self._run(messages=messages, context=context, stream=True)
             return response
     
-        response = self._run(task=task, stream=False, chat_history=chat_history)
+        response = self._run(messages=messages, context=context, stream=False)
         return next(response)

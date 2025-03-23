@@ -7,8 +7,8 @@ from time import time
 
 class ModelResponse(BaseModel):
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
-    content: Optional[str] = None
-    thinking: Optional[list] = []
+    content: Optional[str] = ""
+    thinking: Optional[str] = ""
     finish_reason: Optional[str] = None
     created_at: int = Field(default_factory=lambda: int(time()))
 

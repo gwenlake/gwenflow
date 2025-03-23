@@ -7,9 +7,9 @@ import uuid
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from gwenflow.types.document import Document
-from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.embeddings import GwenlakeEmbeddings
 from gwenflow.vector_stores.base import VectorStoreBase
-from gwenflow.vector_stores.qdrant import Qdrant
+from gwenflow.vector_stores.lancedb import LanceDB
 from gwenflow.utils import logger
 
 
@@ -18,23 +18,24 @@ MIN_CONTENT_LENGTH = 20
 
 class Knowledge(BaseModel):
 
-    vector_db: Optional[VectorStoreBase] = Field(None, validate_default=True)
+    name: str
+
+    uri: Optional[str] = None
+    vector_db: Optional[VectorStoreBase] = None
     chunk_size: Optional[int] = 500
-    chunk_overlap: Optional[int] = 0
+    chunk_overlap: Optional[int] = 100
 
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
-
-    
-    @field_validator("vector_db", mode="before")
-    @classmethod
-    def set_vector_db(cls, v: Optional[VectorStoreBase]) -> VectorStoreBase:
-        if not v:
+   
+    @model_validator(mode="after")
+    def model_valid(self) -> Any:
+        if not self.vector_db:
             try:
-                collection_name = uuid.uuid4().hex
-                v = Qdrant(collection=collection_name, embeddings=GwenlakeEmbeddings(model="multilingual-e5-base"), on_disk=False)
+                uri = self.uri or f"./{ self.name }"
+                self.vector_db = LanceDB(uri=uri, embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"))
             except Exception as e:
                 logger.error(f"Error creating knowledge: {e}")
-        return v
+        return self
     
     def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
         try:

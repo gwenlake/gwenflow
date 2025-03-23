@@ -9,10 +9,12 @@ from gwenflow.tools.yahoofinance import (
     YahooFinanceScreen,
 )
 from gwenflow.tools.tavily import TavilyWebSearchTool
+from gwenflow.tools.knowledge import KnowledgeTool
 
 __all__ = [
     "BaseTool",
     "Tool",
+    "KnowledgeTool",
     "WikipediaTool",
     "WebsiteReaderTool",
     "PDFTool",

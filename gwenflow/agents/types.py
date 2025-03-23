@@ -1,6 +1,6 @@
 
 import uuid
-from typing import List, Optional, Any
+from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field, field_validator, UUID4
 from time import time
 
@@ -8,8 +8,7 @@ from time import time
 class AgentResponse(BaseModel):
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
     content: Optional[str] = ""
-    delta: Optional[str] = None
-    thinking: Optional[str] = None
+    thinking: Optional[str] = ""
     created_at: int = Field(default_factory=lambda: int(time()))
     finish_reason: Optional[str] = None
 

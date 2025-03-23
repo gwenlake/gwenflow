@@ -123,7 +123,7 @@ class LanceDB(VectorStoreBase):
                     id=item["id"],
                     content=payload.pop("content"),
                     metadata=payload,
-                    score=1-item["_distance"],
+                    score=item["_distance"],
                 )
             )
     

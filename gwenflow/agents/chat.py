@@ -75,19 +75,9 @@ class ChatAgent(BaseModel):
         llm = v or ChatOpenAI(model="gpt-4o-mini")
         return llm
     
-    def _cast_messages(self, messages: Union[str, List[Message], List[Dict[str, str]]],) -> List[Message]:
-        if isinstance(messages, str):
-            _messages = [Message(role="user", content=messages)]
-        else:
-            _messages = messages
-            for i, message in enumerate(_messages):
-                if not isinstance(message, Message):
-                    _messages[i] = Message(**message)
-        return _messages
-    
     def run(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
 
-        messages = self._cast_messages(messages)
+        messages = self.llm._cast_messages(messages)
 
         conversation = []
         for message in messages:
