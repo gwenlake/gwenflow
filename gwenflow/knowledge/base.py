@@ -8,6 +8,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from gwenflow.types.document import Document
 from gwenflow.embeddings import GwenlakeEmbeddings
+from gwenflow.reranker import GwenlakeReranker
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.vector_stores.lancedb import LanceDB
 from gwenflow.utils import logger
@@ -32,7 +33,9 @@ class Knowledge(BaseModel):
         if not self.vector_db:
             try:
                 uri = self.uri or f"./{ self.name }"
-                self.vector_db = LanceDB(uri=uri, embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"))
+                self.vector_db = LanceDB(uri=uri,
+                                         embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"),
+                                         reranker=GwenlakeReranker(model="BAAI/bge-reranker-v2-m3"))
             except Exception as e:
                 logger.error(f"Error creating knowledge: {e}")
         return self
@@ -41,7 +44,12 @@ class Knowledge(BaseModel):
         try:
             if not self.vector_db:
                 return []
-            return self.vector_db.search(query, limit=limit, filters=filters)
+            documents = self.vector_db.search(query, limit=10*limit, filters=filters)
+            documents.sort(
+                key=lambda x: x.score if x.score is not None else float("-inf"),
+                reverse=True,
+            )
+            return documents[:limit]
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
         return []

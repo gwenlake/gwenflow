@@ -208,7 +208,7 @@ class Agent(BaseModel):
         references = None
         if self.knowledge:
             query = messages[-1].content
-            references = self.knowledge.search(query=query, limit=20)
+            references = self.knowledge.search(query=query, limit=10)
             if len(references)>0:
                 references = [r.content for r in references]
 
