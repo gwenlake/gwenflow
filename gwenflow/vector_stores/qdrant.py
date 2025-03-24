@@ -173,7 +173,7 @@ class Qdrant(VectorStoreBase):
         Args:
             documents (list): List of documents to insert.
         """
-        logger.info(f"Embedding {len(documents)}")
+        logger.info(f"Embedding {len(documents)} documents")
         _embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
         points = []

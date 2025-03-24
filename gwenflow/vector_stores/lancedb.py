@@ -78,7 +78,7 @@ class LanceDB(VectorStoreBase):
         return []
 
     def insert(self, documents: list[Document]):
-        logger.info(f"Embedding {len(documents)}")
+        logger.info(f"Embedding {len(documents)} documents")
         embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
         data = []
