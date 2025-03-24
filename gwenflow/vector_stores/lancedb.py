@@ -78,21 +78,20 @@ class LanceDB(VectorStoreBase):
         return []
 
     def insert(self, documents: list[Document]):
+        logger.info(f"Embedding {len(documents)}")
+        embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
-
         data = []
-        for document in documents:
-            text_for_id = document.id
-            if text_for_id is None:
-                text_for_id = document.content
-            _id = hashlib.md5(text_for_id.encode(), usedforsecurity=False).hexdigest()
-            _embeddings = self.embeddings.embed_documents([document.content])[0]
+        for document, embedding in zip(documents, embeddings):
+            if document.id is None:
+                document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
+            _id = document.id
             _payload = document.metadata
             _payload["content"] = document.content
             data.append(
                 dict(
                     id=_id,
-                    vector=_embeddings,
+                    vector=embedding,
                     payload=json.dumps(_payload),
                 )
             )
