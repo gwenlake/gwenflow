@@ -5,18 +5,23 @@ from pydantic import BaseModel, model_validator, field_validator, Field
 import yaml
 
 from gwenflow.agents import Agent
+from gwenflow.llms import ChatBase
 from gwenflow.tools import Tool, BaseTool
 from gwenflow.utils import logger
 
 
 MAX_TRIALS=5
 
+class FlowStep(BaseModel):
+    agent: Agent
+    task: str | None = None
+    depends_on: List[str] = []
+    final_step: bool = False
 
 class Flow(BaseModel):
-
-    agents: List[Agent] = []
+    steps: Optional[list] = []
     manager: Optional[Agent] = None
-    llm: Any = None
+    llm: ChatBase
     tools: List[BaseTool] = []
 
     flow_type: str = "sequence"
@@ -26,9 +31,9 @@ class Flow(BaseModel):
         if self.manager is None:
             self.manager = Agent(
                 name="Team Manager",
-                role="Manage the team to complete the task in the best way possible.",
                 instructions= [
                     "You are the leader of a team of AI Agents.",
+                    "Manage the team to complete the task in the best way possible.",
                     "Even though you don't perform tasks by yourself, you have a lot of experience in the field, which allows you to properly evaluate the work of your team members.",
                     "You must always validate the output of the other Agents and you can re-assign the task if you are not satisfied with the result.",
                 ],
@@ -55,17 +60,16 @@ class Flow(BaseModel):
                                 if t.name in _agent_tools:
                                     _tools.append(t)
 
-                        context_vars = []
-                        if _values.get("context"):
-                            context_vars = _values.get("context")                            
+                        depends_on = None
+                        if _values.get("depends_on"):
+                            depends_on = _values.get("depends_on")                            
 
                         agent = Agent(
                             name=name,
-                            role=_values.get("role"),
                             description=_values.get("description"),
                             response_model=_values.get("response_model"),
                             tools=_tools,
-                            context_vars=context_vars,
+                            depends_on=depends_on,
                             llm=llm,
                         )
                         agents.append(agent)
@@ -75,46 +79,49 @@ class Flow(BaseModel):
         raise NotImplementedError(f"from_yaml not implemented for {cls.__name__}")
     
     def describe(self):
-        for agent in self.agents:
+        for step in self.steps:
+            step = FlowStep(**step)
             print("---")
-            print(f"Agent  : {agent.name}")
-            if agent.role:
-                print(f"Role   : {agent.role}")
-            if agent.context_vars:
-                print(f"Context:", ",".join(agent.context_vars))
-            if agent.tools:
-                available_tools = [ tool.name for tool in agent.tools ]
+            print(f"Agent  : {step.agent.name}")
+            if step.depends_on:
+                print(f"Depends on:", ",".join(step.depends_on))
+            if step.agent.tools:
+                available_tools = [ tool.name for tool in step.agent.tools ]
                 print(f"Tools  :", ",".join(available_tools))
 
 
-    def run(self, user_prompt: str, output_file: Optional[str] = None) -> str:
+    def run(self, query: str) -> str:
 
         outputs = {}
 
-        while len(outputs) < len(self.agents):
+        while len(outputs) < len(self.steps):
 
-            for agent in self.agents:
+            for step in self.steps:
+
+                step = FlowStep(**step)
 
                 # check if already run
-                if agent.name in outputs.keys():
+                if step.agent.name in outputs.keys():
                     continue
 
                 # check agent dependancies
-                if any(outputs.get(var) is None for var in agent.context_vars):
-                    continue
-
-                # prepare context and run
-                context = None
-                if agent.context_vars:
-                    context = { f"{var}": outputs[var].content for var in agent.context_vars }
+                if step.depends_on:
+                    context = None
+                    if any(outputs.get(agent_name) is None for agent_name in step.depends_on):
+                        continue
+                    if step.depends_on:
+                        context = { f"{agent_name}": outputs[agent_name].content for agent_name in step.depends_on }            
+                    if step.task:
+                        outputs[step.agent.name] = step.agent.run(step.task, context=context)
+                    else:
+                        outputs[step.agent.name] = step.agent.run(query, context=context)
                 
-                task = None
-                if context is None:
-                    task = user_prompt # always keep query if no context (first agents)
-
-                outputs[agent.name] = agent.run(task=task, context=context, output_file=output_file)
-
-                logger.debug(f"# {agent.name}\n{ outputs[agent.name].content }", extra={"markup": True})                
+                # no dependency
+                else:
+                    if step.task:
+                        outputs[step.agent.name] = step.agent.run(step.task)
+                    else:
+                        outputs[step.agent.name] = step.agent.run(query)
 
         return outputs
     

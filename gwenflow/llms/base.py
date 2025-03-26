@@ -65,6 +65,22 @@ class ChatBase(BaseModel, ABC):
     async def astream(self, *args, **kwargs) -> Any:
         pass
 
+    @abstractmethod
+    def response(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    async def aresponse(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    def response_stream(self, *args, **kwargs) -> Any:
+        pass
+ 
+    @abstractmethod
+    async def aresponse_stream(self, *args, **kwargs) -> Any:
+        pass
+
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
@@ -82,7 +98,7 @@ class ChatBase(BaseModel, ABC):
     def get_tool_names(self):
         return [tool.name for tool in self.tools]
 
-    def get_tools_map(self):
+    def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
 
     def handle_tool_call(self, tool_call) -> Message:
@@ -90,7 +106,7 @@ class ChatBase(BaseModel, ABC):
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
     
-        tool_map  = self.get_tools_map()
+        tool_map  = self.get_tool_map()
         tool_name = tool_call.function.name
                     
         if tool_name not in tool_map.keys():
@@ -115,13 +131,13 @@ class ChatBase(BaseModel, ABC):
 
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
-            observation = tool_map[tool_name].run(**function_args)
-            if observation:
+            result = tool_map[tool_name].run(**function_args)
+            if result:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
                     tool_name=tool_name,
-                    content=f"Observation: {observation}",
+                    content=str(result),
                 )
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
@@ -136,7 +152,7 @@ class ChatBase(BaseModel, ABC):
 
     def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
-        tool_map = self.get_tools_map()
+        tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
             return []
         
@@ -150,7 +166,7 @@ class ChatBase(BaseModel, ABC):
 
     async def ahandle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
-        tool_map = self.get_tools_map()
+        tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
             return []
 
