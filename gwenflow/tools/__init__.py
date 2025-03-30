@@ -1,4 +1,5 @@
-from gwenflow.tools.base import BaseTool, FunctionTool
+from gwenflow.tools.base import BaseTool
+from gwenflow.tools.function import FunctionTool
 from gwenflow.tools.duckduckgo import DuckDuckGoSearchTool, DuckDuckGoNewsTool
 from gwenflow.tools.pdf import PDFTool
 from gwenflow.tools.website import WebsiteReaderTool

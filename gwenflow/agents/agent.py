@@ -1,7 +1,7 @@
 
 import uuid
 import json
-import asyncio
+# import asyncio
 # import mem0
 
 from typing import List, Union, Optional, Any, Dict, Iterator, Literal
@@ -41,9 +41,12 @@ class Agent(BaseModel):
     llm: Optional[ChatBase] = Field(None, validate_default=True)
     """The model implementation to use when invoking the LLM."""
 
-    tools: List[BaseTool] | None = None
+    tools: List[BaseTool] = Field(default_factory=list)
     """A list of tools that the agent can use."""
-    
+
+    # mcp_servers: List[MCPServer] = Field(default_factory=list)
+    """A list of MCP servers that the agent can use."""
+
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
 
