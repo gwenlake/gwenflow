@@ -1,5 +1,5 @@
 from typing import Optional, Union, Any, List, Dict
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
 
 import asyncio
@@ -43,8 +43,14 @@ LLM_CONTEXT_WINDOW_SIZES = {
 class ChatBase(BaseModel, ABC):
  
     model: str
+    """The model to use when invoking the LLM."""
+
     system_prompt: Optional[str] = None
-    tools: List[BaseTool] = []
+    """The system prompt to use when invoking the LLM."""
+
+    tools: List[BaseTool] = Field(default_factory=list)
+    """A list of tools that the LLM can use."""
+
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -158,9 +164,9 @@ class ChatBase(BaseModel, ABC):
         
         messages = []
         for tool_call in tool_calls:
-            observation = self.handle_tool_call(tool_call)
-            if observation:
-                messages.append(observation.to_dict())
+            tool_message = self.handle_tool_call(tool_call)
+            if tool_message:
+                messages.append(tool_message.to_dict())
             
         return messages
 
@@ -176,10 +182,9 @@ class ChatBase(BaseModel, ABC):
             tasks.append(task)
 
         messages = []
-
         results = await asyncio.gather(*tasks)
-        for observation in results:
-            if observation:
-                messages.append(observation)
+        for tool_message in results:
+            if tool_message:
+                messages.append(tool_message)
 
         return messages
