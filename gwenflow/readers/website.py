@@ -6,11 +6,11 @@ from urllib.parse import urljoin, urlparse
 
 from typing import Set, Dict, List, Tuple
 
+from gwenflow.logger import logger
 from gwenflow.readers import PDFReader
 from gwenflow.readers.base import Reader
 from gwenflow.types import Document
 from gwenflow.readers.base import Reader
-from gwenflow.utils import logger
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401

@@ -6,8 +6,7 @@ from opensearchpy import OpenSearch, helpers, AWSV4SignerAuth, RequestsHttpConne
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-
-logger = logging.getLogger(__name__)
+from gwenflow.logger import logger
 
 
 class OpenSearchDocumentStore():

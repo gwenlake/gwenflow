@@ -4,10 +4,10 @@ from pydantic import BaseModel, model_validator, field_validator, Field
 
 import yaml
 
+from gwenflow.logger import logger
 from gwenflow.agents import Agent
 from gwenflow.llms import ChatBase
-from gwenflow.tools import Tool, BaseTool
-from gwenflow.utils import logger
+from gwenflow.tools import BaseTool
 
 
 MAX_TRIALS=5
@@ -43,7 +43,7 @@ class Flow(BaseModel):
         return self
         
     @classmethod
-    def from_yaml(cls, file: str, tools: List[Tool], llm: Optional[Any] = None) -> "Flow":
+    def from_yaml(cls, file: str, tools: List[BaseTool], llm: Optional[Any] = None) -> "Flow":
         if cls == Flow:
             with open(file) as stream:
                 try:

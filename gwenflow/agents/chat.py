@@ -6,17 +6,14 @@ import asyncio
 
 from typing import List, Union, Optional, Any, Dict, Iterator
 from collections import defaultdict
-from pydantic import BaseModel, model_validator, field_validator, Field, UUID4
+from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
 from datetime import datetime
 
+from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Message, ChatCompletionChunk
-from gwenflow.tools import BaseTool
-from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.agents import Agent
-from gwenflow.agents.types import AgentResponse
-from gwenflow.utils import logger
 from gwenflow.types import Message
+from gwenflow.agents import Agent
+
 
 
 PROMPT_REFORMULATE = """\
@@ -69,6 +66,8 @@ class ChatAgent(BaseModel):
     llm: Optional[ChatBase] = Field(None, validate_default=True)
     agent: Agent
 
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
     @field_validator("llm", mode="before")
     @classmethod
     def set_llm(cls, v: Optional[Any]) -> Any:
@@ -88,8 +87,7 @@ class ChatAgent(BaseModel):
         self.llm.response_format = {"type": "json_object"}
         response = self.llm.invoke(prompt)
         response = response.choices[0].message.content
-        print("Task:", response["task"])
 
-        # if response["agentic"] is False:
+        logger.debug("Task: " + response["task"])
 
         return self.agent.run(response["task"])

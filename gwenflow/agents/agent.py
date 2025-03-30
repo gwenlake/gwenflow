@@ -8,6 +8,7 @@ from typing import List, Union, Optional, Any, Dict, Iterator, Literal
 from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
 from datetime import datetime
 
+from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI, ModelResponse
 from gwenflow.types import Message
 from gwenflow.tools import BaseTool
@@ -15,8 +16,6 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.types import AgentResponse
 from gwenflow.agents.prompts import PROMPT_ROLE, PROMPT_STEPS, PROMPT_INSTRUCTIONS, PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
-from gwenflow.utils import logger
-from gwenflow.types import Message
 
 
 class Agent(BaseModel):
@@ -63,7 +62,7 @@ class Agent(BaseModel):
     team: List["Agent"] | None = None
     """Team of agents."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("id", mode="before")
     @classmethod
@@ -197,12 +196,12 @@ class Agent(BaseModel):
     
     def _run(
         self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
         stream: Optional[bool] = False,
     ) ->  Iterator[AgentResponse]:
 
-        messages = self.llm._cast_messages(messages)
+        messages = self.llm._cast_messages(input)
 
         # init agent and model response
         agent_response = AgentResponse()
@@ -256,7 +255,7 @@ class Agent(BaseModel):
 
     def run(
         self,
-        messages: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
         stream: Optional[bool] = False,
     ) ->  Union[AgentResponse, Iterator[AgentResponse]]:
@@ -268,8 +267,8 @@ class Agent(BaseModel):
         logger.debug("")
 
         if stream:
-            response = self._run(messages=messages, context=context, stream=True)
+            response = self._run(input=input, context=context, stream=True)
             return response
     
-        response = self._run(messages=messages, context=context, stream=False)
+        response = self._run(input=input, context=context, stream=False)
         return next(response)

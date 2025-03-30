@@ -9,7 +9,7 @@ class Embeddings(BaseModel):
     model: str
     dimensions: Optional[int] = 1536
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         raise NotImplementedError

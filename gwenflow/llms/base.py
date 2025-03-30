@@ -5,9 +5,9 @@ from abc import ABC, abstractmethod
 import asyncio
 import json
 
+from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ChatCompletionMessageToolCall
-from gwenflow.utils import logger
 
 
 LLM_CONTEXT_WINDOW_SIZES = {
@@ -47,7 +47,7 @@ class ChatBase(BaseModel, ABC):
     tools: List[BaseTool] = []
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> Any:
