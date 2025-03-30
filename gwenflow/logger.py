@@ -2,7 +2,8 @@ import logging
 
 from rich.logging import RichHandler
 
-LOGGER_NAME = "gwenflow"
+
+LOGGER_NAME = "gwenlake.gwenflow"
 
 
 def get_logger(logger_name: str) -> logging.Logger:

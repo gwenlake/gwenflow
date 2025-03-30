@@ -3,14 +3,14 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict
 
 import hashlib
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import TokenTextSplitter
 
+from gwenflow.logger import logger
 from gwenflow.types.document import Document
 from gwenflow.embeddings import GwenlakeEmbeddings
 from gwenflow.reranker import GwenlakeReranker
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.vector_stores.lancedb import LanceDB
-from gwenflow.utils import logger
 
 
 MIN_CONTENT_LENGTH = 20
@@ -59,7 +59,7 @@ class Retriever(BaseModel):
 
         try:
             docs = []
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+            text_splitter = TokenTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap, encoding_name="cl100k_base")
 
             for doc in text_splitter.create_documents([document.content]):
                 if len(doc.page_content) > MIN_CONTENT_LENGTH:

@@ -4,7 +4,11 @@ import os
 import re
 import requests
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+from gwenflow.api import api
 from gwenflow.embeddings.base import Embeddings
+from gwenflow.version import __version__
+
 
 EMBEDDING_DIMS = {
     "e5-base-v2": 768,
@@ -19,34 +23,19 @@ EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
 class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
 
-    api_base: str = "https://api.gwenlake.com/v1/embeddings"
-    api_key: Optional[SecretStr] = None
-    
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
-        values["api_key"] = os.getenv("GWENLAKE_API_KEY")
         if "model" not in values:
             values["model"] = "e5-base-v2"
         values["dimensions"] = EMBEDDING_DIMS[ values["model"] ]
         return values
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(1))
-    def _embed(self, input: List[str]) -> List[List[float]]:
-
-        api_key = cast(SecretStr, self.api_key).get_secret_value()
-
-        payload = {"input": input, "model": self.model}
-
-        # HTTP headers for authorization
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-        # send request
+    def _embed(self, input: List[str]) -> List[List[float]]:    
         try:
-            response = requests.post(self.api_base, headers=headers, json=payload)
+            payload = {"input": input, "model": self.model}
+            response = api.client.post("/v1/embeddings", json=payload)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Error raised by inference endpoint: {e}")
         
@@ -94,7 +83,6 @@ class GwenlakeEmbeddings(Embeddings):
         except:
             return None
         return embeddings
-
 
     def embed_query(self, text: str) -> List[float]:
         """Call out to Gwenlake's embedding endpoint.

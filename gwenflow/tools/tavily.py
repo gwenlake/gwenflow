@@ -2,8 +2,8 @@ import os
 from typing import Any, Optional
 from pydantic import Field, model_validator
 
+from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
-from gwenflow.utils import logger
 
 
 class TavilyBaseTool(BaseTool):

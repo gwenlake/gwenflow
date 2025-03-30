@@ -2,10 +2,10 @@ import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict
 
+from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
 from gwenflow.types.document import Document
 from gwenflow.retriever.base import Retriever
-from gwenflow.utils import logger
 
 
 class RetrieverTool(BaseTool):

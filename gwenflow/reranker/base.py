@@ -12,7 +12,7 @@ class Reranker(BaseModel):
     top_k: Optional[int] = None
     threshold: Optional[float] = None
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         raise NotImplementedError

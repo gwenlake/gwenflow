@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Type
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from typing import Any, Callable
+from pydantic import BaseModel
 
 from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -16,16 +16,27 @@ class BaseTool(BaseModel, ABC):
     description: str
     """Used to tell the model how to use the tool."""
 
-    openai_schema: dict = None
-    """OpenAI JSON schema"""
+    params_json_schema: dict[str, Any] = None
+    """The JSON schema for the tool's parameters."""
 
-    tool_type: str = "function"
-    """Tool type: function, langchain, llamaindex."""
+    tool_type: str = "base"
+    """Tool type: base, function, langchain."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not self.openai_schema:
-            self.openai_schema = function_to_json(self._run, name=self.name, description=self.description)
+        if not self.params_json_schema:
+            openai_schema = function_to_json(self._run, name=self.name, description=self.description)
+            self.params_json_schema = openai_schema["function"]["parameters"]
+
+    def to_openai(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description or "",
+                "parameters": self.params_json_schema,
+            },
+        }
 
     @abstractmethod
     def _run(self, **kwargs: Any) -> Any:
@@ -33,10 +44,9 @@ class BaseTool(BaseModel, ABC):
 
     def run(self, **kwargs: Any) -> Any:
         return self._run(**kwargs)
-    
-    
 
-class Tool(BaseTool):
+
+class FunctionTool(BaseTool):
 
     func: Callable
     """The function that will be executed when the tool is called."""
@@ -45,21 +55,22 @@ class Tool(BaseTool):
         if self.tool_type == "langchain":
             return self.func(kwargs)
         return self.func(**kwargs)
-
+    
     @classmethod
-    def from_function(cls, func: Callable) -> "Tool":
-        if cls == Tool:
+    def from_function(cls, func: Callable) -> "FunctionTool":
+        if cls == FunctionTool:
             def _make_with_name(tool_name: str) -> Callable:
-                def _make_tool(f: Callable) -> Tool:
+                def _make_tool(f: Callable) -> FunctionTool:
                     if f.__doc__ is None:
                         raise ValueError("Function must have a docstring")
                     if f.__annotations__ is None:
                         raise ValueError("Function must have type annotations")
-                    return Tool(
+                    openai_schema = function_to_json(f)
+                    return FunctionTool(
                         name=tool_name,
                         description=f.__doc__,
                         func=f,
-                        openai_schema=function_to_json(f),
+                        params_json_schema=openai_schema["function"]["parameters"],
                         tool_type="function",
                     )
                 return _make_tool
@@ -73,14 +84,15 @@ class Tool(BaseTool):
         raise ValueError(f"Invalid arguments for {cls.__name__}")
 
     @classmethod
-    def from_langchain(cls, tool: StructuredTool) -> "Tool":
-        if cls == Tool:
+    def from_langchain(cls, tool: StructuredTool) -> "FunctionTool":
+        if cls == FunctionTool:
             if tool.run is None:
                 raise ValueError("StructuredTool must have a callable 'func'")
-            return Tool(
+            openai_schema=convert_to_openai_tool(tool)
+            return FunctionTool(
                 name=tool.name,
                 description=tool.description,
-                openai_schema=convert_to_openai_tool(tool),
+                params_json_schema=openai_schema["function"]["parameters"],
                 func=tool.run,
                 tool_type="langchain",
             )

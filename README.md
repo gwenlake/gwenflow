@@ -77,32 +77,15 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 print(llm.invoke(messages=messages))
 ```
 
-## Agent
 
-```python
-import os
-from gwenflow import Agent
-
-dotenv.load_dotenv(override=True)  # load you OpenAI api key from .env
-
-# automatically use gpt-4o-mini for the Agent
-agent = Agent(
-    name="Agent",
-    role="You are a helpful agent.",
-)
-
-response = agent.run("how are you?")
-print(response.content)
-```
-
-## Agents and Tools
+## Agents
 
 ```python
 import requests
 import json
 import dotenv
 
-from gwenflow import ChatOpenAI, Agent, Tool
+from gwenflow import ChatOpenAI, Agent, FunctionTool
 
 dotenv.load_dotenv(override=True)
 
@@ -118,14 +101,16 @@ def get_exchange_rate(currency_iso: str) -> str:
     return "Currency not found"
 
 
-tool_get_exchange_rate = Tool.from_function(get_exchange_rate)
+tool_get_exchange_rate = FunctionTool.from_function(get_exchange_rate)
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
 agent = Agent(
     name="AgentFX",
-    role="Get recent exchange rates data.",
-    instructions="Answer in one sentence and if there is a date, mention this date.",
+    instructions=[
+        "Your role is to get exchange rates data.",
+        "Answer in one sentence and if there is a date, mention this date.",
+    ],
     llm=llm,
     tools=[tool_get_exchange_rate],
 )
@@ -163,6 +148,36 @@ A: As of January 10, 2025, the exchange rate for the Chinese Yuan (CNY) is appro
 
 Q: What's the exchange rate of the Tonga?
 A: As of January 10, 2025, the current exchange rate for the Tongan paʻanga (ISO code: TOP) is approximately 2.42 TOP per 1 USD, while the inverse rate is around 0.41 USD per 1 TOP. The Tongan paʻanga is denoted by the numeric code 776, and the latest exchange data indicates that the rate was last updated at 15:55:14 GMT on the same day.
+```
+
+## Agents and Langchain Tools
+
+```python
+import requests
+import json
+import dotenv
+
+from gwenflow import ChatOpenAI, Agent, FunctionTool
+
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
+dotenv.load_dotenv(override=True)
+
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=500)
+wikipedia   = WikipediaQueryRun(api_wrapper=api_wrapper)
+
+tool_wikipedia = FunctionTool.from_langchain( wikipedia )
+
+agent = Agent(
+    name="Helpful Analyst",
+    instructions=["Get some useful information about my request", "Answer as precisely as possible."],
+    llm=ChatOpenAI(model="gpt-4o-mini"),
+    tools=[tool_wikipedia],
+)
+
+response = agent.run("Summarize the wikipedia's page about Winston Churchill.")
+print(response.content)
 ```
 
 ## Contributing to Gwenflow

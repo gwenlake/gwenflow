@@ -7,7 +7,7 @@ import hashlib
 from typing import List
 from pathlib import Path
 
-from gwenflow.utils import logger
+from gwenflow.logger import logger
 from gwenflow.types import Document
 from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_uri_to_bucket_key
 
