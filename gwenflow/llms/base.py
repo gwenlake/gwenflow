@@ -107,7 +107,7 @@ class ChatBase(BaseModel, ABC):
     def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
 
-    def handle_tool_call(self, tool_call) -> Message:
+    def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
@@ -155,22 +155,11 @@ class ChatBase(BaseModel, ABC):
             content=f"Error executing tool '{tool_name}'",
         )
 
+    def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
+        results = asyncio.run(self.aexecute_tool_calls(tool_calls))
+        return results
 
-    def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
-        
-        tool_map = self.get_tool_map()
-        if not tool_calls or not tool_map:
-            return []
-        
-        messages = []
-        for tool_call in tool_calls:
-            tool_message = self.handle_tool_call(tool_call)
-            if tool_message:
-                messages.append(tool_message.to_dict())
-            
-        return messages
-
-    async def ahandle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+    async def aexecute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
         tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
@@ -178,13 +167,9 @@ class ChatBase(BaseModel, ABC):
 
         tasks = []
         for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
+            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
             tasks.append(task)
 
-        messages = []
         results = await asyncio.gather(*tasks)
-        for tool_message in results:
-            if tool_message:
-                messages.append(tool_message)
 
-        return messages
+        return results

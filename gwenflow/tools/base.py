@@ -1,3 +1,5 @@
+import asyncio
+
 from abc import ABC, abstractmethod
 from typing import Any
 from pydantic import BaseModel, model_validator
@@ -42,4 +44,7 @@ class BaseTool(BaseModel, ABC):
 
     def run(self, **kwargs: Any) -> Any:
         return self._run(**kwargs)
+
+    async def arun(self, **kwargs: Any) -> Any:
+        return asyncio.run(self._run(**kwargs))
 
