@@ -258,7 +258,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(response.choices[0].message.model_dump())
                     messages_for_model.extend(tool_messages)
@@ -293,7 +293,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(response.choices[0].message.model_dump())
                     messages_for_model.extend(tool_messages)
@@ -347,7 +347,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(message)
                     messages_for_model.extend(tool_messages)
@@ -403,7 +403,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(message)
                     messages_for_model.extend(tool_messages)
