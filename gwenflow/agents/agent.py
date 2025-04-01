@@ -149,7 +149,7 @@ class Agent(BaseModel):
                 "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem."
                 "Work through your plan step-by-step, executing any tools as needed for each step.",
                 "Do not call any tool or try to solve the problem yourself.",
-                "Your task is to provide a plan step-by-step, executing any tools as needed for each step.",
+                "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
             ],
             llm=self.reasoning_model,
             tools=self.tools
@@ -173,7 +173,6 @@ class Agent(BaseModel):
         logger.debug("Thought:\n" + reasoning_content)
 
         return response
-
 
     def run_tool(self, tool_call) -> Message:
 
