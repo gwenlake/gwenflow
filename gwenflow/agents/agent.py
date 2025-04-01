@@ -13,7 +13,7 @@ from gwenflow.types import Usage, Message, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.response import AgentResponse
+from gwenflow.agents.response import AgentResponse, AgentDataset
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 
 
@@ -233,7 +233,13 @@ class Agent(BaseModel):
         return results
 
     def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
-        results = asyncio.run(self.aexecute_tool_calls(tool_calls))
+        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))        
+        results = []
+        for tool_call in tool_calls:
+            result = self.run_tool(tool_call)
+            if result:
+                results.append(result.to_dict())
+            
         return results
 
     def _get_thinking(self, tool_calls) -> str:
@@ -241,9 +247,7 @@ class Agent(BaseModel):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 tool_call = tool_call.model_dump()
-            arguments = json.loads(tool_call["function"]["arguments"])
-            arguments = ", ".join(arguments.values())
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
+            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ tool_call["function"]["arguments"] }'""")
         if len(thinking)>0:
             return "\n".join(thinking)
         return ""
