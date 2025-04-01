@@ -14,7 +14,7 @@ from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.response import AgentResponse
-from gwenflow.agents.prompts import PROMPT_STEPS, PROMPT_REASONNING, PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
+from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 
 
 DEFAULT_MAX_TURNS = 10
@@ -51,9 +51,6 @@ class Agent(BaseModel):
 
     reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
     """Reasoning model."""
-
-    reasoning_steps: str | None = None
-    """Reasoning steps."""
 
     history: ChatMemoryBuffer | None = None
     """Historcal messages for the agent."""
@@ -117,11 +114,6 @@ class Agent(BaseModel):
 
         prompt += "\n\n"
 
-        # reasoning steps
-        if self.reasoning_steps:
-            prompt += PROMPT_STEPS.format(reasoning_steps=self.reasoning_steps).strip()
-            prompt += "\n\n"
-
         # response model
         if self.response_model:
             prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
@@ -142,33 +134,45 @@ class Agent(BaseModel):
 
         return prompt.strip()
     
-    def reason(self, task: str):
+    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
 
         if self.reasoning_model is None:
             return None
         
         logger.debug("Reasoning...")
 
-        prompt = ""
+        reasoning_agent= Agent(
+            name="ReasoningAgent",
+            instructions=[
+                "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
+                "Carefully analyze the task by spelling it out loud.",
+                "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem."
+                "Work through your plan step-by-step, executing any tools as needed for each step.",
+                "Do not call any tool or try to solve the problem yourself.",
+                "Your task is to provide a plan step-by-step, executing any tools as needed for each step.",
+            ],
+            llm=self.reasoning_model,
+            tools=self.tools
+        )
         
-        # if self.tools:
-        #     tools = self.get_tools_text_schema()
-        #     user_prompt += PROMPT_TOOLS.format(tools=tools).strip() + "\n\n"
-
-        prompt += PROMPT_REASONNING.format(task=task)
-
-        response = self.reasoning_model.invoke(messages=[{"role": "user", "content": prompt}])
+        response = reasoning_agent.run(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.choices[0].message.content, flags=re.DOTALL)
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
         
-        reasoning_content = reasoning_content.strip()
-        
+        self.history.add_message(
+            Message(
+                role="assistant",
+                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}"
+            )
+        )
+
         logger.debug("Thought:\n" + reasoning_content)
 
-        return reasoning_content
+        return response
 
 
     def run_tool(self, tool_call) -> Message:
@@ -245,7 +249,6 @@ class Agent(BaseModel):
             return "\n".join(thinking)
         return ""
     
-
     def run(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -259,14 +262,26 @@ class Agent(BaseModel):
         # init agent response
         agent_response = AgentResponse()
 
-        # add reasoning steps
-        if self.reasoning_model:
-            self.reasoning_steps = self.reason(messages[-1].content)
-
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
+        # add reasoning
+        if self.reasoning_model:
+            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            reasoning_agent_response = self.reason(messages_for_reasoning_model)
+            usage = (
+                Usage(
+                    requests=1,
+                    input_tokens=reasoning_agent_response.usage.input_tokens,
+                    output_tokens=reasoning_agent_response.usage.output_tokens,
+                    total_tokens=reasoning_agent_response.usage.total_tokens,
+                )
+                if reasoning_agent_response.usage
+                else Usage()
+            )
+            agent_response.usage.add(usage)
+    
         while True:
 
             # format messages
@@ -327,13 +342,25 @@ class Agent(BaseModel):
         # init agent response
         agent_response = AgentResponse()
 
-        # add reasoning steps
-        if self.reasoning_model:
-            self.reasoning_steps = self.reason(messages[-1].content)
-
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
+
+        # add reasoning
+        if self.reasoning_model:
+            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            reasoning_agent_response = self.reason(messages_for_reasoning_model)
+            usage = (
+                Usage(
+                    requests=1,
+                    input_tokens=reasoning_agent_response.usage.input_tokens,
+                    output_tokens=reasoning_agent_response.usage.output_tokens,
+                    total_tokens=reasoning_agent_response.usage.total_tokens,
+                )
+                if reasoning_agent_response.usage
+                else Usage()
+            )
+            agent_response.usage.add(usage)
 
         while True:
 
