@@ -148,9 +148,7 @@ class ChatOpenAI(ChatBase):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 tool_call = tool_call.model_dump()
-            arguments = json.loads(tool_call["function"]["arguments"])
-            arguments = ", ".join(arguments.values())
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
+            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ tool_call["function"]["arguments"] }'""")
         if len(thinking)>0:
             return "\n".join(thinking)
         return ""
