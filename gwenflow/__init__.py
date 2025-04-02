@@ -1,4 +1,10 @@
 from gwenflow.logger import set_log_level_to_debug
+from gwenflow.exceptions import (
+    GwenflowException,
+    MaxTurnsExceeded,
+    ModelBehaviorError,
+    UserError,
+)
 from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.agents import Agent, ChatAgent
@@ -10,6 +16,10 @@ from gwenflow.retriever import Retriever
 
 __all__ = [
     "set_log_level_to_debug",
+    "GwenflowException",
+    "MaxTurnsExceeded",
+    "ModelBehaviorError",
+    "UserError",
     "ChatGwenlake",
     "ChatOpenAI",
     "ChatAzureOpenAI",

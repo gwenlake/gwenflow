@@ -15,6 +15,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.response import AgentResponse, AgentDataset
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
+from gwenflow.tools.mcp import MCPServer, MCPUtil
 
 
 DEFAULT_MAX_TURNS = 10
@@ -43,7 +44,7 @@ class Agent(BaseModel):
     tools: List[BaseTool] = Field(default_factory=list)
     """A list of tools that the agent can use."""
 
-    # mcp_servers: List[MCPServer] = Field(default_factory=list)
+    mcp_servers: List[MCPServer] = Field(default_factory=list)
     """A list of MCP servers that the agent can use."""
 
     tool_choice: Literal["auto", "required", "none"] | str | None = None
@@ -83,8 +84,8 @@ class Agent(BaseModel):
                 self.history = ChatMemoryBuffer(token_limit=token_limit)
             if self.response_model:
                 self.llm.response_format = {"type": "json_object"}
-            if self.tools:
-                self.llm.tools = self.tools
+            if self.tools or self.mcp_servers:
+                self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
         return self
 
@@ -174,12 +175,22 @@ class Agent(BaseModel):
 
         return response
 
+    def get_all_tools(self) -> list[BaseTool]:
+        """All agent tools, including MCP tools and function tools."""
+        tools = self.tools
+        if self.mcp_servers:
+            mcp_tools = asyncio.run(MCPUtil.get_all_function_tools(self.mcp_servers))
+            print(mcp_tools)
+            # tools += MCPUtil.get_all_function_tools(self.mcp_servers)
+            tools += mcp_tools
+        return tools
+    
     def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
     
-        tool_map  = {tool.name: tool for tool in self.tools}
+        tool_map  = {tool.name: tool for tool in self.get_all_tools()}
         tool_name = tool_call.function.name
                     
         if tool_name not in tool_map.keys():
@@ -319,7 +330,7 @@ class Agent(BaseModel):
 
             # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.tools:
+            if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     self.history.add_messages(tool_messages)
@@ -423,7 +434,7 @@ class Agent(BaseModel):
 
             # handle tool calls
             tool_calls = message.tool_calls
-            if tool_calls and self.tools:
+            if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     self.history.add_messages(tool_messages)
