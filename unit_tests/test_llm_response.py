@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 import vcr
 
-from gwenflow.llms.azure_openai import ChatAzureOpenAI
+from gwenflow.llms.azure.chat import ChatAzureOpenAI
 
 TEST_ENV = os.getenv("TEST_ENV", "local")
 
