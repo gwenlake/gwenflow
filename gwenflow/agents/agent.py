@@ -452,5 +452,6 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-        loop = asyncio.new_event_loop()
-        return loop.run_until_complete(self.run(input=input, context=context))
+        # loop = asyncio.new_event_loop()
+        # return loop.run_until_complete(self.run(input=input, context=context))
+        return self.run(input=input, context=context)
