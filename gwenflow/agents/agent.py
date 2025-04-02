@@ -446,3 +446,11 @@ class Agent(BaseModel):
         agent_response.finish_reason = "stop"
 
         return agent_response
+
+    async def arun(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
+    ) -> AgentResponse:
+        loop = asyncio.new_event_loop()
+        return loop.run_until_complete(self.run(input=input, context=context))
