@@ -1,13 +1,13 @@
 from typing import Optional, Union, Any, List, Dict
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
 
 import asyncio
 import json
 
+from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ChatCompletionMessageToolCall
-from gwenflow.utils import logger
 
 
 LLM_CONTEXT_WINDOW_SIZES = {
@@ -43,11 +43,17 @@ LLM_CONTEXT_WINDOW_SIZES = {
 class ChatBase(BaseModel, ABC):
  
     model: str
+    """The model to use when invoking the LLM."""
+
     system_prompt: Optional[str] = None
-    tools: List[BaseTool] = []
+    """The system prompt to use when invoking the LLM."""
+
+    tools: List[BaseTool] = Field(default_factory=list)
+    """A list of tools that the LLM can use."""
+
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> Any:
@@ -101,7 +107,7 @@ class ChatBase(BaseModel, ABC):
     def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
 
-    def handle_tool_call(self, tool_call) -> Message:
+    def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
@@ -149,22 +155,11 @@ class ChatBase(BaseModel, ABC):
             content=f"Error executing tool '{tool_name}'",
         )
 
+    def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
+        results = asyncio.run(self.aexecute_tool_calls(tool_calls))
+        return results
 
-    def handle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
-        
-        tool_map = self.get_tool_map()
-        if not tool_calls or not tool_map:
-            return []
-        
-        messages = []
-        for tool_call in tool_calls:
-            observation = self.handle_tool_call(tool_call)
-            if observation:
-                messages.append(observation.to_dict())
-            
-        return messages
-
-    async def ahandle_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+    async def aexecute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
         
         tool_map = self.get_tool_map()
         if not tool_calls or not tool_map:
@@ -172,14 +167,9 @@ class ChatBase(BaseModel, ABC):
 
         tasks = []
         for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.handle_tool_call, tool_call))
+            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
             tasks.append(task)
 
-        messages = []
-
         results = await asyncio.gather(*tasks)
-        for observation in results:
-            if observation:
-                messages.append(observation)
 
-        return messages
+        return results

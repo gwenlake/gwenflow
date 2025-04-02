@@ -1,16 +1,14 @@
 import dirtyjson
 import json
-import logging
 import os
 from typing import Optional, Union, Any, List, Dict, Iterator
 
+from gwenflow.logger import logger
 from gwenflow.llms import ChatBase
 from gwenflow.llms.response import ModelResponse
-from gwenflow.types import Message, ChatCompletion, ChatCompletionChunk
+from gwenflow.types import Message, Usage, ChatCompletion, ChatCompletionChunk
 from gwenflow.utils import extract_json_str
 from openai import OpenAI, AsyncOpenAI
-
-logger = logging.getLogger(__name__)
 
 
 class ChatOpenAI(ChatBase):
@@ -88,8 +86,7 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools:
-            openai_schema = [tool.openai_schema for tool in self.tools]
-            model_params["tools"] = openai_schema or None
+            model_params["tools"] = [tool.to_openai() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
         
         model_params = {k: v for k, v in model_params.items() if v is not None}
@@ -97,22 +94,16 @@ class ChatOpenAI(ChatBase):
         return model_params
     
     def get_client(self) -> OpenAI:
-
         if self.client:
             return self.client
-        
         client_params = self._get_client_params()
-
         self.client = OpenAI(**client_params)
         return self.client
 
     def get_async_client(self) -> AsyncOpenAI:
-
         if self.client:
             return self.client
-        
         client_params = self._get_client_params()
-
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
@@ -157,9 +148,7 @@ class ChatOpenAI(ChatBase):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 tool_call = tool_call.model_dump()
-            arguments = json.loads(tool_call["function"]["arguments"])
-            arguments = ", ".join(arguments.values())
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ arguments }'""")
+            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ tool_call["function"]["arguments"] }'""")
         if len(thinking)>0:
             return "\n".join(thinking)
         return ""
@@ -168,7 +157,6 @@ class ChatOpenAI(ChatBase):
         messages_for_model = self._cast_messages(messages)
 
         try:
-                    
             completion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -189,7 +177,6 @@ class ChatOpenAI(ChatBase):
         messages_for_model = self._cast_messages(messages)
 
         try:
-
             completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -227,7 +214,6 @@ class ChatOpenAI(ChatBase):
         messages_for_model = self._cast_messages(messages)
 
         try:
-
             completion = await self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -249,7 +235,19 @@ class ChatOpenAI(ChatBase):
         while True:
 
             response = self.invoke(messages=messages_for_model)
-            
+
+            usage = (
+                Usage(
+                    requests=1,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                )
+                if response.usage
+                else Usage()
+            )
+            model_response.usage.add(usage)
+
             if not response.choices[0].message.tool_calls:
                 model_response.content = response.choices[0].message.content
                 break
@@ -258,7 +256,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(response.choices[0].message.model_dump())
                     messages_for_model.extend(tool_messages)
@@ -273,6 +271,18 @@ class ChatOpenAI(ChatBase):
 
             response = await self.ainvoke(messages=messages_for_model)
 
+            usage = (
+                Usage(
+                    requests=1,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                )
+                if response.usage
+                else Usage()
+            )
+            model_response.usage.add(usage)
+
             if not response.choices[0].message.tool_calls:
                 model_response.content = response.choices[0].message.content
                 break
@@ -281,7 +291,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(response.choices[0].message.model_dump())
                     messages_for_model.extend(tool_messages)
@@ -298,6 +308,19 @@ class ChatOpenAI(ChatBase):
 
             for chunk in self.stream(messages=messages_for_model):
                 chunk = ChatCompletionChunk(**chunk.model_dump())
+
+                usage = (
+                    Usage(
+                        requests=1,
+                        input_tokens=chunk.usage.prompt_tokens,
+                        output_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens,
+                    )
+                    if chunk.usage
+                    else Usage()
+                )
+                model_response.usage.add(usage)
+
                 if len(chunk.choices) > 0:
                     if chunk.choices[0].delta.content:
                         message.content += chunk.choices[0].delta.content
@@ -322,7 +345,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = self.handle_tool_calls(tool_calls=tool_calls)
+                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(message)
                     messages_for_model.extend(tool_messages)
@@ -341,6 +364,19 @@ class ChatOpenAI(ChatBase):
 
             for chunk in await self.astream(messages=messages_for_model):
                 chunk = ChatCompletionChunk(**chunk.model_dump())
+
+                usage = (
+                    Usage(
+                        requests=1,
+                        input_tokens=chunk.usage.prompt_tokens,
+                        output_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens,
+                    )
+                    if chunk.usage
+                    else Usage()
+                )
+                model_response.usage.add(usage)
+
                 if len(chunk.choices) > 0:
                     if chunk.choices[0].delta.content:
                         message.content += chunk.choices[0].delta.content
@@ -365,7 +401,7 @@ class ChatOpenAI(ChatBase):
 
             tool_calls = message.tool_calls
             if tool_calls and self.tools:
-                tool_messages = await self.ahandle_tool_calls(tool_calls=tool_calls)
+                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     messages_for_model.append(message)
                     messages_for_model.extend(tool_messages)

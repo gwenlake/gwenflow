@@ -1,4 +1,5 @@
-from gwenflow.tools.base import BaseTool, Tool
+from gwenflow.tools.base import BaseTool
+from gwenflow.tools.function import FunctionTool
 from gwenflow.tools.duckduckgo import DuckDuckGoSearchTool, DuckDuckGoNewsTool
 from gwenflow.tools.pdf import PDFTool
 from gwenflow.tools.website import WebsiteReaderTool
@@ -13,7 +14,7 @@ from gwenflow.tools.retriever import RetrieverTool
 
 __all__ = [
     "BaseTool",
-    "Tool",
+    "FunctionTool",
     "RetrieverTool",
     "WikipediaTool",
     "WebsiteReaderTool",

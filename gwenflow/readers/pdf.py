@@ -3,9 +3,9 @@ import io
 from typing import List, Union
 from pathlib import Path
 
+from gwenflow.logger import logger
 from gwenflow.types import Document
 from gwenflow.readers.base import Reader
-from gwenflow.utils import logger
 
 
 class PDFReader(Reader):
