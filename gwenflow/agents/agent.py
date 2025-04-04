@@ -445,7 +445,7 @@ class Agent(BaseModel):
 
         agent_response.finish_reason = "stop"
 
-        return agent_response
+        yield agent_response
 
     async def arun(
         self,
