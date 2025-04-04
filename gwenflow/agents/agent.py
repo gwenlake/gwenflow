@@ -13,7 +13,7 @@ from gwenflow.types import Usage, Message, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.response import AgentResponse, AgentDataset
+from gwenflow.agents.response import AgentResponse
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 
