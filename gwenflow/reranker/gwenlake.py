@@ -6,6 +6,7 @@ import requests
 from gwenflow.types import Document
 from gwenflow.reranker.base import Reranker
 from gwenflow.api import api
+from gwenflow.logger import logger
 
 
 class GwenlakeReranker(Reranker):
@@ -57,7 +58,7 @@ class GwenlakeReranker(Reranker):
                     batch_processed.append(document.content)
                 reranked_documents += self._rerank(query=query, input=batch_processed)
         except Exception as e:
-            print(repr(e))
+            logger.error(e)
             return None
 
         if len(reranked_documents) > 0:
