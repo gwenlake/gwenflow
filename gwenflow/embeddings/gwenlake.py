@@ -65,6 +65,10 @@ class GwenlakeEmbeddings(Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
+
+        if not texts:
+            return []
+        
         batch_size = 100
         embeddings = []
         try:
