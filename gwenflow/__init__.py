@@ -12,9 +12,11 @@ from gwenflow.tools import BaseTool, FunctionTool
 from gwenflow.flows import Flow, AutoFlow
 from gwenflow.types import Document, Message
 from gwenflow.retriever import Retriever
+from gwenflow.logger import logger
 
 
 __all__ = [
+    "logger",
     "set_log_level_to_debug",
     "GwenflowException",
     "MaxTurnsExceeded",
