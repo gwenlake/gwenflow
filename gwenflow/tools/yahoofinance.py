@@ -9,13 +9,11 @@ class YahooFinanceSearch(BaseTool):
     name: str = "YahooFinanceSearch"
     description: str = "Search for a stock on Yahoo Finance."
 
-    def _run(self, query: str = Field(description="The stock to search for.")) -> str:
+    def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
-
             stocks = yf.Search(query)
-
-            print(stocks.quotes)
+            return stocks.quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
@@ -24,13 +22,11 @@ class YahooFinancePick(BaseTool):
     name: str = "YahooFinancePick"
     description: str = "Search for a stock on Yahoo Finance."
 
-    def _run(self, query: str = Field(description="The stock to search for.")) -> str:
+    def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
-
             stocks = yf.Search(query)
-
-            print(stocks.quotes)
+            return stocks.quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
@@ -39,16 +35,11 @@ class YahooFinanceStock(BaseTool):
     name: str = "YahooFinanceStock"
     description: str = "Retrieve stock data from Yahoo Finance."
 
-    def _run(
-        self, ticker: str = Field(description="The ticker stock to search for.")
-    ) -> dict | str:
+    def _run(self, ticker: str = Field(description="The ticker stock to search for.")):
         try:
             import yfinance as yf
-
             stock = yf.Ticker(ticker)
-
             return stock.info
-
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
@@ -62,9 +53,7 @@ class YahooFinanceNews(BaseTool):
         "This tool will return the latest news"
     )
 
-    def _run(
-        self, query: str = Field(description="The query to search for.")
-    ) -> dict[Any, Any] | str:
+    def _run(self, query: str = Field(description="The query to search for.")):
         try:
             import yfinance as yf
 
@@ -96,20 +85,15 @@ class YahooFinanceScreen(BaseTool):
         values: list[str | int] = Field(
             description="The values to search for. For example, ['intradaymarketcap', 1000000000] for market cap greater than 1 billion.",
         ),
-    ) -> list[Any] | str:
+    ):
         try:
             import yfinance as yf
-
             screener = yf.Screener()
-
             try:
-
                 query = yf.EquityQuery(operator, eval(values))
 
             except Exception:
                 return "Query not valid. Please check the Yahoo Finance screener documentation."
-
-            print(query.to_dict())
 
             try:
                 screener.set_body(
@@ -127,8 +111,6 @@ class YahooFinanceScreen(BaseTool):
 
                 result = screener.response
                 symbols = [quote["symbol"] for quote in result["quotes"]]
-
-                print(symbols)
 
                 return symbols
             except Exception:
