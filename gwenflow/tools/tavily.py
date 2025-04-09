@@ -26,7 +26,7 @@ class TavilyBaseTool(BaseTool):
                     logger.error("TAVILY_API_KEY not provided")
                 self.client = TavilyClient(api_key=self.api_key)
         except ImportError:
-            raise ImportError("`tavily-python` not installed. Please install using `pip install tavily-python`")
+            raise ImportError("`tavily-python` is not installed. Please install it with `pip install tavily-python`")
         return self
 
 class TavilyWebSearchTool(TavilyBaseTool):
