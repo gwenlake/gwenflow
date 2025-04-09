@@ -1,6 +1,5 @@
-import json
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict
+from typing import List, Any, Optional
+from pydantic import field_validator, Field
 
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
@@ -31,6 +30,6 @@ class RetrieverTool(BaseTool):
                 document = Document(content=document)
             self.retriever.load_document(document)
     
-    def _run(self, query: str = Field(description="The search query.")) -> str:
+    def _run(self, query: str = Field(description="The search query.")):
         documents = self.retriever.search(query)
-        return json.dumps([doc.to_dict() for doc in documents])
+        return [doc.to_dict() for doc in documents]
