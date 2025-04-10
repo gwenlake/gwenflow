@@ -1,4 +1,3 @@
-import json
 from typing import Any
 from pydantic import Field, model_validator
 
@@ -42,7 +41,7 @@ class WikipediaTool(WikipediaBaseTool):
         "Input should be a search query."
     )
 
-    def _run(self, query: str = Field(description="query to look up on wikipedia")) -> str:
+    def _run(self, query: str = Field(description="query to look up on wikipedia")):
 
         documents = []
 
@@ -62,4 +61,4 @@ class WikipediaTool(WikipediaBaseTool):
         if not documents:
             return "No good Wikipedia Search Result was found"
 
-        return json.dumps([doc for doc in documents])
+        return [doc for doc in documents]

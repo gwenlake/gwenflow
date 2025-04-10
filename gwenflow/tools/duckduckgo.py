@@ -1,4 +1,3 @@
-import json
 from typing import Any, Optional
 from pydantic import Field, model_validator
 
@@ -41,7 +40,7 @@ class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
                 max_results=self.max_results,
                 backend=self.backend,
             )
-            return json.dumps(results)
+            return results
 
 
 class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
@@ -49,7 +48,7 @@ class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
     name: str = "DuckDuckGoNewsTool"
     description: str = "Search for a query in DuckDuckGo News and returns the content."
 
-    def _run(self, query: str = Field(description="The search query.")) -> str:
+    def _run(self, query: str = Field(description="The search query.")):
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:
             results = ddgs.news(
@@ -59,4 +58,4 @@ class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
                 timelimit=self.time,
                 max_results=self.max_results,
             )
-            return json.dumps(results)
+            return results

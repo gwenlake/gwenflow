@@ -1,10 +1,13 @@
 import asyncio
+import uuid
 
 from abc import ABC, abstractmethod
 from typing import Any
 from pydantic import BaseModel, model_validator
 
 from gwenflow.tools.utils import function_to_json
+from gwenflow.tools.output import ToolOutput
+from gwenflow.logger import logger
 
 
 class BaseTool(BaseModel, ABC):
@@ -20,6 +23,9 @@ class BaseTool(BaseModel, ABC):
 
     tool_type: str = "base"
     """Tool type: base, function, langchain."""
+
+    max_results: int = 20
+    """A max result for the tools."""
 
     @model_validator(mode="after")
     def model_valid(self) -> Any:
@@ -38,13 +44,24 @@ class BaseTool(BaseModel, ABC):
             },
         }
 
+    def _response_to_list(self, data) -> list:
+        if isinstance(data, str):
+            return [ {"content": data} ]
+        if isinstance(data, dict):
+            return [ data ]
+        if isinstance(data, list):
+            return data
+        logger.warning("Cannot read tool output.")
+        return []
+        
     @abstractmethod
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
-    def run(self, **kwargs: Any) -> Any:
-        return self._run(**kwargs)
+    def run(self, **kwargs: Any) -> ToolOutput:
+        response = self._run(**kwargs)
+        return ToolOutput(id=str(uuid.uuid4()), name=self.name, output=self._response_to_list(response))
 
-    async def arun(self, **kwargs: Any) -> Any:
-        return asyncio.run(self._run(**kwargs))
-
+    async def arun(self, **kwargs: Any) -> ToolOutput:
+        response = asyncio.run(self._run(**kwargs))
+        return ToolOutput(id=str(uuid.uuid4()), name=self.name, output=self._response_to_list(response))

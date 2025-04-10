@@ -9,12 +9,13 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, ChatCompletionMessageToolCall
+from gwenflow.types import Usage, Message, Document, ChatCompletionMessageToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.response import AgentResponse, AgentDataset
+from gwenflow.agents.response import AgentResponse, ToolOutput
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
+from gwenflow.tools.mcp import MCPServer, MCPUtil
 
 
 DEFAULT_MAX_TURNS = 10
@@ -43,11 +44,14 @@ class Agent(BaseModel):
     tools: List[BaseTool] = Field(default_factory=list)
     """A list of tools that the agent can use."""
 
-    # mcp_servers: List[MCPServer] = Field(default_factory=list)
+    mcp_servers: List[MCPServer] = Field(default_factory=list)
     """A list of MCP servers that the agent can use."""
 
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
+
+    tool_output: list[ToolOutput] = Field(default_factory=list)
+    """A list of tool outputs."""
 
     reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
     """Reasoning model."""
@@ -83,8 +87,8 @@ class Agent(BaseModel):
                 self.history = ChatMemoryBuffer(token_limit=token_limit)
             if self.response_model:
                 self.llm.response_format = {"type": "json_object"}
-            if self.tools:
-                self.llm.tools = self.tools
+            if self.tools or self.mcp_servers:
+                self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
         return self
 
@@ -174,12 +178,35 @@ class Agent(BaseModel):
 
         return response
 
+    def get_all_tools(self) -> list[BaseTool]:
+        """All agent tools, including MCP tools and function tools."""
+        tools = self.tools
+        if self.mcp_servers:
+            mcp_tools = asyncio.run(MCPUtil.get_all_function_tools(self.mcp_servers))
+            # tools += MCPUtil.get_all_function_tools(self.mcp_servers)
+            tools += mcp_tools
+        return tools
+    
+    def _get_tool_output(self, text: str) -> list:
+        try:
+            _data = json.loads(text)
+            if isinstance(_data, str):
+                _data = [ {"content": _data} ]
+            elif isinstance(_data, dict):
+                _data = [ _data ]
+            elif not isinstance(_data, list):
+                logger.warning("Cannot read tool output.")
+            return _data
+        except Exception as e:
+            logger.warning(e)
+        return None
+
     def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
             tool_call = ChatCompletionMessageToolCall(**tool_call)
     
-        tool_map  = {tool.name: tool for tool in self.tools}
+        tool_map  = {tool.name: tool for tool in self.get_all_tools()}
         tool_name = tool_call.function.name
                     
         if tool_name not in tool_map.keys():
@@ -204,14 +231,24 @@ class Agent(BaseModel):
 
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
-            result = tool_map[tool_name].run(**function_args)
-            if result:
+            tool = tool_map[tool_name]
+            tool_output = tool.run(**function_args)
+
+            if tool_output:
+
+                # keep full output
+                tool_output.id   = tool_call.id
+                tool_output.name = tool_name
+                self.tool_output.append(tool_output)
+
+                # result output max results
                 return Message(
                     role="tool",
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_name,
-                    content=str(result),
+                    tool_call_id=tool_output.id,
+                    tool_name=tool_output.name,
+                    content=tool_output.to_json(max_results=tool.max_results),
                 )
+
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
 
@@ -261,6 +298,9 @@ class Agent(BaseModel):
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
+
+        # documents
+        last_tool_output_index = len(self.tool_output)
 
         # init agent response
         agent_response = AgentResponse()
@@ -319,7 +359,7 @@ class Agent(BaseModel):
 
             # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.tools:
+            if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     self.history.add_messages(tool_messages)
@@ -328,6 +368,7 @@ class Agent(BaseModel):
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
+        agent_response.tool_output = self.tool_output[last_tool_output_index:]
         agent_response.finish_reason = "stop"
 
         return agent_response
@@ -341,6 +382,9 @@ class Agent(BaseModel):
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
+
+        # documents
+        last_tool_output_index = len(self.tool_output)
 
         # init agent response
         agent_response = AgentResponse()
@@ -423,7 +467,7 @@ class Agent(BaseModel):
 
             # handle tool calls
             tool_calls = message.tool_calls
-            if tool_calls and self.tools:
+            if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 if len(tool_messages)>0:
                     self.history.add_messages(tool_messages)
@@ -432,6 +476,16 @@ class Agent(BaseModel):
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
+        agent_response.tool_output = self.tool_output[last_tool_output_index:]
         agent_response.finish_reason = "stop"
 
-        return agent_response
+        yield agent_response
+
+    async def arun(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
+    ) -> AgentResponse:
+        # loop = asyncio.new_event_loop()
+        # return loop.run_until_complete(self.run(input=input, context=context))
+        return self.run(input=input, context=context)

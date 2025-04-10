@@ -51,3 +51,13 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
                 num_tokens += tokens_per_name
     num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
     return num_tokens
+
+def keep_tokens_from_text(text: str, token_limit: int, tokenizer_fn: callable) -> str:
+    num_tokens = 0
+    truncated_text = []
+    for token in text.split(" "):
+        num_tokens = tokenizer_fn(" ".join(truncated_text))
+        if num_tokens > token_limit:
+            break
+        truncated_text.append(token)
+    return " ".join(truncated_text)
