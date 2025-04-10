@@ -24,6 +24,9 @@ class BaseTool(BaseModel, ABC):
     tool_type: str = "base"
     """Tool type: base, function, langchain."""
 
+    max_results: int = 20
+    """A max result for the tools."""
+
     @model_validator(mode="after")
     def model_valid(self) -> Any:
         if not self.params_json_schema:

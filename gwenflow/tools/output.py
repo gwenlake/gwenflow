@@ -2,8 +2,6 @@ from pydantic import BaseModel, Field
 from time import time
 import json
 
-from gwenflow.types.message import Message
-
 
 class ToolOutput(BaseModel):
 
@@ -22,13 +20,7 @@ class ToolOutput(BaseModel):
         """Convert the output into a list of dict."""
         return [d for d in self.output]  # type: ignore
 
-    def to_json_str(self, max_result: int) -> str:
-        return json.dumps(self.output[:max_result])
-
-    def to_message(self, max_result: int = 20) -> Message:
-        return Message(
-            role="tool",
-            tool_call_id=self.id,
-            tool_name=self.name,
-            content=self.to_json_str(max_result=max_result),
-        )
+    def to_json(self, max_results: int = None) -> str:
+        if max_results:
+            return json.dumps(self.output[:max_results])
+        return json.dumps(self.output)
