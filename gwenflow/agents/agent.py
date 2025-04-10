@@ -50,17 +50,14 @@ class Agent(BaseModel):
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
 
+    tool_output: list[ToolOutput] = Field(default_factory=list)
+    """A list of tool outputs."""
+
     reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
     """Reasoning model."""
 
     history: ChatMemoryBuffer | None = None
     """Historcal messages for the agent."""
-
-    tool_output: list[ToolOutput] = Field(default_factory=list)
-    """A list of tool outputs."""
-
-    max_tool_result: int = 50
-    """A max result for tools."""
 
     retriever: Optional[Retriever] = None
     """Retriever for the agent."""
@@ -234,17 +231,23 @@ class Agent(BaseModel):
 
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
-            tool_output = tool_map[tool_name].run(**function_args)
+            tool = tool_map[tool_name]
+            tool_output = tool.run(**function_args)
 
             if tool_output:
 
-                # keep output
+                # keep full output
                 tool_output.id   = tool_call.id
                 tool_output.name = tool_name
                 self.tool_output.append(tool_output)
 
                 # result output max results
-                return tool_output.to_message(max_result=self.max_tool_result)
+                return Message(
+                    role="tool",
+                    tool_call_id=tool_output.id,
+                    tool_name=tool_output.name,
+                    content=tool_output.to_json(max_results=tool.max_results),
+                )
 
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
