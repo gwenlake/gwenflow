@@ -9,13 +9,15 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, Document, ChatCompletionMessageToolCall
+from gwenflow.types import Usage, Message, Document
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.response import AgentResponse, ToolOutput
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
+
+from openai.types.chat import ChatCompletionMessageToolCall
 
 
 DEFAULT_MAX_TURNS = 10
@@ -416,6 +418,7 @@ class Agent(BaseModel):
 
             # call llm and tool
             message = Message(role="assistant", content="", delta="", tool_calls=[])
+            final_tool_calls = {}
 
             for chunk in self.llm.stream(messages=messages_for_model):
 
@@ -442,15 +445,17 @@ class Agent(BaseModel):
 
                 if delta.content:
                     agent_response.content = delta.content
-
-                if delta.tool_calls:
-                    if delta.tool_calls[0].id:
-                        message.tool_calls.append(delta.tool_calls[0].model_dump())
-                    if delta.tool_calls[0].function.arguments:
-                        current_tool = len(message.tool_calls) - 1
-                        message.tool_calls[current_tool]["function"]["arguments"] += delta.tool_calls[0].function.arguments
+                
+                for tool_call in delta.tool_calls or []:
+                    index = tool_call.index
+                    if index not in final_tool_calls:
+                        final_tool_calls[index] = tool_call.model_dump()
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
 
                 yield agent_response
+
+            # convert tool_calls
+            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
             # keep answer in memory
             self.history.add_message(message.model_dump())

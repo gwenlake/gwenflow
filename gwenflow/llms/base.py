@@ -7,7 +7,9 @@ import json
 
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
-from gwenflow.types import Message, ChatCompletionMessageToolCall
+from gwenflow.types import Message
+
+from openai.types.chat import ChatCompletionMessageToolCall
 
 
 LLM_CONTEXT_WINDOW_SIZES = {
