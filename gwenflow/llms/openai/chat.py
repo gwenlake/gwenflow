@@ -5,8 +5,7 @@ from typing import Optional, Union, Any, List, Dict, Iterator
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase
-from gwenflow.llms.response import ModelResponse
-from gwenflow.types import Message, Usage
+from gwenflow.types import Message, Usage, ModelResponse
 from gwenflow.utils import extract_json_str
 
 from openai import OpenAI, AsyncOpenAI
@@ -168,8 +167,6 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-        completion = ChatCompletion(**completion.model_dump())
-
         if self.response_format:
             completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
 
@@ -186,8 +183,6 @@ class ChatOpenAI(ChatBase):
             )
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
-
-        completion = ChatCompletion(**completion.model_dump())
 
         if self.response_format:
             completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
@@ -208,9 +203,7 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-        for chunk in completion:
-            chunk = ChatCompletionChunk(**chunk.model_dump())
-            yield chunk
+        return completion
 
     async def astream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         messages_for_model = self._cast_messages(messages)
@@ -226,9 +219,7 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-        async for chunk in completion:
-            chunk = ChatCompletionChunk(**chunk.model_dump())
-            yield chunk
+        return completion
 
     def response(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         messages_for_model = self._cast_messages(messages)
@@ -306,10 +297,11 @@ class ChatOpenAI(ChatBase):
 
         while True:
 
+            final_tool_calls = {}
+            model_response.thinking = []
             message = Message(role="assistant", content="", delta="", tool_calls=[])
 
             for chunk in self.stream(messages=messages_for_model):
-                chunk = ChatCompletionChunk(**chunk.model_dump())
 
                 usage = (
                     Usage(
@@ -323,18 +315,24 @@ class ChatOpenAI(ChatBase):
                 )
                 model_response.usage.add(usage)
 
-                if len(chunk.choices) > 0:
-                    if chunk.choices[0].delta.content:
-                        message.content += chunk.choices[0].delta.content
-                        model_response.content = chunk.choices[0].delta.content
-                        model_response.thinking = None
-                        yield model_response
-                    elif chunk.choices[0].delta.tool_calls:
-                        if chunk.choices[0].delta.tool_calls[0].id:
-                            message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-                        if chunk.choices[0].delta.tool_calls[0].function.arguments:
-                            current_tool = len(message.tool_calls) - 1
-                            message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
+                if not chunk.choices or not chunk.choices[0].delta:
+                    continue
+                
+                delta = chunk.choices[0].delta
+
+                if delta.content:
+                    message.content += delta.content
+                    model_response.content = delta.content
+                    model_response.thinking = None
+                    yield model_response
+
+                for tool_call in delta.tool_calls or []:
+                    index = tool_call.index
+                    if index not in final_tool_calls:
+                        final_tool_calls[index] = tool_call.model_dump()
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+
+            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
             if not message.tool_calls:
                 model_response.content = None
@@ -360,12 +358,11 @@ class ChatOpenAI(ChatBase):
 
         while True:
 
+            final_tool_calls = {}
             model_response.thinking = []
-
             message = Message(role="assistant", content="", delta="", tool_calls=[])
 
             for chunk in await self.astream(messages=messages_for_model):
-                chunk = ChatCompletionChunk(**chunk.model_dump())
 
                 usage = (
                     Usage(
@@ -379,18 +376,24 @@ class ChatOpenAI(ChatBase):
                 )
                 model_response.usage.add(usage)
 
-                if len(chunk.choices) > 0:
-                    if chunk.choices[0].delta.content:
-                        message.content += chunk.choices[0].delta.content
-                        model_response.content = chunk.choices[0].delta.content
-                        model_response.thinking = None
-                        yield model_response
-                    elif chunk.choices[0].delta.tool_calls:
-                        if chunk.choices[0].delta.tool_calls[0].id:
-                            message.tool_calls.append(chunk.choices[0].delta.tool_calls[0].model_dump())
-                        if chunk.choices[0].delta.tool_calls[0].function.arguments:
-                            current_tool = len(message.tool_calls) - 1
-                            message.tool_calls[current_tool]["function"]["arguments"] += chunk.choices[0].delta.tool_calls[0].function.arguments
+                if not chunk.choices or not chunk.choices[0].delta:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                if delta.content:
+                    message.content += delta.content
+                    model_response.content = delta.content
+                    model_response.thinking = None
+                    yield model_response
+
+                for tool_call in delta.tool_calls or []:
+                    index = tool_call.index
+                    if index not in final_tool_calls:
+                        final_tool_calls[index] = tool_call.model_dump()
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+
+            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
             if not message.tool_calls:
                 model_response.content = None

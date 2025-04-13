@@ -9,11 +9,10 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, Document
+from gwenflow.types import Usage, Message, ModelResponse
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.response import AgentResponse, ToolOutput
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 
@@ -51,9 +50,6 @@ class Agent(BaseModel):
 
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
-
-    tool_output: list[ToolOutput] = Field(default_factory=list)
-    """A list of tool outputs."""
 
     reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
     """Reasoning model."""
@@ -140,7 +136,7 @@ class Agent(BaseModel):
 
         return prompt.strip()
     
-    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
+    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> ModelResponse:
 
         if self.reasoning_model is None:
             return None
@@ -189,20 +185,6 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
     
-    def _get_tool_output(self, text: str) -> list:
-        try:
-            _data = json.loads(text)
-            if isinstance(_data, str):
-                _data = [ {"content": _data} ]
-            elif isinstance(_data, dict):
-                _data = [ _data ]
-            elif not isinstance(_data, list):
-                logger.warning("Cannot read tool output.")
-            return _data
-        except Exception as e:
-            logger.warning(e)
-        return None
-
     def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
@@ -234,21 +216,13 @@ class Agent(BaseModel):
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
             tool = tool_map[tool_name]
-            tool_output = tool.run(**function_args)
-
-            if tool_output:
-
-                # keep full output
-                tool_output.id   = tool_call.id
-                tool_output.name = tool_name
-                self.tool_output.append(tool_output)
-
-                # result output max results
+            response = tool.run(**function_args)
+            if response:
                 return Message(
                     role="tool",
-                    tool_call_id=tool_output.id,
-                    tool_name=tool_output.name,
-                    content=tool_output.to_json(max_results=tool.max_results),
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_name,
+                    content=response.to_json(),
                 )
 
         except Exception as e:
@@ -295,17 +269,14 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> AgentResponse:
+    ) -> ModelResponse:
 
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
 
-        # documents
-        last_tool_output_index = len(self.tool_output)
-
         # init agent response
-        agent_response = AgentResponse()
+        agent_response = ModelResponse()
 
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
@@ -354,6 +325,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
+                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
                 break
             
             # thinking
@@ -363,14 +335,14 @@ class Agent(BaseModel):
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    self.history.add_messages(tool_messages)
+                for m in tool_messages:
+                    self.history.add_message(m)
+                    agent_response.output.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        agent_response.tool_output = self.tool_output[last_tool_output_index:]
         agent_response.finish_reason = "stop"
 
         return agent_response
@@ -379,17 +351,14 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> Iterator[AgentResponse]:
+    ) -> Iterator[ModelResponse]:
 
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
 
-        # documents
-        last_tool_output_index = len(self.tool_output)
-
         # init agent response
-        agent_response = AgentResponse()
+        agent_response = ModelResponse()
 
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
@@ -463,6 +432,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
+                agent_response.output.append(Message(**message.model_dump()))
                 break
 
             # thinking
@@ -474,14 +444,14 @@ class Agent(BaseModel):
             tool_calls = message.tool_calls
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    self.history.add_messages(tool_messages)
+                for m in tool_messages:
+                    self.history.add_message(m)
+                    agent_response.output.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        agent_response.tool_output = self.tool_output[last_tool_output_index:]
         agent_response.finish_reason = "stop"
 
         yield agent_response
@@ -490,7 +460,7 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> AgentResponse:
+    ) -> ModelResponse:
         # loop = asyncio.new_event_loop()
         # return loop.run_until_complete(self.run(input=input, context=context))
         return self.run(input=input, context=context)
