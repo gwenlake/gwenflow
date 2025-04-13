@@ -2,14 +2,9 @@ from typing import Optional, Union, Any, List, Dict
 from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
 
-import asyncio
-import json
-
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
 from gwenflow.types import Message
-
-from openai.types.chat import ChatCompletionMessageToolCall
 
 
 LLM_CONTEXT_WINDOW_SIZES = {
@@ -73,22 +68,6 @@ class ChatBase(BaseModel, ABC):
     async def astream(self, *args, **kwargs) -> Any:
         pass
 
-    @abstractmethod
-    def response(self, *args, **kwargs) -> Any:
-        pass
-
-    @abstractmethod
-    async def aresponse(self, *args, **kwargs) -> Any:
-        pass
-
-    @abstractmethod
-    def response_stream(self, *args, **kwargs) -> Any:
-        pass
- 
-    @abstractmethod
-    async def aresponse_stream(self, *args, **kwargs) -> Any:
-        pass
-
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
@@ -108,70 +87,3 @@ class ChatBase(BaseModel, ABC):
 
     def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
-
-    def run_tool(self, tool_call) -> Message:
-
-        if isinstance(tool_call, dict):
-            tool_call = ChatCompletionMessageToolCall(**tool_call)
-    
-        tool_map  = self.get_tool_map()
-        tool_name = tool_call.function.name
-                    
-        if tool_name not in tool_map.keys():
-            logger.error(f"Tool {tool_name} does not exist")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                tool_name=tool_name,
-                content=f"Tool {tool_name} does not exist",
-            )
-
-        try:
-            function_args = json.loads(tool_call.function.arguments)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse tool arguments: {e}")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                tool_name=tool_name,
-                content=f"Failed to parse tool arguments: {e}",
-            )
-
-        try:
-            logger.debug(f"Tool call: {tool_name}({function_args})")
-            result = tool_map[tool_name].run(**function_args)
-            if result:
-                return Message(
-                    role="tool",
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_name,
-                    content=str(result),
-                )
-        except Exception as e:
-            logger.error(f"Error executing tool '{tool_name}': {e}")
-
-        return Message(
-            role="tool",
-            tool_call_id=tool_call.id,
-            tool_name=tool_name,
-            content=f"Error executing tool '{tool_name}'",
-        )
-
-    def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
-        results = asyncio.run(self.aexecute_tool_calls(tool_calls))
-        return results
-
-    async def aexecute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
-        
-        tool_map = self.get_tool_map()
-        if not tool_calls or not tool_map:
-            return []
-
-        tasks = []
-        for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks)
-
-        return results

@@ -9,7 +9,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, ModelResponse
+from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
@@ -136,7 +136,7 @@ class Agent(BaseModel):
 
         return prompt.strip()
     
-    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> ModelResponse:
+    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
 
         if self.reasoning_model is None:
             return None
@@ -216,13 +216,13 @@ class Agent(BaseModel):
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
             tool = tool_map[tool_name]
-            response = tool.run(**function_args)
-            if response:
+            response_output = tool.run(**function_args)
+            if response_output:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
                     tool_name=tool_name,
-                    content=response.to_json(),
+                    content=response_output.to_json(),
                 )
 
         except Exception as e:
@@ -269,14 +269,14 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> ModelResponse:
+    ) -> AgentResponse:
 
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
 
         # init agent response
-        agent_response = ModelResponse()
+        agent_response = AgentResponse()
 
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
@@ -343,6 +343,20 @@ class Agent(BaseModel):
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
+        # keep sources
+        for output in agent_response.output:
+            if output.role == "tool":
+                try:
+                    agent_response.sources.append(
+                        ResponseOutputItem(
+                            id=output.tool_call_id,
+                            name=output.tool_name,
+                            data=json.loads(output.content),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Error casting source: {e}")
+        
         agent_response.finish_reason = "stop"
 
         return agent_response
@@ -351,14 +365,14 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[AgentResponse]:
 
         # prepare messages and task
         messages = self.llm._cast_messages(input)
         task = messages[-1].content
 
         # init agent response
-        agent_response = ModelResponse()
+        agent_response = AgentResponse()
 
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
@@ -452,6 +466,20 @@ class Agent(BaseModel):
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
+        # keep sources
+        for output in agent_response.output:
+            if output.role == "tool":
+                try:
+                    agent_response.sources.append(
+                        ResponseOutputItem(
+                            id=output.tool_call_id,
+                            name=output.tool_name,
+                            data=json.loads(output.content),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Error casting source: {e}")
+
         agent_response.finish_reason = "stop"
 
         yield agent_response
@@ -460,7 +488,7 @@ class Agent(BaseModel):
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> ModelResponse:
+    ) -> AgentResponse:
         # loop = asyncio.new_event_loop()
         # return loop.run_until_complete(self.run(input=input, context=context))
         return self.run(input=input, context=context)

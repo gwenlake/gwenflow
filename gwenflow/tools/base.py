@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 
 from gwenflow.tools.utils import function_to_json
-from gwenflow.tools.output import ToolOutput
+from gwenflow.types.output import ResponseOutputItem
 from gwenflow.logger import logger
 
 
@@ -58,10 +58,10 @@ class BaseTool(BaseModel, ABC):
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
-    def run(self, **kwargs: Any) -> ToolOutput:
+    def run(self, **kwargs: Any) -> ResponseOutputItem:
         response = self._run(**kwargs)
-        return ToolOutput(id=str(uuid.uuid4()), name=self.name, output=self._response_to_list(response))
+        return ResponseOutputItem(id=str(uuid.uuid4()), name=self.name, data=self._response_to_list(response))
 
-    async def arun(self, **kwargs: Any) -> ToolOutput:
+    async def arun(self, **kwargs: Any) -> ResponseOutputItem:
         response = asyncio.run(self._run(**kwargs))
-        return ToolOutput(id=str(uuid.uuid4()), name=self.name, output=self._response_to_list(response))
+        return ResponseOutputItem(id=str(uuid.uuid4()), name=self.name, data=self._response_to_list(response))

@@ -5,7 +5,7 @@ from typing import Optional, Union, Any, List, Dict, Iterator
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase
-from gwenflow.types import Message, Usage, ModelResponse
+from gwenflow.types import Message
 from gwenflow.utils import extract_json_str
 
 from openai import OpenAI, AsyncOpenAI
@@ -143,27 +143,15 @@ class ChatOpenAI(ChatBase):
             message_dict["content"] = None
 
         return message_dict
-
-    def _get_thinking(self, tool_calls) -> str:
-        thinking = []
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                tool_call = tool_call.model_dump()
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ tool_call["function"]["arguments"] }'""")
-        if len(thinking)>0:
-            return "\n".join(thinking)
-        return ""
     
     def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
-        messages_for_model = self._cast_messages(messages)
-
         try:
+            messages_for_model = self._cast_messages(messages)
             completion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
                 **self._model_params,
             )
-
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
@@ -173,9 +161,8 @@ class ChatOpenAI(ChatBase):
         return completion
 
     async def ainvoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
-        messages_for_model = self._cast_messages(messages)
-
         try:
+            messages_for_model = self._cast_messages(messages)
             completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -190,10 +177,9 @@ class ChatOpenAI(ChatBase):
         return completion
 
     def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
-        messages_for_model = self._cast_messages(messages)
-
         try:
-            completion = self.get_client().chat.completions.create(
+            messages_for_model = self._cast_messages(messages)
+            yield from self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
                 stream=True,
@@ -203,12 +189,9 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-        return completion
-
     async def astream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
-        messages_for_model = self._cast_messages(messages)
-
         try:
+            messages_for_model = self._cast_messages(messages)
             completion = await self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -216,199 +199,7 @@ class ChatOpenAI(ChatBase):
                 stream_options={"include_usage": True},
                 **self._model_params,
             )
+            async for chunk in completion:
+                yield chunk
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
-
-        return completion
-
-    def response(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
-        messages_for_model = self._cast_messages(messages)
-        model_response = ModelResponse()
-
-        while True:
-
-            response = self.invoke(messages=messages_for_model)
-
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens,
-                )
-                if response.usage
-                else Usage()
-            )
-            model_response.usage.add(usage)
-
-            if not response.choices[0].message.tool_calls:
-                model_response.content = response.choices[0].message.content
-                break
-
-            model_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
-
-            tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.tools:
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    messages_for_model.append(response.choices[0].message.model_dump())
-                    messages_for_model.extend(tool_messages)
-        
-        return model_response
-
-    async def aresponse(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
-        messages_for_model = self._cast_messages(messages)
-        model_response = ModelResponse()
-
-        while True:
-
-            response = await self.ainvoke(messages=messages_for_model)
-
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens,
-                )
-                if response.usage
-                else Usage()
-            )
-            model_response.usage.add(usage)
-
-            if not response.choices[0].message.tool_calls:
-                model_response.content = response.choices[0].message.content
-                break
-
-            model_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
-
-            tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.tools:
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    messages_for_model.append(response.choices[0].message.model_dump())
-                    messages_for_model.extend(tool_messages)
-
-        return model_response
-
-    def response_stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
-        messages_for_model = self._cast_messages(messages)
-        model_response = ModelResponse()
-
-        while True:
-
-            final_tool_calls = {}
-            model_response.thinking = []
-            message = Message(role="assistant", content="", delta="", tool_calls=[])
-
-            for chunk in self.stream(messages=messages_for_model):
-
-                usage = (
-                    Usage(
-                        requests=1,
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                    )
-                    if chunk.usage
-                    else Usage()
-                )
-                model_response.usage.add(usage)
-
-                if not chunk.choices or not chunk.choices[0].delta:
-                    continue
-                
-                delta = chunk.choices[0].delta
-
-                if delta.content:
-                    message.content += delta.content
-                    model_response.content = delta.content
-                    model_response.thinking = None
-                    yield model_response
-
-                for tool_call in delta.tool_calls or []:
-                    index = tool_call.index
-                    if index not in final_tool_calls:
-                        final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
-
-            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
-
-            if not message.tool_calls:
-                model_response.content = None
-                model_response.finish_reason = "stop"
-                break
-
-            model_response.thinking = self._get_thinking(message.tool_calls)
-            if model_response.thinking:
-                yield model_response
-
-            tool_calls = message.tool_calls
-            if tool_calls and self.tools:
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    messages_for_model.append(message)
-                    messages_for_model.extend(tool_messages)
-
-        yield model_response
-
-    async def aresponse_stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
-        messages_for_model = self._cast_messages(messages)
-        model_response = ModelResponse()
-
-        while True:
-
-            final_tool_calls = {}
-            model_response.thinking = []
-            message = Message(role="assistant", content="", delta="", tool_calls=[])
-
-            for chunk in await self.astream(messages=messages_for_model):
-
-                usage = (
-                    Usage(
-                        requests=1,
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                    )
-                    if chunk.usage
-                    else Usage()
-                )
-                model_response.usage.add(usage)
-
-                if not chunk.choices or not chunk.choices[0].delta:
-                    continue
-
-                delta = chunk.choices[0].delta
-
-                if delta.content:
-                    message.content += delta.content
-                    model_response.content = delta.content
-                    model_response.thinking = None
-                    yield model_response
-
-                for tool_call in delta.tool_calls or []:
-                    index = tool_call.index
-                    if index not in final_tool_calls:
-                        final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
-
-            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
-
-            if not message.tool_calls:
-                model_response.content = None
-                model_response.finish_reason = "stop"
-                break
-
-            model_response.thinking = self._get_thinking(message.tool_calls)
-            if model_response.thinking:
-                yield model_response
-
-            tool_calls = message.tool_calls
-            if tool_calls and self.tools:
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    messages_for_model.append(message)
-                    messages_for_model.extend(tool_messages)
-
-        yield model_response
