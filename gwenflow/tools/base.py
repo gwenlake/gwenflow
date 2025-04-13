@@ -24,7 +24,7 @@ class BaseTool(BaseModel, ABC):
     tool_type: str = "base"
     """Tool type: base, function, langchain."""
 
-    max_results: int = 20
+    max_results: int = 50
     """A max result for the tools."""
 
     @model_validator(mode="after")
