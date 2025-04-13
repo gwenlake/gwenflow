@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 
 class Usage(BaseModel):
+    
     requests: int = 0
     """Total requests made to the LLM API."""
 
