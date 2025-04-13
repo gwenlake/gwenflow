@@ -6,9 +6,11 @@ from typing import Optional, Union, Any, List, Dict, Iterator
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase
 from gwenflow.llms.response import ModelResponse
-from gwenflow.types import Message, Usage, ChatCompletion, ChatCompletionChunk
+from gwenflow.types import Message, Usage
 from gwenflow.utils import extract_json_str
+
 from openai import OpenAI, AsyncOpenAI
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 
 class ChatOpenAI(ChatBase):
