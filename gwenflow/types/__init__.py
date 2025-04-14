@@ -3,6 +3,7 @@ from gwenflow.types.document import Document
 from gwenflow.types.usage import Usage
 from gwenflow.types.response import AgentResponse
 from gwenflow.types.output import ResponseOutputItem
+from gwenflow.types.items import ItemHelpers
 
 __all__ = [
     "Message",
@@ -10,4 +11,5 @@ __all__ = [
     "Usage",
     "AgentResponse",
     "ResponseOutputItem",
+    "ItemHelpers",
 ]

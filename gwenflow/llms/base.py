@@ -1,4 +1,3 @@
-import copy
 from typing import Optional, Union, Any, List, Dict
 from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
@@ -72,18 +71,6 @@ class ChatBase(BaseModel, ABC):
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
         return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
-
-    def input_to_message_list(self, messages: Union[str, List[Message], List[Dict[str, str]]],) -> List[Message]:
-        """Converts a string or list of messages into a list of messages."""
-        if isinstance(messages, str):
-            return [
-                Message(role="user", content=messages)
-            ]
-        _messages = copy.deepcopy(messages)
-        for i, message in enumerate(_messages):
-            if isinstance(message, dict):
-                _messages[i] = Message(**message)
-        return _messages
 
     def get_tool_names(self):
         return [tool.name for tool in self.tools]
