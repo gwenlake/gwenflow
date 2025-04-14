@@ -9,7 +9,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem
+from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
@@ -272,7 +272,7 @@ class Agent(BaseModel):
     ) -> AgentResponse:
 
         # prepare messages and task
-        messages = self.llm.input_to_message_list(input)
+        messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
         # init agent response
@@ -368,7 +368,7 @@ class Agent(BaseModel):
     ) -> Iterator[AgentResponse]:
 
         # prepare messages and task
-        messages = self.llm.input_to_message_list(input)
+        messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
         # init agent response

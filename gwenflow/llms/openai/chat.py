@@ -5,7 +5,7 @@ from typing import Optional, Union, Any, List, Dict, Iterator
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase
-from gwenflow.types import Message
+from gwenflow.types import Message, ItemHelpers
 from gwenflow.utils import extract_json_str
 
 from openai import OpenAI, AsyncOpenAI
@@ -146,7 +146,7 @@ class ChatOpenAI(ChatBase):
     
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
-            messages_for_model = self.input_to_message_list(input)
+            messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -162,7 +162,7 @@ class ChatOpenAI(ChatBase):
 
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
-            messages_for_model = self.input_to_message_list(input)
+            messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -178,7 +178,7 @@ class ChatOpenAI(ChatBase):
 
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
         try:
-            messages_for_model = self.input_to_message_list(input)
+            messages_for_model = ItemHelpers.input_to_message_list(input)
             yield from self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -191,7 +191,7 @@ class ChatOpenAI(ChatBase):
 
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         try:
-            messages_for_model = self.input_to_message_list(input)
+            messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = await self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
