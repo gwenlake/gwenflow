@@ -144,9 +144,9 @@ class ChatOpenAI(ChatBase):
 
         return message_dict
     
-    def invoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
-            messages_for_model = self._cast_messages(messages)
+            messages_for_model = self.input_to_message_list(input)
             completion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -160,9 +160,9 @@ class ChatOpenAI(ChatBase):
 
         return completion
 
-    async def ainvoke(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
-            messages_for_model = self._cast_messages(messages)
+            messages_for_model = self.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -176,9 +176,9 @@ class ChatOpenAI(ChatBase):
 
         return completion
 
-    def stream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
+    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
         try:
-            messages_for_model = self._cast_messages(messages)
+            messages_for_model = self.input_to_message_list(input)
             yield from self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -189,9 +189,9 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-    async def astream(self, messages: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
+    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         try:
-            messages_for_model = self._cast_messages(messages)
+            messages_for_model = self.input_to_message_list(input)
             completion = await self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],

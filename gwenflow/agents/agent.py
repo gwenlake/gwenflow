@@ -272,7 +272,7 @@ class Agent(BaseModel):
     ) -> AgentResponse:
 
         # prepare messages and task
-        messages = self.llm._cast_messages(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         # init agent response
@@ -304,7 +304,7 @@ class Agent(BaseModel):
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             # call llm and tool
-            response = self.llm.invoke(messages=messages_for_model)
+            response = self.llm.invoke(input=messages_for_model)
 
             # usage
             usage = (
@@ -368,7 +368,7 @@ class Agent(BaseModel):
     ) -> Iterator[AgentResponse]:
 
         # prepare messages and task
-        messages = self.llm._cast_messages(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         # init agent response
@@ -403,7 +403,7 @@ class Agent(BaseModel):
             message = Message(role="assistant", content="", delta="", tool_calls=[])
             final_tool_calls = {}
 
-            for chunk in self.llm.stream(messages=messages_for_model):
+            for chunk in self.llm.stream(input=messages_for_model):
 
                 # usage
                 usage = (
