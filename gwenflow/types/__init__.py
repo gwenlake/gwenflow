@@ -1,13 +1,15 @@
 from gwenflow.types.message import Message
 from gwenflow.types.document import Document
-from gwenflow.types.completion import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageToolCall
 from gwenflow.types.usage import Usage
+from gwenflow.types.response import AgentResponse
+from gwenflow.types.output import ResponseOutputItem
+from gwenflow.types.items import ItemHelpers
 
 __all__ = [
     "Message",
     "Document",
     "Usage",
-    "ChatCompletion",
-    "ChatCompletionChunk",
-    "ChatCompletionMessageToolCall",
+    "AgentResponse",
+    "ResponseOutputItem",
+    "ItemHelpers",
 ]

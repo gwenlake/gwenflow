@@ -9,13 +9,14 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, Document, ChatCompletionMessageToolCall
+from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.response import AgentResponse, ToolOutput
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
+
+from openai.types.chat import ChatCompletionMessageToolCall
 
 
 DEFAULT_MAX_TURNS = 10
@@ -49,9 +50,6 @@ class Agent(BaseModel):
 
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
-
-    tool_output: list[ToolOutput] = Field(default_factory=list)
-    """A list of tool outputs."""
 
     reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
     """Reasoning model."""
@@ -187,20 +185,6 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
     
-    def _get_tool_output(self, text: str) -> list:
-        try:
-            _data = json.loads(text)
-            if isinstance(_data, str):
-                _data = [ {"content": _data} ]
-            elif isinstance(_data, dict):
-                _data = [ _data ]
-            elif not isinstance(_data, list):
-                logger.warning("Cannot read tool output.")
-            return _data
-        except Exception as e:
-            logger.warning(e)
-        return None
-
     def run_tool(self, tool_call) -> Message:
 
         if isinstance(tool_call, dict):
@@ -232,21 +216,13 @@ class Agent(BaseModel):
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
             tool = tool_map[tool_name]
-            tool_output = tool.run(**function_args)
-
-            if tool_output:
-
-                # keep full output
-                tool_output.id   = tool_call.id
-                tool_output.name = tool_name
-                self.tool_output.append(tool_output)
-
-                # result output max results
+            response_output = tool.run(**function_args)
+            if response_output:
                 return Message(
                     role="tool",
-                    tool_call_id=tool_output.id,
-                    tool_name=tool_output.name,
-                    content=tool_output.to_json(max_results=tool.max_results),
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_name,
+                    content=response_output.to_json(),
                 )
 
         except Exception as e:
@@ -296,11 +272,8 @@ class Agent(BaseModel):
     ) -> AgentResponse:
 
         # prepare messages and task
-        messages = self.llm._cast_messages(input)
+        messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
-        # documents
-        last_tool_output_index = len(self.tool_output)
 
         # init agent response
         agent_response = AgentResponse()
@@ -331,7 +304,7 @@ class Agent(BaseModel):
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             # call llm and tool
-            response = self.llm.invoke(messages=messages_for_model)
+            response = self.llm.invoke(input=messages_for_model)
 
             # usage
             usage = (
@@ -352,6 +325,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
+                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
                 break
             
             # thinking
@@ -361,14 +335,28 @@ class Agent(BaseModel):
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    self.history.add_messages(tool_messages)
+                for m in tool_messages:
+                    self.history.add_message(m)
+                    agent_response.output.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        agent_response.tool_output = self.tool_output[last_tool_output_index:]
+        # keep sources
+        for output in agent_response.output:
+            if output.role == "tool":
+                try:
+                    agent_response.sources.append(
+                        ResponseOutputItem(
+                            id=output.tool_call_id,
+                            name=output.tool_name,
+                            data=json.loads(output.content),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Error casting source: {e}")
+        
         agent_response.finish_reason = "stop"
 
         return agent_response
@@ -380,11 +368,8 @@ class Agent(BaseModel):
     ) -> Iterator[AgentResponse]:
 
         # prepare messages and task
-        messages = self.llm._cast_messages(input)
+        messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
-        # documents
-        last_tool_output_index = len(self.tool_output)
 
         # init agent response
         agent_response = AgentResponse()
@@ -416,8 +401,9 @@ class Agent(BaseModel):
 
             # call llm and tool
             message = Message(role="assistant", content="", delta="", tool_calls=[])
+            final_tool_calls = {}
 
-            for chunk in self.llm.stream(messages=messages_for_model):
+            for chunk in self.llm.stream(input=messages_for_model):
 
                 # usage
                 usage = (
@@ -442,15 +428,17 @@ class Agent(BaseModel):
 
                 if delta.content:
                     agent_response.content = delta.content
-
-                if delta.tool_calls:
-                    if delta.tool_calls[0].id:
-                        message.tool_calls.append(delta.tool_calls[0].model_dump())
-                    if delta.tool_calls[0].function.arguments:
-                        current_tool = len(message.tool_calls) - 1
-                        message.tool_calls[current_tool]["function"]["arguments"] += delta.tool_calls[0].function.arguments
+                
+                for tool_call in delta.tool_calls or []:
+                    index = tool_call.index
+                    if index not in final_tool_calls:
+                        final_tool_calls[index] = tool_call.model_dump()
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
 
                 yield agent_response
+
+            # convert tool_calls
+            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
             # keep answer in memory
             self.history.add_message(message.model_dump())
@@ -458,6 +446,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
+                agent_response.output.append(Message(**message.model_dump()))
                 break
 
             # thinking
@@ -469,14 +458,28 @@ class Agent(BaseModel):
             tool_calls = message.tool_calls
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                if len(tool_messages)>0:
-                    self.history.add_messages(tool_messages)
+                for m in tool_messages:
+                    self.history.add_message(m)
+                    agent_response.output.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        agent_response.tool_output = self.tool_output[last_tool_output_index:]
+        # keep sources
+        for output in agent_response.output:
+            if output.role == "tool":
+                try:
+                    agent_response.sources.append(
+                        ResponseOutputItem(
+                            id=output.tool_call_id,
+                            name=output.tool_name,
+                            data=json.loads(output.content),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Error casting source: {e}")
+
         agent_response.finish_reason = "stop"
 
         yield agent_response

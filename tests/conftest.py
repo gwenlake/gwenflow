@@ -6,6 +6,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 pytest_plugins = [
-    "unit_tests.fixtures.vcr",
-    "unit_tests.fixtures.snapshot",
+    "tests.fixtures.vcr",
+    "tests.fixtures.snapshot",
 ]

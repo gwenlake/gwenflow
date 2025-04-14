@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "0.7.1"
+version = "0.7.2"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -62,7 +62,7 @@ dev-dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["unit_tests"]
+testpaths = ["tests"]
 env_files = [
     ".env.test",
 ]

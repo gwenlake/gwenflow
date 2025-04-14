@@ -10,15 +10,22 @@ from gwenflow.llms.azure.chat import ChatAzureOpenAI
 TEST_ENV = os.getenv("TEST_ENV", "local")
 
 # Setup VCR for integration tests (record once then replay)
-my_vcr = vcr.VCR(record_mode="once", cassette_library_dir="unit_tests/__cassettes__")
+my_vcr = vcr.VCR(record_mode="once", cassette_library_dir="tests/__cassettes__")
 
 class FakeCompletion:
-    """Fake completion object mimicking the Azure SDK response."""
+    """Fake completion object mimicking the Azure SDK/OpenAI response."""
     def __init__(self, content):
         self._content = content
+        self.choices = [
+            type("Choice", (), {
+                "message": type("Message", (), {
+                    "content": content,
+                    "tool_calls": None
+                })()
+            })()
+        ]
 
     def model_dump(self):
-        # Return a minimal dictionary matching the structure of ChatAzureOpenAI output
         return {
             "id": "test-id",
             "created": 1234567890,
@@ -31,12 +38,14 @@ class FakeCompletion:
             ],
         }
 
+class PatchedChatAzureOpenAI(ChatAzureOpenAI):
+    def input_to_message_list(self, input):
+        return cast_messages(input)
+
 @pytest.fixture
-def chat(monkeypatch):
-    """Provides a ChatAzureOpenAI instance with patched message casting."""
-    chat_instance = ChatAzureOpenAI()
-    monkeypatch.setattr(chat_instance, "_cast_messages", cast_messages)
-    return chat_instance
+def chat():
+    return PatchedChatAzureOpenAI()
+
 
 @pytest.fixture
 def sample_user_message():
@@ -82,7 +91,6 @@ def test_invoke_returns_content_with_mock(monkeypatch, chat, sample_user_message
     fake_completion = FakeCompletion(content="mocked azure response")
     fake_client = MagicMock()
     fake_client.chat.completions.create.return_value = fake_completion
-    # Monkey-patch the ChatAzureOpenAI.get_client method to use our fake client
     monkeypatch.setattr(ChatAzureOpenAI, "get_client", lambda self: fake_client)
     result = chat.invoke(sample_user_message)
     assert result.choices[0].message.content == "mocked azure response"

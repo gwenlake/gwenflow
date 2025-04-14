@@ -1,4 +1,3 @@
-from gwenflow.tools.output import ToolOutput
 from gwenflow.tools.base import BaseTool
 from gwenflow.tools.function import FunctionTool
 from gwenflow.tools.duckduckgo import DuckDuckGoSearchTool, DuckDuckGoNewsTool
@@ -14,7 +13,6 @@ from gwenflow.tools.tavily import TavilyWebSearchTool
 from gwenflow.tools.retriever import RetrieverTool
 
 __all__ = [
-    "ToolOutput",
     "BaseTool",
     "FunctionTool",
     "RetrieverTool",

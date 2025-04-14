@@ -1,18 +1,20 @@
-from pydantic import BaseModel, Field
-from time import time
+
+import uuid
 import json
+from pydantic import BaseModel, Field, UUID4
+from time import time
 
 
-class ToolOutput(BaseModel):
+class ResponseOutputItem(BaseModel):
 
     id: str
     """The id of the output."""
 
     name: str
-    """The name of output (name of the tool used to generate this output."""
+    """The name of output."""
 
-    output: list = Field(default_factory=list)
-    """A list of output data."""
+    data: list = Field(default_factory=list)
+    """A list of data."""
 
     created_at: int = Field(default_factory=lambda: int(time()))
 
@@ -22,5 +24,5 @@ class ToolOutput(BaseModel):
 
     def to_json(self, max_results: int = None) -> str:
         if max_results:
-            return json.dumps(self.output[:max_results])
-        return json.dumps(self.output)
+            return json.dumps(self.data[:max_results])
+        return json.dumps(self.data)
