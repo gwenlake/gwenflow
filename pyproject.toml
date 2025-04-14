@@ -62,7 +62,7 @@ dev-dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["unit_tests"]
+testpaths = ["tests"]
 env_files = [
     ".env.test",
 ]

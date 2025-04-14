@@ -1,0 +1,38 @@
+agents:
+
+    biographer:
+        role: Write a biography using relevant and concise information.
+        tools: WikipediaTool
+
+    biographer_bis:
+        role: Write a biography using relevant and concise information.
+        tools: WikipediaTool
+
+    info:
+        role: Retrieve necessary information for the biography.
+        tools: WikipediaTool
+        query: false
+        context:
+            - biographer
+
+    info_bis:
+        role: Retrieve additional necessary information for the biography.
+        tools: WikipediaTool
+        query: false
+        context:
+            - biographer
+
+    info_ter:
+        role: Retrieve further necessary information for the biography.
+        tools: WikipediaTool
+        query: false
+        context:
+            - biographer_bis
+
+    summarizer:
+        role: 'Summarize the text and include the note: "Written by Gwenlake Agents."'
+        query: false
+        context:
+            - info
+            - info_bis
+            - info_ter

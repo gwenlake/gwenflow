@@ -1,0 +1,21 @@
+agents:
+
+    biographer:
+        role: Write a biography
+        tools: WikipediaTool
+
+    info:
+        role: Get some information.
+        tools: WikipediaTool
+        query: false
+        context:
+            - biographer
+
+    summarizer:
+        role: Summarize the text and write at the end Written by Gwenlake Agents.
+        query: false
+        context:
+            - info
+
+
+

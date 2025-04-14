@@ -1,0 +1,45 @@
+agents:
+
+    biographer:
+        role: Biographer
+        task: Write a biography
+        tools: wikipedia
+        input:
+            - query: str
+        output:
+            - person: str
+            - biography: str
+
+    summarizer:
+        role: Summarizer
+        task: Summarize the text
+        input:
+            - pubmed: str
+            - clinicaltrials: str
+            - patents: str
+        output:
+            - summary: str
+
+    pptx:
+        role: Powerpoint Analyst
+        task: Prepare a beautiful and professionnal Powerpoint file (PPTX format) summarizing the information given.
+        tools: python_repl
+
+flow:
+    edges:    
+        - edge1:
+            source:
+                agent: biographer
+                output: biography
+            target:
+                agent: summarizer
+                input: pubmed
+
+        - edge2:
+            source:
+                agent: summarizer
+                output: text
+            target:
+                agent: pptx
+                input: text
+        
