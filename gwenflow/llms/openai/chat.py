@@ -192,7 +192,7 @@ class ChatOpenAI(ChatBase):
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-            completion = await self.get_client().chat.completions.create(
+            completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
                 stream=True,
