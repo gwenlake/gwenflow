@@ -189,7 +189,7 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
-    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) ->  Any:
+    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
