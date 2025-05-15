@@ -20,7 +20,6 @@ class TokenTextSplitter(BaseModel):
     encoding_name: str = "cl100k_base"
     strip_whitespace: bool = False
     normalize_text: bool = False
-    tokenizer: Callable = None
 
     def split_text(self, text: str) -> List[str]:
 
