@@ -25,15 +25,13 @@ class TokenTextSplitter(BaseModel):
     def split_text(self, text: str) -> List[str]:
 
         _tokenizer = tiktoken.get_encoding(self.encoding_name)
-        if self.tokenizer:
-            _tokenizer = self.tokenizer
+        input_ids = _tokenizer.encode(text)
 
         if self.normalize_text:
             text = text.replace("\n", " ").replace("\r", " ")
-            text = re.sub(' +', ' ', text)
+            text = re.sub(' +', ' ', text)        
 
         splits: List[str] = []
-        input_ids = _tokenizer.encode(text)
         start_idx = 0
         cur_idx = min(start_idx + self.chunk_size, len(input_ids))
         chunk_ids = input_ids[start_idx:cur_idx]
