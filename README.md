@@ -173,9 +173,9 @@ response = agent.run("Summarize the wikipedia's page about Winston Churchill.")
 print(response.content)
 ```
 
-## [More Examples](https://github.com/gwenlake/gwenflow/tree/dev_Thomas/examples)
+## More Examples
 
-Click the link to dive deeper into practical implementations and advanced scenarios for agents.
+Click [here](https://github.com/gwenlake/gwenflow/tree/dev_Thomas/examples) to dive deeper into practical implementations and advanced scenarios for agents.
 
 ## Contributing to Gwenflow
 
