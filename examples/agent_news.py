@@ -2,7 +2,7 @@ import dotenv
 
 from gwenflow import ChatOpenAI, Agent
 from gwenflow.tools import WebsiteReaderTool, DuckDuckGoNewsTool
-from gwenflow.utils import set_log_level_to_debug
+from gwenflow import set_log_level_to_debug
 
 
 set_log_level_to_debug()

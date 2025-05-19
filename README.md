@@ -150,7 +150,7 @@ Q: What's the exchange rate of the Tonga?
 A: As of January 10, 2025, the current exchange rate for the Tongan paʻanga (ISO code: TOP) is approximately 2.42 TOP per 1 USD, while the inverse rate is around 0.41 USD per 1 TOP. The Tongan paʻanga is denoted by the numeric code 776, and the latest exchange data indicates that the rate was last updated at 15:55:14 GMT on the same day.
 ```
 
-## Agents and Langchain Tools
+## Agents and Tools
 
 ```python
 import requests
@@ -159,26 +159,23 @@ import dotenv
 
 from gwenflow import ChatOpenAI, Agent, FunctionTool
 
-from langchain_community.tools import WikipediaQueryRun
-from langchain_community.utilities import WikipediaAPIWrapper
-
 dotenv.load_dotenv(override=True)
 
-api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=500)
-wikipedia   = WikipediaQueryRun(api_wrapper=api_wrapper)
-
-tool_wikipedia = FunctionTool.from_langchain( wikipedia )
 
 agent = Agent(
     name="Helpful Analyst",
     instructions=["Get some useful information about my request", "Answer as precisely as possible."],
     llm=ChatOpenAI(model="gpt-4o-mini"),
-    tools=[tool_wikipedia],
+    tools=[WikipediaTool()],
 )
 
 response = agent.run("Summarize the wikipedia's page about Winston Churchill.")
 print(response.content)
 ```
+
+## [More Examples] (https://github.com/gwenlake/gwenflow/tree/main/examples)
+
+Click the link to dive deeper into practical implementations and advanced scenarios for agents.
 
 ## Contributing to Gwenflow
 
