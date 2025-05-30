@@ -7,17 +7,17 @@ from gwenflow.vector_stores.lancedb import LanceDB
 from gwenflow.vector_stores.faiss import FAISS
 
 
-client = FAISS("./test_vector_db_faiss.pkl", embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"))
-client.drop()
+client = FAISS("test_vector_db_faiss.pkl", embeddings=GwenlakeEmbeddings(model="multilingual-e5-large"))
+# client.drop()
 
-list_of_texts = [
-    "Olympic Games will be in Paris in 2024",
-    "Do Not Watch This Movie! Not funny at all",
-    "Can you help me write an email to my best friend?",
-]
+# list_of_texts = [
+#     "Olympic Games will be in Paris in 2024",
+#     "Do Not Watch This Movie! Not funny at all",
+#     "Can you help me write an email to my best friend?",
+# ]
 
-for i, text in enumerate(list_of_texts):
-    client.insert([Document(content=text)])
+# for i, text in enumerate(list_of_texts):
+#     client.insert([Document(content=text)])
 
 documents = client.search("email to a friend", limit=3)
 for document in documents:
@@ -28,6 +28,8 @@ print("")
 documents = client.search("sport in Paris", limit=3)
 for document in documents:
     print(document)
+
+exit(1)
 
 # qdrant = Qdrant(collection="clinicaltrials", host="10.0.111.108", embeddings=GwenlakeEmbeddings(model="e5-base-v2"))
 # documents = qdrant.search("asthma", limit=10)
