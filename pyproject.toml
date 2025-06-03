@@ -26,7 +26,6 @@ dependencies = [
     "jinja2",
     "markupsafe",
     "dirtyjson",
-    "pymupdf>=1.25.2",
     "asyncio>=3.4.3",
     "tenacity>=9.0.0",
     "mcp>=1.6.0",
