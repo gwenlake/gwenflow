@@ -21,31 +21,23 @@ class PDFReader(Reader):
             filename = self.get_file_name(file)
             content = self.get_file_content(file)
 
+            if isinstance(content, io.BytesIO):
+                pdf_file = content
+            else:
+                pdf_file = io.BytesIO(content)
+
             documents = []
-            with pdfplumber.open(io.BytesIO(content)) as pdf:
+            with pdfplumber.open(pdf_file) as pdf:
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
                     safe_text = text.encode('utf-8', errors='ignore').decode('utf-8')
 
                     tables = page.extract_tables()
 
-                    images = []
-                    for img in page.images:
-                        images.append({
-                            'x0': img['x0'],
-                            'y0': img['y0'],
-                            'x1': img['x1'],
-                            'y1': img['y1'],
-                            'name': img.get('name'),
-                            'width': img.get('width'),
-                            'height': img.get('height'),
-                        })
-
                     metadata = dict(
                         filename=filename,
                         page=i + 1,
                         tables=tables,
-                        images=images
                     )
 
                     doc = Document(
