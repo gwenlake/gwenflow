@@ -1,7 +1,7 @@
 import re
 import hashlib
 from pydantic import BaseModel
-from typing import List
+from typing import List, Callable
 from tqdm import tqdm
 
 from gwenflow.types.document import Document
@@ -18,19 +18,19 @@ class TokenTextSplitter(BaseModel):
     chunk_size: int = 500
     chunk_overlap: int = 100
     encoding_name: str = "cl100k_base"
-    strip_whitespace: bool = True
-    normalize_text: bool = True
+    strip_whitespace: bool = False
+    normalize_text: bool = False
 
     def split_text(self, text: str) -> List[str]:
 
         _tokenizer = tiktoken.get_encoding(self.encoding_name)
+        input_ids = _tokenizer.encode(text)
 
         if self.normalize_text:
             text = text.replace("\n", " ").replace("\r", " ")
-            text = re.sub(' +', ' ', text)
+            text = re.sub(' +', ' ', text)        
 
         splits: List[str] = []
-        input_ids = _tokenizer.encode(text)
         start_idx = 0
         cur_idx = min(start_idx + self.chunk_size, len(input_ids))
         chunk_ids = input_ids[start_idx:cur_idx]
