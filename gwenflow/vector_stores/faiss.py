@@ -1,9 +1,12 @@
+import io
 import os
 import logging
 import hashlib
 import numpy as np
 import pickle
 from typing import Optional, Any
+
+from gwenflow.utils.aws import aws_s3_download_in_buffer, aws_s3_is_file, aws_s3_upload_fileobj, aws_s3_uri_to_bucket_key
 
 try:
     import faiss
@@ -51,9 +54,11 @@ class FAISS(VectorStoreBase):
             self.load()
 
     def exists(self) -> bool:
-        if os.path.isfile(self.filename):
-            return True
-        return False
+        if self.filename.startswith('s3://'):
+            bucket, key = aws_s3_uri_to_bucket_key(self.filename)
+            return aws_s3_is_file(bucket=bucket, key=key)      
+        else:
+            return os.path.isfile(self.filename)
     
     def get_collections(self) -> list:
         return []
@@ -104,9 +109,19 @@ class FAISS(VectorStoreBase):
 
     def save(self):
         try:
+            
             faiss_data = dict(index=self.index, metadata=self.metadata)
-            with open(self.filename, "wb") as f:
-                pickle.dump(faiss_data, f)
+            if self.filename.startswith('s3://'):
+                logger.info(f"Saving FAISS index to S3 at {self.filename} ...")
+                bucket, key = aws_s3_uri_to_bucket_key(self.filename)
+                buffer = io.BytesIO()
+                pickle.dump(faiss_data, buffer)
+                buffer.seek(0)
+                aws_s3_upload_fileobj(bucket=bucket, key=key, fileobj=buffer)
+            else:
+                logger.info(f"Saving FAISS index locally at {self.filename} ...")
+                with open(self.filename, "wb") as f:
+                    pickle.dump(faiss_data, f)
             return True
         except Exception as e:
             logger.error(e)
@@ -114,10 +129,17 @@ class FAISS(VectorStoreBase):
 
     def load(self):
         try:
-            with open(self.filename, "rb") as f:
-                faiss_data = pickle.load(f)
-                self.index = faiss_data["index"]
-                self.metadata = faiss_data["metadata"]
+            logger.info(f"Loading FAISS index from: {self.filename} ...")
+            if self.filename.startswith("s3://"):
+                bucket, key = aws_s3_uri_to_bucket_key(self.filename)
+                buffer = aws_s3_download_in_buffer(bucket=bucket, key=key)
+                faiss_data = pickle.load(buffer)
+            else:
+                with open(self.filename, "rb") as f:
+                    faiss_data = pickle.load(f)
+
+            self.index = faiss_data["index"]
+            self.metadata = faiss_data["metadata"]
         except Exception as e:
             logger.error(e)
     
