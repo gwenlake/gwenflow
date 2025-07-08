@@ -33,6 +33,9 @@ class Agent(BaseModel):
     description: str | None = None
     """A description of the agent, used as a handoff, so that the manager knows what it does."""
 
+    system_prompt: str | None = None
+    """"System prompt"""
+
     instructions: (str | List[str] | None) = None
     """The instructions for the agent."""
 
@@ -103,6 +106,8 @@ class Agent(BaseModel):
     
     def get_system_prompt(self, task: str, context: Optional[Union[str, Dict[str, str]]] = None,) -> str:
         """Get the system prompt for the agent."""
+        if self.system_prompt:
+            return self.system_prompt
 
         prompt = "Your name is {name}.".format(name=self.name)
 
