@@ -1,8 +1,8 @@
 import dotenv
 
 from gwenflow import ChatOpenAI, Agent
-from gwenflow.tools import TavilyWebSearchTool, WebsiteReaderTool, PDFTool
-from gwenflow.utils import set_log_level_to_debug
+from gwenflow.tools import TavilyWebSearchTool, WebsiteReaderTool, PDFReaderTool
+from gwenflow import set_log_level_to_debug
 
 
 set_log_level_to_debug()
@@ -23,9 +23,11 @@ Make sure they’re not competing articles. Split the outline into part 1 and pa
 
 agent = Agent(
     name="SEO-Prompt",
-    role="SEO Prompt builder",
     llm=ChatOpenAI(model="gpt-4o-mini"),
-    tools=[TavilyWebSearchTool(), WebsiteReaderTool(), PDFTool()],
+    instructions=["You are a journalist who writes articles.",
+                    "You write your articles in markdown",
+                    "You STRICTLY adhere to the requested word count"],
+    tools=[TavilyWebSearchTool(), WebsiteReaderTool(), PDFReaderTool()],
 )
   
 response = agent.run(task.format(sector="Artificial Intelligence and Data Analytics").strip().replace("\n", " "))

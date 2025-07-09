@@ -110,7 +110,7 @@ class AutoFlow(Flow):
         tools = ", ".join(tools)
 
         task_prompt = TASK_GENERATOR.format(tasks=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
-        response = self.llm.invoke(messages=[{"role": "user", "content": task_prompt}])
+        response = self.llm.invoke(input=[{"role": "user", "content": task_prompt}])
         response = parse_json_markdown(response.choices[0].message.content)
         
         for agent_json in response:
