@@ -1,3 +1,4 @@
+import io
 import os
 import json
 from collections import namedtuple
@@ -149,3 +150,54 @@ def aws_s3_uri_to_bucket_key(uri: str):
     except:
         pass
     return None, None
+
+def aws_s3_upload_fileobj(bucket: str, key: str, fileobj, content_type: str = "application/octet-stream") -> dict:
+    client = boto3.client('s3')
+    try:
+        client.upload_fileobj(Fileobj=fileobj,Bucket=bucket,Key=key,ExtraArgs={"ContentType": content_type})
+        return {
+            "success": True,
+            "bucket": bucket,
+            "key": key,
+            "content_type": content_type
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    
+def aws_s3_delete_file(bucket: str, key: str) -> dict:
+    client = boto3.client("s3")
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+        return {
+            "success": True,
+            "bucket": bucket,
+            "key": key
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    
+def aws_s3_download_in_buffer(bucket: str, key: str):
+    try:
+        client = boto3.client("s3")
+        buffer = io.BytesIO()
+        client.download_fileobj(Bucket=bucket, Key=key, Fileobj=buffer)
+        buffer.seek(0)
+        return buffer
+    except Exception as e:
+        print(f"Error downloading s3://{bucket}/{key}: {e}")
+        return None
+    
+def aws_s3_is_file(bucket: str, key: str) -> bool:
+    client = boto3.client('s3')
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
+
