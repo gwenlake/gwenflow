@@ -2,11 +2,12 @@ import io
 import os
 import logging
 import hashlib
+import uuid
 import numpy as np
 import pickle
 from typing import Optional, Any
 
-from gwenflow.utils.aws import aws_s3_download_in_buffer, aws_s3_is_file, aws_s3_upload_fileobj, aws_s3_uri_to_bucket_key
+from gwenflow.utils.aws import aws_s3_delete_file, aws_s3_download_in_buffer, aws_s3_is_file, aws_s3_upload_fileobj, aws_s3_uri_to_bucket_key
 
 try:
     import faiss
@@ -42,13 +43,13 @@ class FAISS(VectorStoreBase):
             self.filename = self.filename + ".pkl"
 
         self.index = None
-        self.metadata = []
+        self.metadata: dict[int, dict] = {}
         self.create()
 
     def create(self):
         if not self.exists():
-            self.index = faiss.IndexFlatL2(self.embeddings.dimensions)
-            self.metadata = []
+            self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.embeddings.dimensions))
+            self.metadata = {}
             self.save()
         else:
             self.load()
@@ -69,16 +70,21 @@ class FAISS(VectorStoreBase):
         embeddings = np.array(embeddings, dtype='float32')
 
         logger.info(f"Inserting {len(documents)} documents into index")
-        data = []
-        for document in documents:
-            if document.id is None:
-                document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
-            data.append(document.model_dump())
-    
+        ids = []
+        for i, document in enumerate(documents):
+            root_id = document.id
+            if document.chunk_id is None:
+                document.chunk_id = f"{root_id}_chunk{i}"
+
+            id_int = int(hashlib.md5(document.chunk_id.encode()).hexdigest(), 16) % (2**63)
+
+            ids.append(id_int)
+            self.metadata[id_int] = document.model_dump()
+
         if len(documents) > 0:
-            self.index.add(embeddings)
-            self.metadata.extend(data)
+            self.index.add_with_ids(embeddings, np.array(ids, dtype='int64'))
             self.save()
+
 
     def search(self, query: str, limit: int = 5) -> list[Document]:
 
@@ -96,11 +102,16 @@ class FAISS(VectorStoreBase):
 
         documents = []
         for idx, score in zip(I[0], D[0]):
-            document = self.metadata[idx].copy()
-            document.pop("embedding")
-            document = Document(**document)
-            document.score = score
-            documents.append(document)
+            if idx == -1:
+                continue
+            if idx in self.metadata:
+                document = self.metadata[idx].copy()
+                document.pop("embedding", None)
+                document = Document(**document)
+                document.score = score
+                documents.append(document)
+            else:
+                logger.warning(f"Missing metadata for FAISS ID {idx}")
     
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
@@ -145,9 +156,14 @@ class FAISS(VectorStoreBase):
     
     def drop(self):
         try:
-            os.remove(self.filename)
-            self.index = faiss.IndexFlatL2(self.embeddings.dimensions)
-            self.metadata = []
+            if self.filename.startswith("s3://"):
+                bucket, key = aws_s3_uri_to_bucket_key(self.filename)
+                aws_s3_delete_file(bucket=bucket, key=key)
+            else:
+                os.remove(self.filename)
+                self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.embeddings.dimensions))
+                
+            self.metadata = {}
             return True
         except Exception as e:
             logger.error(e)
@@ -159,8 +175,24 @@ class FAISS(VectorStoreBase):
     def info(self) -> dict:
         return {}
     
-    def delete(self, id: int):
-        return False
+
+    def delete(self, root_ids: list[str]):
+        ids_to_delete = [
+            id_int for id_int, meta in self.metadata.items()
+            if any(meta.get("chunk_id", "").startswith(root_id) for root_id in root_ids)
+        ]
+
+        if not ids_to_delete:
+            logger.info(f"No documents found with root_id prefixes {root_ids} to delete.")
+            return
+
+        self.index.remove_ids(np.array(ids_to_delete, dtype='int64'))
+
+        for id_int in ids_to_delete:
+            self.metadata.pop(id_int, None)
+
+        self.save()
+        logger.info(f"Deleted {len(ids_to_delete)} documents with root_id prefixes {root_ids} from index.")
 
     def get(self, id: int) -> dict:        
         return None
