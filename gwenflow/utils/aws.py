@@ -151,7 +151,7 @@ def aws_s3_uri_to_bucket_key(uri: str):
         pass
     return None, None
 
-def aws_s3_upload_fileobj(bucket: str, key: str, fileobj, content_type: str = "application/octet-stream"):
+def aws_s3_upload_fileobj(bucket: str, key: str, fileobj, content_type: str = "application/octet-stream") -> dict:
     client = boto3.client('s3')
     try:
         client.upload_fileobj(Fileobj=fileobj,Bucket=bucket,Key=key,ExtraArgs={"ContentType": content_type})
@@ -160,6 +160,21 @@ def aws_s3_upload_fileobj(bucket: str, key: str, fileobj, content_type: str = "a
             "bucket": bucket,
             "key": key,
             "content_type": content_type
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    
+def aws_s3_delete_file(bucket: str, key: str) -> dict:
+    client = boto3.client("s3")
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+        return {
+            "success": True,
+            "bucket": bucket,
+            "key": key
         }
     except Exception as e:
         return {
