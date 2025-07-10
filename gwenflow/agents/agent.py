@@ -91,6 +91,9 @@ class Agent(BaseModel):
             if self.tools or self.mcp_servers:
                 self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
+            else:
+                self.llm.tools = None
+                self.llm.tool_choice = None
         return self
 
     def _format_context(self, context: Optional[Union[str, Dict[str, str]]]) -> str:
