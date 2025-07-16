@@ -169,7 +169,7 @@ class FAISS(VectorStoreBase):
 
         if len(keep_indices) == len(self.metadata):
             logger.warning(f"No chunks found for document_id: {id}")
-            return False  # Aucun document à supprimer
+            return False
 
         new_index = faiss.IndexFlatL2(self.embeddings.dimensions)
         new_metadata = []
