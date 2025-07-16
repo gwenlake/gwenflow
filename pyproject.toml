@@ -29,6 +29,7 @@ dependencies = [
     "asyncio>=3.4.3",
     "tenacity>=9.0.0",
     "mcp>=1.6.0",
+    "faiss-cpu>=1.11.0.post1",
 ]
 
 classifiers = [
