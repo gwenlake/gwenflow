@@ -161,16 +161,19 @@ class FAISS(VectorStoreBase):
     def info(self) -> dict:
         return {}
     
-    def delete(self, id: str) -> bool:
-        logger.info(f"Deleting all chunks with document_id: {id}")
+    def delete(self, id: int):
+        return False
+    
+    def delete_files(self, ids: list[str]) -> bool:
+        logger.info(f"Deleting file with document_id: {ids}")
 
         keep_indices = [
             i for i, doc in enumerate(self.metadata)
-            if doc.get("metadata", {}).get("document_id") != id
+            if doc.get("metadata", {}).get("document_id") not in ids
         ]
 
         if len(keep_indices) == len(self.metadata):
-            logger.warning(f"No chunks found for document_id: {id}")
+            logger.warning(f"No chunks found for document_id: {ids}")
             return False
 
         new_index = faiss.IndexFlatL2(self.embeddings.dimensions)
