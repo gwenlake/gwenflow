@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp import ClientSession, StdioServerParameters, Tool as MCPTool, stdio_client
+from mcp import ClientSession, Tool
 from mcp.client.sse import sse_client
 from mcp.types import CallToolResult, JSONRPCMessage
 from typing_extensions import NotRequired, TypedDict
@@ -41,7 +41,7 @@ class MCPServer(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def list_tools(self) -> list[MCPTool]:
+    async def list_tools(self) -> list[Tool]:
         """List the tools available on the server."""
         pass
 
@@ -71,7 +71,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
 
         # The cache is always dirty at startup, so that we fetch tools at least once
         self._cache_dirty = True
-        self._tools_list: list[MCPTool] | None = None
+        self._tools_list: list[Tool] | None = None
 
     @abc.abstractmethod
     def create_streams(
@@ -109,7 +109,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
             await self.cleanup()
             raise
 
-    async def list_tools(self) -> list[MCPTool]:
+    async def list_tools(self) -> list[Tool]:
         """List the tools available on the server."""
         if not self.session:
             raise UserError("Server not initialized. Make sure you call `connect()` first.")
@@ -169,65 +169,6 @@ class MCPServerStdioParams(TypedDict):
     See https://docs.python.org/3/library/codecs.html#codec-base-classes for
     explanations of possible values.
     """
-
-
-class MCPServerStdio(_MCPServerWithClientSession):
-    """MCP server implementation that uses the stdio transport. See the [spec]
-    (https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) for
-    details.
-    """
-
-    def __init__(
-        self,
-        params: MCPServerStdioParams,
-        cache_tools_list: bool = False,
-        name: str | None = None,
-    ):
-        """Create a new MCP server based on the stdio transport.
-
-        Args:
-            params: The params that configure the server. This includes the command to run to
-                start the server, the args to pass to the command, the environment variables to
-                set for the server, the working directory to use when spawning the process, and
-                the text encoding used when sending/receiving messages to the server.
-            cache_tools_list: Whether to cache the tools list. If `True`, the tools list will be
-                cached and only fetched from the server once. If `False`, the tools list will be
-                fetched from the server on each call to `list_tools()`. The cache can be
-                invalidated by calling `invalidate_tools_cache()`. You should set this to `True`
-                if you know the server will not change its tools list, because it can drastically
-                improve latency (by avoiding a round-trip to the server every time).
-            name: A readable name for the server. If not provided, we'll create one from the
-                command.
-        """
-        super().__init__(cache_tools_list)
-
-        self.params = StdioServerParameters(
-            command=params["command"],
-            args=params.get("args", []),
-            env=params.get("env"),
-            cwd=params.get("cwd"),
-            encoding=params.get("encoding", "utf-8"),
-            encoding_error_handler=params.get("encoding_error_handler", "strict"),
-        )
-
-        self._name = name or f"stdio: {self.params.command}"
-
-    def create_streams(
-        self,
-    ) -> AbstractAsyncContextManager[
-        tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
-        ]
-    ]:
-        """Create the streams for the server."""
-        return stdio_client(self.params)
-
-    @property
-    def name(self) -> str:
-        """A readable name for the server."""
-        return self._name
-
 
 class MCPServerSseParams(TypedDict):
     """Mirrors the params in`mcp.client.sse.sse_client`."""
