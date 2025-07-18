@@ -96,6 +96,8 @@ class FAISS(VectorStoreBase):
 
         documents = []
         for idx, score in zip(I[0], D[0]):
+            if(idx==-1):
+                continue
             document = self.metadata[idx].copy()
             document.pop("embedding")
             document = Document(**document)
