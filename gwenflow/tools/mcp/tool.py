@@ -17,9 +17,9 @@ class MCPTool(BaseTool):
     async def from_server(cls, url: str, name: str, headers: dict = None) -> "MCPTool":
         params = MCPServerSseParams(url=url, headers=headers)
         server = MCPServerSse(params=params)
+        await server.connect()
 
         tool = None
-        server.connect()
         response = await server.list_tools()
         for t in response.tools:
             if t.name == name:
