@@ -1,8 +1,9 @@
 
+import hashlib
 import uuid
 import enum
 from typing import Optional, Any, Dict, List
-from pydantic import BaseModel, ConfigDict, field_validator, Field
+from pydantic import BaseModel, ConfigDict, field_validator, Field, model_validator
 
 
 class DocumentCreationMode(str, enum.Enum):
@@ -15,7 +16,7 @@ class DocumentCreationMode(str, enum.Enum):
 class Document(BaseModel):
     """Base class for Documents"""
 
-    id: Optional[str] = Field(None, validate_default=True)
+    id: Optional[str] = None
     content: str
     metadata: Dict[str, Any] = {}
     embedding: List[float] = None
@@ -23,10 +24,11 @@ class Document(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @field_validator("id", mode="before")
-    def set_id(cls, v: Optional[str]) -> str:
-        id = v or str(uuid.uuid4())
-        return id
+    @model_validator(mode="after")
+    def set_id(self) -> "Document":
+        if self.id is None:
+            self.id = hashlib.md5(self.content.encode(), usedforsecurity=False).hexdigest()
+        return self
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns a dictionary representation of the document"""

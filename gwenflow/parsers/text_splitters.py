@@ -82,6 +82,7 @@ class TokenTextSplitter(BaseModel):
             # split
             splitted_text = self.split_text(text=content)
             for i, chunk in enumerate(splitted_text):
+                metadata["chunk_id"] = f"chunk_{i}"
                 _id = hashlib.md5("-".join([document.id, str(i)]).encode(), usedforsecurity=False).hexdigest()
                 chunks.append(Document(id=_id, content=chunk, metadata=metadata))
 
