@@ -4,8 +4,9 @@ import os
 import re
 import requests
 from tenacity import retry, stop_after_attempt, wait_fixed
+from functools import cached_property
 
-from gwenflow.api import api
+from gwenflow.api import api, Api
 from gwenflow.embeddings.base import Embeddings
 from gwenflow.version import __version__
 
@@ -23,6 +24,12 @@ EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
 class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
 
+    base_url: Optional[str] = None 
+
+    @cached_property
+    def _api(self) -> Api:
+        return api or (Api(base_url=self.base_url) if self.base_url else api)
+
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
@@ -35,7 +42,7 @@ class GwenlakeEmbeddings(Embeddings):
     def _embed(self, input: List[str]) -> List[List[float]]:    
         try:
             payload = {"input": input, "model": self.model}
-            response = api.client.post("/v1/embeddings", json=payload)
+            response = self._api.client.post("/v1/embeddings", json=payload)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Error raised by inference endpoint: {e}")
         
