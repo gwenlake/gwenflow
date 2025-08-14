@@ -28,7 +28,7 @@ class GwenlakeEmbeddings(Embeddings):
 
     @cached_property
     def _api(self) -> Api:
-        return api or (Api(base_url=self.base_url) if self.base_url else api)
+        return Api(base_url=self.base_url) if self.base_url else api
 
     @model_validator(mode="before")
     @classmethod
