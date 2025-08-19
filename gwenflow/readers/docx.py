@@ -1,5 +1,5 @@
 import io
-from typing import List, Union
+from typing import List, Union, ClassVar
 from pathlib import Path
 
 from gwenflow.logger import logger
@@ -9,14 +9,14 @@ from gwenflow.readers.base import Reader
 
 
 class DocxReader(Reader):
-    trans = {
-        0x00A0: 0x20,   # NBSP -> space
-        0x202F: 0x20,   # NARROW NBSP -> space
-        0x2007: 0x20,   # FIGURE SPACE -> space
-        0x200B: None,   # ZERO WIDTH SPACE -> remove
-        0x200C: None,   # ZERO WIDTH NON-JOINER -> remove
-        0x200D: None,   # ZERO WIDTH JOINER -> remove
-        0xFEFF: None,   # BOM -> remove
+    trans: ClassVar[dict[int, int | None]] = {
+        0x00A0: 0x20,
+        0x202F: 0x20,
+        0x2007: 0x20,
+        0x200B: None,
+        0x200C: None,
+        0x200D: None,
+        0xFEFF: None,
     }
 
     def getText(self, file_obj) -> str:
