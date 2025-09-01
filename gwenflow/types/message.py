@@ -1,6 +1,55 @@
 
-from pydantic import BaseModel, ConfigDict
-from typing import Any, Dict, Optional, Union, List
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from typing import Any, Dict, Optional, Union, List, Tuple, Literal
+
+SYSTEM = 'system'
+USER = 'user'
+ASSISTANT = 'assistant'
+TOOL = 'tool'
+
+
+class ContentItem(BaseModel):
+    text: Optional[str] = None
+    image: Optional[str] = None
+    file: Optional[str] = None
+    audio: Optional[Union[str, dict]] = None
+    video: Optional[Union[str, list]] = None
+
+    @model_validator(mode='after')
+    def check_exclusivity(self):
+        provided_fields = 0
+        if self.text is not None:
+            provided_fields += 1
+        if self.image:
+            provided_fields += 1
+        if self.file:
+            provided_fields += 1
+        if self.audio:
+            provided_fields += 1
+        if self.video:
+            provided_fields += 1
+
+        if provided_fields != 1:
+            raise ValueError("Exactly one of 'text', 'image', 'file', 'audio', or 'video' must be provided.")
+        return self
+
+    def __repr__(self):
+        return f'ContentItem({self.model_dump()})'
+
+    def get_type_and_value(self) -> Tuple[Literal['text', 'image', 'file', 'audio', 'video'], str]:
+        (t, v), = self.model_dump().items()
+        assert t in ('text', 'image', 'file', 'audio', 'video')
+        return t, v
+
+    @property
+    def type(self) -> Literal['text', 'image', 'file', 'audio', 'video']:
+        t, v = self.get_type_and_value()
+        return t
+
+    @property
+    def value(self) -> str:
+        t, v = self.get_type_and_value()
+        return v
 
 
 class Message(BaseModel):
@@ -9,7 +58,7 @@ class Message(BaseModel):
     role: str
     """The role of the messages author (system, user, assistant or tool)."""
 
-    content: Optional[Union[str, list[Union[str, dict]]]] = None
+    content: Union[str, List[ContentItem]]
     """Content of the message."""
 
     name: Optional[str] = None
@@ -26,10 +75,15 @@ class Message(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
+    def __repr__(self):
+        return f'Message({self.model_dump()})'
 
-    def __str__(self) -> str:
-        return f"{self.role}: {self.content}"
-
+    @field_validator('role')
+    def role_checker(cls, value: str) -> str:
+        if value not in [USER, ASSISTANT, SYSTEM, TOOL]:
+            raise ValueError(f'{value} must be one of {",".join([USER, ASSISTANT, SYSTEM, TOOL])}')
+        return value
+    
     def to_dict(self, **kwargs: Any) -> Dict[str, Any]:
         message_dict = self.model_dump(**kwargs)
         message_dict = {
