@@ -86,7 +86,7 @@ class ChatOpenAI(ChatBase):
             "top_logprobs": self.top_logprobs,
         }
 
-        if self.tools:
+        if self.tools and self.tool_type == "fncall":
             model_params["tools"] = [tool.to_openai() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
         
