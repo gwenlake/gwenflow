@@ -206,8 +206,7 @@ class ReactAgent(Agent):
 
             # handle tool calls
             tool_message = self.run_tool(react_message.get_tool_call())
-            observation = f'\nObservation: { tool_message.content }\nThought: '
-            text_message = react_message.thought + f'\nAction: {react_message.action}\nAction Input: {react_message.action_input}' + observation
+            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }\nThought: "
             self.history.add_message(Message(role="assistant", content=text_message))
             agent_response.output.append(Message(role="assistant", content=text_message))
         
