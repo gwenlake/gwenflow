@@ -353,7 +353,11 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
     
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
+
+        while num_turns_available > 0:
+
+            num_turns_available -= 1
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -545,8 +549,12 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
 
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
 
+        while num_turns_available > 0:
+
+            num_turns_available -= 1
+            
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
