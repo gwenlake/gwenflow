@@ -8,7 +8,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
-from gwenflow.agents.agent import Agent
+from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
 
 from openai.types.chat import ChatCompletionMessageToolCall
 
@@ -69,7 +69,7 @@ Final Answer: [your answer here (In the same language as the user's question)]
 ## Task
 
 Question: {query}
-Thought: """
+"""
 
 
 class ReactMessage(BaseModel):
@@ -88,6 +88,34 @@ class ReactMessage(BaseModel):
                 "arguments": self.action_input
             }
         )
+    
+class ReactMessageParser(BaseModel):
+
+    @classmethod
+    def parse(self, text: str) -> ReactMessage:
+        special_func_token = 'Action: '
+        special_args_token = 'Action Input: '
+        special_obs_token = 'Observation: '
+        special_final_token = 'Final Answer: '
+        func_name, func_args, final = None, None, None
+        i = text.rfind(special_func_token)
+        j = text.rfind(special_args_token)
+        k = text.rfind(special_obs_token)
+        if 0 <= i < j:  # If the text has `Action` and `Action input`,
+            if k < j:  # but does not contain `Observation`,
+                # then it is likely that `Observation` is ommited by the LLM,
+                # because the output text may have discarded the stop word.
+                text = text.rstrip() + special_obs_token  # Add it back.
+            k = text.rfind(special_obs_token)
+            func_name = text[i + len(special_func_token):j].strip()
+            func_args = text[j + len(special_args_token):k].strip()
+            text = text[:i]  # Return the response before tool call, i.e., `Thought`
+        elif text.rfind(special_final_token):
+            f = text.rfind(special_final_token)
+            final = text[f + len(special_args_token):].strip()
+
+        return ReactMessage(action=func_name, action_input=func_args, thought=text, final_answer=final)
+
 
 class ReactAgent(Agent):
     
@@ -109,30 +137,6 @@ class ReactAgent(Agent):
             query=messages[-1].content,
         )
         return messages
-
-    def _detect_tool(self, text: str) -> ReactMessage:
-        special_func_token = '\nAction:'
-        special_args_token = '\nAction Input:'
-        special_obs_token = '\nObservation:'
-        special_final_token = '\nFinal Answer:'
-        func_name, func_args, final = None, None, None
-        i = text.rfind(special_func_token)
-        j = text.rfind(special_args_token)
-        k = text.rfind(special_obs_token)
-        if 0 <= i < j:  # If the text has `Action` and `Action input`,
-            if k < j:  # but does not contain `Observation`,
-                # then it is likely that `Observation` is ommited by the LLM,
-                # because the output text may have discarded the stop word.
-                text = text.rstrip() + special_obs_token  # Add it back.
-            k = text.rfind(special_obs_token)
-            func_name = text[i + len(special_func_token):j].strip()
-            func_args = text[j + len(special_args_token):k].strip()
-            text = text[:i]  # Return the response before tool call, i.e., `Thought`
-        elif text.rfind(special_final_token):
-            f = text.rfind(special_final_token)
-            final = text[f + len(special_args_token):].strip()
-
-        return ReactMessage(action=func_name, action_input=func_args, thought=text, final_answer=final)
 
     def run(
         self,
@@ -171,7 +175,11 @@ class ReactAgent(Agent):
             )
             agent_response.usage.add(usage)
     
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
+
+        while num_turns_available > 0:
+
+            num_turns_available -= 1
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -192,7 +200,7 @@ class ReactAgent(Agent):
             )
             agent_response.usage.add(usage)
 
-            react_message = self._detect_tool(response.choices[0].message.content)
+            react_message = ReactMessageParser.parse(response.choices[0].message.content)
 
             # stop if not tool call
             if not react_message.action or not self.get_all_tools():
@@ -206,7 +214,7 @@ class ReactAgent(Agent):
 
             # handle tool calls
             tool_message = self.run_tool(react_message.get_tool_call())
-            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }\nThought: "
+            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }"
             self.history.add_message(Message(role="assistant", content=text_message))
             agent_response.output.append(Message(role="assistant", content=text_message))
         
@@ -242,6 +250,10 @@ class ReactAgent(Agent):
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
+        # add react prompt to the last message
+        self.llm.tool_type = "react"
+        messages = self._prepend_react_prompt(messages)
+
         # init agent response
         agent_response = AgentResponse()
 
@@ -265,14 +277,18 @@ class ReactAgent(Agent):
             )
             agent_response.usage.add(usage)
 
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
+
+        while num_turns_available > 0:
+
+            num_turns_available -= 1
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             # call llm and tool
-            message = Message(role="assistant", content="", delta="", tool_calls=[])
-            final_tool_calls = {}
+            last_delta_message = None
+            output = ""
 
             for chunk in self.llm.stream(input=messages_for_model):
 
@@ -293,45 +309,59 @@ class ReactAgent(Agent):
                     continue
 
                 delta = chunk.choices[0].delta
+                if not delta.content:
+                    continue
 
-                agent_response.content = None
-                agent_response.thinking = None
+                output += delta.content
 
-                if delta.content:
-                    agent_response.content = delta.content
+                special_func_token = 'Action: '
+                special_args_token = 'Action Input: '
+                special_thought_token = 'Thought: '
+                special_final_token = 'Final Answer: '
+
+                a = output.rfind(special_func_token) # action
+                i = output.rfind(special_args_token) # iaction nput
+                t = output.rfind(special_thought_token) # thought
+                f = output.rfind(special_final_token) # final
                 
-                for tool_call in delta.tool_calls or []:
-                    index = tool_call.index
-                    if index not in final_tool_calls:
-                        final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
-
+                last_delta_message = None
+                if max([a,i,t,f]) == t:
+                    agent_response.content = None
+                    if last_delta_message != "thought":
+                        last_delta_message = "thought"
+                        agent_response.thinking = None
+                    else:
+                        agent_response.thinking = delta.content
+                elif max([a,i,t,f]) == f:
+                    agent_response.thinking = None
+                    if last_delta_message != "final":
+                        last_delta_message = "final"
+                        agent_response.content = None
+                    else:
+                        agent_response.content = delta.content
+                
                 yield agent_response
 
-            # convert tool_calls
-            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
-            # keep answer in memory
-            self.history.add_message(message.model_dump())
+            react_message = ReactMessageParser.parse(output)
 
-            # stop if not tool call
-            if not message.tool_calls:
-                agent_response.content = message.content
-                agent_response.output.append(Message(**message.model_dump()))
+            # stop if no tool call
+            if not react_message.action or not self.get_all_tools():
+                agent_response.content = react_message.final_answer
+                agent_response.output.append(Message(role="assistant", content=output))
                 break
 
             # thinking
-            agent_response.thinking = self._get_thinking(message.tool_calls)
+            agent_response.thinking = react_message.thought
             if agent_response.thinking:
+                logger.debug(react_message.thought)
                 yield agent_response
 
             # handle tool calls
-            tool_calls = message.tool_calls
-            if tool_calls and self.get_all_tools():
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                for m in tool_messages:
-                    self.history.add_message(m)
-                    agent_response.output.append(Message(**m))
+            tool_message = self.run_tool(react_message.get_tool_call())
+            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }"
+            self.history.add_message(Message(role="assistant", content=text_message))
+            agent_response.output.append(Message(role="assistant", content=text_message))
         
         # format response
         if self.response_model:
@@ -354,12 +384,3 @@ class ReactAgent(Agent):
         agent_response.finish_reason = "stop"
 
         yield agent_response
-
-    async def arun(
-        self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
-        context: Optional[Union[str, Dict[str, str]]] = None,
-    ) -> AgentResponse:
-        # loop = asyncio.new_event_loop()
-        # return loop.run_until_complete(self.run(input=input, context=context))
-        return self.run(input=input, context=context)
