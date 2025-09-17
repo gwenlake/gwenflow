@@ -58,7 +58,7 @@ class Message(BaseModel):
     role: str
     """The role of the messages author (system, user, assistant or tool)."""
 
-    content: Union[str, List[ContentItem]]
+    content: Optional[Union[str, List[ContentItem]]] = None
     """Content of the message."""
 
     name: Optional[str] = None

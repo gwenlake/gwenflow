@@ -49,6 +49,7 @@ class ChatBase(BaseModel, ABC):
     """A list of tools that the LLM can use."""
 
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    tool_type: str = Field(default="fncall")
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
