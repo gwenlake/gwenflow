@@ -1,16 +1,12 @@
 import json
-import re
-import asyncio
 import uuid
 
-from typing import List, Union, Optional, Any, Dict, Iterator, Literal, Tuple
-from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
+from typing import List, Union, Optional, Dict, Iterator
+from pydantic import BaseModel
 
 from gwenflow.logger import logger
 from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
 from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
-
-from openai.types.chat import ChatCompletionMessageToolCall
 
 
 TOOL_DESC = """<tool>
@@ -195,6 +191,10 @@ class ReactAgent(Agent):
 
             react_message = ReactMessageParser.parse(response.choices[0].message.content)
 
+            # keep thought
+            self.history.add_message(Message(role="assistant", content=response.choices[0].message.content))
+            agent_response.output.append(Message(role="assistant", content=response.choices[0].message.content))
+
             # stop if not tool call
             if not react_message.action or not self.get_all_tools():
                 agent_response.content = react_message.final_answer
@@ -206,10 +206,9 @@ class ReactAgent(Agent):
             logger.debug(react_message.thought)
 
             # handle tool calls
-            tool_message = self.run_tool(react_message.get_tool_call())
-            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }"
-            self.history.add_message(Message(role="assistant", content=text_message))
-            agent_response.output.append(Message(role="assistant", content=text_message))
+            observation = self.run_tool(react_message.get_tool_call())
+            self.history.add_message(Message(role="user", content=f"Observation: { observation.content }"))
+            agent_response.output.append(Message(role="user", content=f"Observation: { observation.content }"))
         
         # format response
         if self.response_model:
@@ -338,6 +337,10 @@ class ReactAgent(Agent):
 
             react_message = ReactMessageParser.parse(output)
 
+            # keep thought
+            self.history.add_message(Message(role="assistant", content=output))
+            agent_response.output.append(Message(role="assistant", content=output))
+
             # stop if no tool call
             if not react_message.action or not self.get_all_tools():
                 agent_response.content = react_message.final_answer
@@ -351,10 +354,9 @@ class ReactAgent(Agent):
                 yield agent_response
 
             # handle tool calls
-            tool_message = self.run_tool(react_message.get_tool_call())
-            text_message = f"Thought: {react_message.thought}\nAction: {react_message.action}\nAction Input: {react_message.action_input}\nObservation: { tool_message.content }"
-            self.history.add_message(Message(role="assistant", content=text_message))
-            agent_response.output.append(Message(role="assistant", content=text_message))
+            observation = self.run_tool(react_message.get_tool_call())
+            self.history.add_message(Message(role="user", content=f"Observation: { observation.content }"))
+            agent_response.output.append(Message(role="user", content=f"Observation: { observation.content }"))
         
         # format response
         if self.response_model:
