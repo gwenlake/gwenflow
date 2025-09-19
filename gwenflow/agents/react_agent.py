@@ -20,24 +20,19 @@ Arguments: {parameters}
 </tool>"""
 
 PROMPT_REACT = """\
-
-## Tools
-
-You have access to a wide variety of tools. You are responsible for using the tools in any sequence you deem appropriate to complete the task at hand.
-This may require breaking the task into subtasks and using different tools to complete each subtask.
-
-You have access to the following tools:
+# Tools
+You have access to the following tools. Only use these tools.
 
 <tools>
 {tool_descs}
 </tools>
 
-# Output Format
+# Format
 
-Please answer in the same language as the question and use the following format:
+Please answer in the following format:
 
 ```
-Thought: The current language of the user is: (user's language). I need to use a tool to help me answer the question.
+Thought: analyze the problem, plan the next action.
 Action: tool name (one of {tool_names}) if using a tool.
 Action Input: the input to the tool, in a JSON format representing the kwargs (e.g. {{"input": "hello world", "num_beams": 5}})
 ```
@@ -66,10 +61,8 @@ Thought: I cannot answer the question with the provided tools.
 Final Answer: [your answer here (In the same language as the user's question)]
 ```
 
-## Task
-
-Question: {query}
-"""
+# Task
+Question: {query}"""
 
 
 class ReactMessage(BaseModel):
@@ -186,7 +179,7 @@ class ReactAgent(Agent):
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
-            
+
             # usage
             usage = (
                 Usage(
