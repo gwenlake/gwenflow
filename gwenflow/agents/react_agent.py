@@ -20,14 +20,14 @@ Arguments: {parameters}
 </tool>"""
 
 PROMPT_REACT = """\
-# Tools
+## Tools
 You have access to the following tools. Only use these tools.
 
 <tools>
 {tool_descs}
 </tools>
 
-# Format
+## Format
 
 Please answer in the following format:
 
@@ -61,7 +61,7 @@ Thought: I cannot answer the question with the provided tools.
 Final Answer: [your answer here (In the same language as the user's question)]
 ```
 
-# Task
+## Task
 Question: {query}"""
 
 
