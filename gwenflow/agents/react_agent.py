@@ -5,24 +5,20 @@ from typing import List, Union, Optional, Dict, Iterator
 from pydantic import BaseModel
 
 from gwenflow.logger import logger
-from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers
 from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
 
 
-TOOL_DESC = """<tool>
-Name: {name}
-Description: {description}
-Arguments: {parameters}
-</tool>"""
-
-PROMPT_REACT = """\
+PROMPT_TOOLS = """\
 ## Tools
 You have access to the following tools. Only use these tools.
 
 <tools>
-{tool_descs}
+{tools}
 </tools>
+"""
 
+PROMPT_REACT = """\
 ## Format
 
 Please answer in the following format:
@@ -109,22 +105,15 @@ class ReactMessageParser(BaseModel):
 class ReactAgent(Agent):
     
     def _prepend_react_prompt(self, messages: List[Message]) -> List[Message]:
-        tool_descs = []
-        for tool in self.tools:
-            tool_descs.append(
-                TOOL_DESC.format(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=json.dumps(tool.params_json_schema)
-                )
-            )
-        tool_descs = '\n'.join(tool_descs)
-        tool_names = ','.join(tool.name for tool in self.tools)
-        messages[-1].content = PROMPT_REACT.format(
-            tool_descs=tool_descs,
+        tool_names = ','.join(t.name for t in self.tools)
+        tool_descs = [t.to_openai()["function"] for t in self.tools]
+        prompt_tools = PROMPT_TOOLS.format(tools=json.dumps(tool_descs, indent=2, ensure_ascii=False))
+
+        messages[-1].content = prompt_tools + "\n" + PROMPT_REACT.format(
             tool_names=tool_names,
             query=messages[-1].content,
         )
+
         return messages
 
     def run(
@@ -206,27 +195,27 @@ class ReactAgent(Agent):
             logger.debug(react_message.thought)
 
             # handle tool calls
-            observation = self.run_tool(react_message.get_tool_call())
-            self.history.add_message(Message(role="user", content=f"Observation: { observation.content }"))
-            agent_response.output.append(Message(role="user", content=f"Observation: { observation.content }"))
+            tool_message = self.run_tool(react_message.get_tool_call())
+            self.history.add_message(Message(role="user", content=f"Observation: { tool_message.content }"))
+            agent_response.output.append(Message(role="user", content=f"Observation: { tool_message.content }"))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
         # keep sources
-        for output in agent_response.output:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+        # for output in agent_response.output:
+        #     if output.role == "tool":
+        #         try:
+        #             agent_response.sources.append(
+        #                 ResponseOutputItem(
+        #                     id=output.tool_call_id,
+        #                     name=output.tool_name,
+        #                     data=json.loads(output.content),
+        #                 )
+        #             )
+        #         except Exception as e:
+        #             logger.warning(f"Error casting source: {e}")
         
         agent_response.finish_reason = "stop"
 
@@ -363,18 +352,18 @@ class ReactAgent(Agent):
             agent_response.content = json.loads(agent_response.content)
 
         # keep sources
-        for output in agent_response.output:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+        # for output in agent_response.output:
+        #     if output.role == "tool":
+        #         try:
+        #             agent_response.sources.append(
+        #                 ResponseOutputItem(
+        #                     id=output.tool_call_id,
+        #                     name=output.tool_name,
+        #                     data=json.loads(output.content),
+        #                 )
+        #             )
+        #         except Exception as e:
+        #             logger.warning(f"Error casting source: {e}")
 
         agent_response.finish_reason = "stop"
 
