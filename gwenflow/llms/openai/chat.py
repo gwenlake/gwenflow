@@ -124,25 +124,7 @@ class ChatOpenAI(ChatBase):
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """Format a message into the format expected by OpenAI."""
-
-        message_dict: Dict[str, Any] = {
-            "role": message.role,
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = None
-
-        return message_dict
+        return message.to_openai()
     
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:

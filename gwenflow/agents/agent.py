@@ -9,7 +9,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ResponseOutputItem, ItemHelpers
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
@@ -224,13 +224,13 @@ class Agent(BaseModel):
         try:
             logger.debug(f"Tool call: {tool_name}({function_args})")
             tool = tool_map[tool_name]
-            response_output = tool.run(**function_args)
-            if response_output:
+            tool_response = tool.run(**function_args)
+            if tool_response:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
                     tool_name=tool_name,
-                    content=response_output.to_json(),
+                    content=tool_response,
                 )
 
         except Exception as e:
@@ -356,18 +356,18 @@ class Agent(BaseModel):
             agent_response.content = json.loads(agent_response.content)
 
         # keep sources
-        for output in agent_response.output:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+        # for output in agent_response.output:
+        #     if output.role == "tool":
+        #         try:
+        #             agent_response.sources.append(
+        #                 ResponseOutputItem(
+        #                     id=output.tool_call_id,
+        #                     name=output.tool_name,
+        #                     data=json.loads(output.content),
+        #                 )
+        #             )
+        #         except Exception as e:
+        #             logger.warning(f"Error casting source: {e}")
         
         agent_response.finish_reason = "stop"
 
@@ -483,18 +483,18 @@ class Agent(BaseModel):
             agent_response.content = json.loads(agent_response.content)
 
         # keep sources
-        for output in agent_response.output:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+        # for output in agent_response.output:
+        #     if output.role == "tool":
+        #         try:
+        #             agent_response.sources.append(
+        #                 ResponseOutputItem(
+        #                     id=output.tool_call_id,
+        #                     name=output.tool_name,
+        #                     data=json.loads(output.content),
+        #                 )
+        #             )
+        #         except Exception as e:
+        #             logger.warning(f"Error casting source: {e}")
 
         agent_response.finish_reason = "stop"
 
