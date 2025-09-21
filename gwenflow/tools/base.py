@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 import json
 
 from abc import ABC, abstractmethod
@@ -44,11 +43,13 @@ class BaseTool(BaseModel, ABC):
             },
         }
 
-    def _cast_response_to_str(self, data) -> str:
-        if not isinstance(data, str):
-            return json.dumps(data, ensure_ascii=False)
-        return data
-    
+    def _cast_response_to_str(self, response) -> str:
+        if isinstance(response, str):
+            return response
+        elif isinstance(response, BaseModel):
+            return response.model_dump_json(exclude_none=True)
+        return json.dumps(response, ensure_ascii=False)
+        
     @abstractmethod
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
