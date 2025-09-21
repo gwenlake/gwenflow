@@ -11,11 +11,12 @@ from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
 
 PROMPT_TOOLS = """\
 ## Tools
+
 You have access to the following tools. Only use these tools.
 
-<tools>
+```json
 {tools}
-</tools>
+```
 """
 
 PROMPT_REACT = """\
