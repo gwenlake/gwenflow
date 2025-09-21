@@ -1,5 +1,6 @@
 import json
 import uuid
+import re
 
 from typing import List, Union, Optional, Dict, Iterator
 from pydantic import BaseModel
@@ -58,11 +59,15 @@ Final Answer: [your answer here (In the same language as the user's question)]
 Question: {query}"""
 
 
-class ReactMessage(BaseModel):
-    action: Optional[str] = None
-    action_input: Optional[str] = None
+SPECIAL_TOK_THOUGHT = "Thought:"
+SPECIAL_TOK_ACTION = "Action:"
+SPECIAL_TOK_FINAL_ANSWER = "Final Answer:"
+
+
+class ReactAgentAction(BaseModel):
     thought: Optional[str] = None
-    final_answer: Optional[str] = None
+    action: str
+    action_input: str
 
     def get_tool_call(self):
         return dict(
@@ -74,33 +79,41 @@ class ReactMessage(BaseModel):
                 "arguments": self.action_input
             }
         )
-    
+
+class ReactAgentFinish(BaseModel):
+    final_answer: str
+
 class ReactMessageParser(BaseModel):
 
     @classmethod
-    def parse(self, text: str) -> ReactMessage:
-        special_func_token = 'Action: '
-        special_args_token = 'Action Input: '
-        special_obs_token = 'Observation: '
-        special_final_token = 'Final Answer: '
-        func_name, func_args, final = None, None, None
-        i = text.rfind(special_func_token)
-        j = text.rfind(special_args_token)
-        k = text.rfind(special_obs_token)
-        if 0 <= i < j:  # If the text has `Action` and `Action input`,
-            if k < j:  # but does not contain `Observation`,
-                # then it is likely that `Observation` is ommited by the LLM,
-                # because the output text may have discarded the stop word.
-                text = text.rstrip() + special_obs_token  # Add it back.
-            k = text.rfind(special_obs_token)
-            func_name = text[i + len(special_func_token):j].strip()
-            func_args = text[j + len(special_args_token):k].strip()
-            text = text[:i]  # Return the response before tool call, i.e., `Thought`
-        elif text.rfind(special_final_token):
-            f = text.rfind(special_final_token)
-            final = text[f + len(special_args_token):].strip()
+    def parse(self, text: str) -> Union[ReactAgentAction, ReactAgentFinish]:
+        includes_answer = SPECIAL_TOK_FINAL_ANSWER in text
+        regex = (
+            r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
+        )
+        action_match = re.search(regex, text, re.DOTALL)
+        if action_match:
+            if includes_answer:
+                msg = f"Parsing LLM output produced both a final answer and a parse-able action: {text}"
+                raise Exception(msg)
+            action = action_match.group(1).strip()
+            action_input = action_match.group(2)
+            tool_input = action_input.strip(" ")
+            tool_input = tool_input.strip('"')
 
-        return ReactMessage(action=func_name, action_input=func_args, thought=text, final_answer=final)
+            i = text.rfind(SPECIAL_TOK_ACTION)
+            thought = text[:i].strip()
+            if thought.startswith(SPECIAL_TOK_THOUGHT):
+                thought = thought.split(SPECIAL_TOK_THOUGHT)[-1].strip()
+
+            return ReactAgentAction(action=action, action_input=tool_input, thought=thought)
+
+        if SPECIAL_TOK_FINAL_ANSWER in text:
+            final_answer = text.split(SPECIAL_TOK_FINAL_ANSWER)[-1].strip()
+            return ReactAgentFinish(final_answer=final_answer)
+
+        msg = f"Could not parse: `{text}`"
+        raise Exception(msg)
 
 
 class ReactAgent(Agent):
@@ -179,44 +192,30 @@ class ReactAgent(Agent):
             )
             agent_response.usage.add(usage)
 
-            react_message = ReactMessageParser.parse(response.choices[0].message.content)
+            parsed_message = ReactMessageParser.parse(response.choices[0].message.content)
 
             # keep thought
             self.history.add_message(Message(role="assistant", content=response.choices[0].message.content))
-            agent_response.output.append(Message(role="assistant", content=response.choices[0].message.content))
+            agent_response.messages.append(Message(role="assistant", content=response.choices[0].message.content))
 
             # stop if not tool call
-            if not react_message.action or not self.get_all_tools():
-                agent_response.content = react_message.final_answer
-                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
+            if isinstance(parsed_message, ReactAgentFinish):
+                agent_response.content = parsed_message.final_answer
+                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
             
             # thinking
-            agent_response.thinking = react_message.thought
-            logger.debug(react_message.thought)
+            agent_response.thinking = parsed_message.thought
+            logger.debug(parsed_message.thought)
 
             # handle tool calls
-            tool_message = self.run_tool(react_message.get_tool_call())
+            tool_message = self.run_tool(parsed_message.get_tool_call())
             self.history.add_message(Message(role="user", content=f"Observation: { tool_message.content }"))
-            agent_response.output.append(Message(role="user", content=f"Observation: { tool_message.content }"))
+            agent_response.messages.append(Message(role="user", content=f"Observation: { tool_message.content }"))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # keep sources
-        # for output in agent_response.output:
-        #     if output.role == "tool":
-        #         try:
-        #             agent_response.sources.append(
-        #                 ResponseOutputItem(
-        #                     id=output.tool_call_id,
-        #                     name=output.tool_name,
-        #                     data=json.loads(output.content),
-        #                 )
-        #             )
-        #         except Exception as e:
-        #             logger.warning(f"Error casting source: {e}")
         
         agent_response.finish_reason = "stop"
 
@@ -325,46 +324,32 @@ class ReactAgent(Agent):
                 yield agent_response
 
 
-            react_message = ReactMessageParser.parse(output)
+            parsed_message = ReactMessageParser.parse(output)
 
             # keep thought
             self.history.add_message(Message(role="assistant", content=output))
-            agent_response.output.append(Message(role="assistant", content=output))
+            agent_response.messages.append(Message(role="assistant", content=output))
 
             # stop if no tool call
-            if not react_message.action or not self.get_all_tools():
-                agent_response.content = react_message.final_answer
-                agent_response.output.append(Message(role="assistant", content=output))
+            if isinstance(parsed_message, ReactAgentFinish):
+                agent_response.content = parsed_message.final_answer
+                agent_response.messages.append(Message(role="assistant", content=output))
                 break
 
             # thinking
-            agent_response.thinking = react_message.thought
+            agent_response.thinking = parsed_message.thought
             if agent_response.thinking:
-                logger.debug(react_message.thought)
+                logger.debug(parsed_message.thought)
                 yield agent_response
 
             # handle tool calls
-            observation = self.run_tool(react_message.get_tool_call())
+            observation = self.run_tool(parsed_message.get_tool_call())
             self.history.add_message(Message(role="user", content=f"Observation: { observation.content }"))
-            agent_response.output.append(Message(role="user", content=f"Observation: { observation.content }"))
+            agent_response.messages.append(Message(role="user", content=f"Observation: { observation.content }"))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # keep sources
-        # for output in agent_response.output:
-        #     if output.role == "tool":
-        #         try:
-        #             agent_response.sources.append(
-        #                 ResponseOutputItem(
-        #                     id=output.tool_call_id,
-        #                     name=output.tool_name,
-        #                     data=json.loads(output.content),
-        #                 )
-        #             )
-        #         except Exception as e:
-        #             logger.warning(f"Error casting source: {e}")
 
         agent_response.finish_reason = "stop"
 

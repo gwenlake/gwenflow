@@ -337,7 +337,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
+                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
             
             # thinking
@@ -349,25 +349,11 @@ class Agent(BaseModel):
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.output.append(Message(**m))
+                    agent_response.messages.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # keep sources
-        # for output in agent_response.output:
-        #     if output.role == "tool":
-        #         try:
-        #             agent_response.sources.append(
-        #                 ResponseOutputItem(
-        #                     id=output.tool_call_id,
-        #                     name=output.tool_name,
-        #                     data=json.loads(output.content),
-        #                 )
-        #             )
-        #         except Exception as e:
-        #             logger.warning(f"Error casting source: {e}")
         
         agent_response.finish_reason = "stop"
 
@@ -462,7 +448,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
-                agent_response.output.append(Message(**message.model_dump()))
+                agent_response.messages.append(Message(**message.model_dump()))
                 break
 
             # thinking
@@ -476,25 +462,11 @@ class Agent(BaseModel):
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.output.append(Message(**m))
+                    agent_response.messages.append(Message(**m))
         
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # keep sources
-        # for output in agent_response.output:
-        #     if output.role == "tool":
-        #         try:
-        #             agent_response.sources.append(
-        #                 ResponseOutputItem(
-        #                     id=output.tool_call_id,
-        #                     name=output.tool_name,
-        #                     data=json.loads(output.content),
-        #                 )
-        #             )
-        #         except Exception as e:
-        #             logger.warning(f"Error casting source: {e}")
 
         agent_response.finish_reason = "stop"
 
