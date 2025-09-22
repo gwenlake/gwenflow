@@ -9,7 +9,7 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
@@ -235,57 +235,42 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
     
-    def run_tool(self, tool_call) -> Message:
-
-        if isinstance(tool_call, dict):
-            tool_call = ChatCompletionMessageToolCall(**tool_call)
+    def run_tool(self, tool_call: ToolCall) -> Message:
     
         tool_map  = {tool.name: tool for tool in self.get_all_tools()}
-        tool_name = tool_call.function.name
                     
-        if tool_name not in tool_map.keys():
-            logger.error(f"Tool {tool_name} does not exist")
+        if tool_call.function not in tool_map.keys():
+            logger.error(f"Tool {tool_call.function} does not exist")
             return Message(
                 role="tool",
                 tool_call_id=tool_call.id,
-                tool_name=tool_name,
-                content=f"Tool {tool_name} does not exist",
+                tool_name=tool_call.function,
+                content=f"Tool {tool_call.function} does not exist",
             )
 
         try:
-            function_args = json.loads(tool_call.function.arguments)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse tool arguments: {e}")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                tool_name=tool_name,
-                content=f"Failed to parse tool arguments: {e}",
-            )
-
-        try:
-            logger.debug(f"Tool call: {tool_name}({function_args})")
-            tool = tool_map[tool_name]
-            tool_response = tool.run(**function_args)
+            logger.debug(f"Tool call: {tool_call.function}({tool_call.arguments})")
+            tool = tool_map[tool_call.function]
+            tool_response = tool.run(**tool_call.arguments)
             if tool_response:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
-                    tool_name=tool_name,
+                    tool_name=tool_call.function,
                     content=tool_response,
                 )
 
         except Exception as e:
-            logger.error(f"Error executing tool '{tool_name}': {e}")
+            logger.error(f"Error executing tool '{tool_call.function}': {e}")
 
         return Message(
             role="tool",
             tool_call_id=tool_call.id,
-            tool_name=tool_name,
-            content=f"Error executing tool '{tool_name}'",
+            tool_name=tool_call.function,
+            content=f"Error executing tool '{tool_call.function}'",
         )
     
-    async def aexecute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:
+    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         tasks = []
         for tool_call in tool_calls:
             task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
@@ -300,7 +285,7 @@ class Agent(BaseModel):
 
         return final_results_as_dicts
 
-    def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:        
         # results = asyncio.run(self.aexecute_tool_calls(tool_calls))        
         results = []
         for tool_call in tool_calls:
@@ -309,6 +294,20 @@ class Agent(BaseModel):
                 results.append(result.to_dict())
             
         return results
+
+    def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
+        tool_calls = []
+        for tool_call in openai_tool_calls:
+            if isinstance(tool_call, dict):
+                tool_call = ChatCompletionMessageToolCall(**tool_call)
+            tool_calls.append(
+                ToolCall(
+                    id=tool_call.id,
+                    function=tool_call.function.name,
+                    arguments=json.loads(tool_call.function.arguments),
+                )
+            )
+        return tool_calls
 
     def _get_thinking(self, tool_calls) -> str:
         thinking = []
@@ -391,7 +390,7 @@ class Agent(BaseModel):
             agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             # handle tool calls
-            tool_calls = response.choices[0].message.tool_calls
+            tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
@@ -600,7 +599,7 @@ class Agent(BaseModel):
                 yield agent_response
 
             # handle tool calls
-            tool_calls = message.tool_calls
+            tool_calls = self._convert_openai_tool_calls(message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
