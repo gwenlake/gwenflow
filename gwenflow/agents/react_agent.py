@@ -6,13 +6,11 @@ from typing import List, Union, Optional, Dict, Iterator
 from pydantic import BaseModel
 
 from gwenflow.logger import logger
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
 from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
 
 
 PROMPT_TOOLS = """\
-## Tools
-
 You have access to the following tools. Only use these tools.
 
 ```json
@@ -21,8 +19,6 @@ You have access to the following tools. Only use these tools.
 """
 
 PROMPT_REACT = """\
-## Format
-
 Please answer in the following format:
 
 ```
@@ -55,7 +51,6 @@ Thought: I cannot answer the question with the provided tools.
 Final Answer: [your answer here (In the same language as the user's question)]
 ```
 
-## Task
 Question: {query}"""
 
 
@@ -69,15 +64,11 @@ class ReactAgentAction(BaseModel):
     action: str
     action_input: str
 
-    def get_tool_call(self):
-        return dict(
+    def get_tool_call(self) -> ToolCall:
+        return ToolCall(
             id=str(uuid.uuid4()),
-            name=self.action,
-            type="function",
-            function={
-                "name": self.action,
-                "arguments": self.action_input
-            }
+            function=self.action,
+            arguments=json.loads(self.action_input),
         )
 
 class ReactAgentFinish(BaseModel):

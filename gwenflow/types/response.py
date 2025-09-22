@@ -34,11 +34,6 @@ class ModelResponse(BaseModel):
         if v:
             raise ValueError("This field is not to be set by the user.")
 
-    def to_messages(self) -> list[Message]:
-        """Convert the output into a list of input items suitable for passing to the model."""
-        return [Message(**it.model_dump(exclude_unset=True)) for it in self.output]  # type: ignore
-
-
 
 class AgentResponse(BaseModel):
 
@@ -72,4 +67,4 @@ class AgentResponse(BaseModel):
 
     def to_messages(self) -> list[Message]:
         """Convert the output into a list of input items suitable for passing to the model."""
-        return [Message(**it.model_dump(exclude_unset=True)) for it in self.output]  # type: ignore
+        return [Message(**it.model_dump(exclude_unset=True)) for it in self.messages]  # type: ignore
