@@ -12,7 +12,6 @@ dotenv.load_dotenv(override=True)
 
 agent = Agent(
     name="Website explorer",
-    role="Analyse the content of a website",
     llm=ChatOpenAI(model="gpt-4o-mini"),
     tools=[WebsiteTool(), PDFTool()],
 )
