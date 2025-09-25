@@ -12,7 +12,6 @@ dotenv.load_dotenv(override=True)
 
 agent = Agent(
     name="News",
-    role="You get some information about a topic.",
     llm=ChatOpenAI(model="gpt-4o-mini"),
     tools=[DuckDuckGoNewsTool(), WebsiteReaderTool()],
     instructions = "If you get a list of web links, systematically scrape the content of all the linked websites to extract detailed information about the topic.",
