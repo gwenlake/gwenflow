@@ -11,6 +11,7 @@ from gwenflow.tools.yahoofinance import (
 )
 from gwenflow.tools.tavily import TavilyWebSearchTool
 from gwenflow.tools.retriever import RetrieverTool
+from gwenflow.tools.mcp.tool import MCPTool
 
 __all__ = [
     "BaseTool",
@@ -25,4 +26,5 @@ __all__ = [
     "YahooFinanceStock",
     "YahooFinanceScreen",
     "TavilyWebSearchTool",
+    "MCPTool",
 ]

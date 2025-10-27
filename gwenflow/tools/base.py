@@ -1,12 +1,11 @@
 import asyncio
-import uuid
+import json
 
 from abc import ABC, abstractmethod
 from typing import Any
 from pydantic import BaseModel, model_validator
 
 from gwenflow.tools.utils import function_to_json
-from gwenflow.types.output import ResponseOutputItem
 from gwenflow.logger import logger
 
 
@@ -44,24 +43,21 @@ class BaseTool(BaseModel, ABC):
             },
         }
 
-    def _response_to_list(self, data) -> list:
-        if isinstance(data, str):
-            return [ {"content": data} ]
-        if isinstance(data, dict):
-            return [ data ]
-        if isinstance(data, list):
-            return data
-        logger.warning("Cannot read tool output.")
-        return []
+    def _cast_response_to_str(self, response) -> str:
+        if isinstance(response, str):
+            return response
+        elif isinstance(response, BaseModel):
+            return response.model_dump_json(exclude_none=True)
+        return json.dumps(response, ensure_ascii=False)
         
     @abstractmethod
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
-    def run(self, **kwargs: Any) -> ResponseOutputItem:
+    def run(self, **kwargs: Any) -> str:
         response = self._run(**kwargs)
-        return ResponseOutputItem(id=str(uuid.uuid4()), name=self.name, data=self._response_to_list(response))
+        return self._cast_response_to_str(response)
 
-    async def arun(self, **kwargs: Any) -> ResponseOutputItem:
+    async def arun(self, **kwargs: Any) -> str:
         response = asyncio.run(self._run(**kwargs))
-        return ResponseOutputItem(id=str(uuid.uuid4()), name=self.name, data=self._response_to_list(response))
+        return self._cast_response_to_str(response)

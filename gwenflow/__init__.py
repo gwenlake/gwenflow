@@ -7,7 +7,7 @@ from gwenflow.exceptions import (
 )
 from gwenflow.llms import ChatGwenlake, ChatOpenAI, ChatAzureOpenAI, ChatOllama
 from gwenflow.readers import SimpleDirectoryReader
-from gwenflow.agents import Agent, ChatAgent
+from gwenflow.agents import Agent, ReactAgent, ChatAgent
 from gwenflow.tools import BaseTool, FunctionTool
 from gwenflow.flows import Flow, AutoFlow
 from gwenflow.types import Document, Message
@@ -31,6 +31,7 @@ __all__ = [
     "SimpleDirectoryReader",
     "Retriever",
     "Agent",
+    "ReactAgent",
     "ChatAgent",
     "BaseTool",
     "FunctionTool",

@@ -7,7 +7,7 @@ from gwenflow.logger import logger
 from gwenflow.tools import FunctionTool, BaseTool
 from gwenflow.tools.mcp.server import MCPServer
 
-from mcp.types import Tool as MCPTool
+from mcp.types import Tool
 
 
 class MCPUtil:
@@ -38,7 +38,7 @@ class MCPUtil:
         return [cls.to_function_tool(tool, server) for tool in tools]
 
     @classmethod
-    def to_function_tool(cls, tool: "MCPTool", server: "MCPServer") -> FunctionTool:
+    def to_function_tool(cls, tool: "Tool", server: "MCPServer") -> FunctionTool:
         """Convert an MCP tool to a function tool."""
         return FunctionTool(
             name=tool.name,
@@ -49,20 +49,10 @@ class MCPUtil:
         )
 
     @classmethod
-    async def invoke_mcp_tool(cls, server: "MCPServer", tool: "MCPTool", input_json: str) -> str:
+    async def invoke_mcp_tool(cls, server: "MCPServer", tool: "Tool", arguments: dict[str, Any] | None) -> str:
         """Invoke an MCP tool and return the result as a string."""
         try:
-            json_data: dict[str, Any] = json.loads(input_json) if input_json else {}
-        except Exception as e:
-            logger.debug(f"Invalid JSON input for tool {tool.name}: {input_json}")
-            raise ModelBehaviorError(
-                f"Invalid JSON input for tool {tool.name}: {input_json}"
-            ) from e
-
-        logger.debug(f"Invoking MCP tool {tool.name} with input {input_json}")
-
-        try:
-            result = await server.call_tool(tool.name, json_data)
+            result = await server.call_tool(tool.name, arguments)
         except Exception as e:
             logger.error(f"Error invoking MCP tool {tool.name}: {e}")
             raise GwenflowException(f"Error invoking MCP tool {tool.name}: {e}") from e
