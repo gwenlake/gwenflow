@@ -183,13 +183,13 @@ class Agent(BaseModel):
         logger.debug("Thought:\n" + reasoning_content)
 
         return response
-    
+
 
     async def areason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
 
         if self.reasoning_model is None:
             return None
-        
+
         logger.debug("Reasoning...")
 
         reasoning_agent= Agent(
@@ -205,7 +205,7 @@ class Agent(BaseModel):
             llm=self.reasoning_model,
             tools=self.tools
         )
-        
+
         response = await reasoning_agent.arun(input)
 
         # only keep text outside <think>
@@ -213,7 +213,7 @@ class Agent(BaseModel):
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
-        
+
         self.history.add_message(
             Message(
                 role="assistant",
@@ -224,7 +224,7 @@ class Agent(BaseModel):
         logger.debug("Thought:\n" + reasoning_content)
 
         return response
-    
+
 
     def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
@@ -406,9 +406,9 @@ class Agent(BaseModel):
         return agent_response
 
     async def arun(
-        self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
-        context: Optional[Union[str, Dict[str, str]]] = None,
+            self,
+            input: Union[str, List[Message], List[Dict[str, str]]],
+            context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
 
         # prepare messages and task
@@ -425,7 +425,7 @@ class Agent(BaseModel):
         # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
-            reasoning_agent_response = await self.areason(messages_for_reasoning_model) 
+            reasoning_agent_response = await self.areason(messages_for_reasoning_model)
             usage = (
                 Usage(
                     requests=1,
@@ -437,14 +437,14 @@ class Agent(BaseModel):
                 else Usage()
             )
             agent_response.usage.add(usage)
-    
+
         while True:
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             # call llm and tool
-            response = await self.llm.ainvoke(input=messages_for_model) 
+            response = await self.llm.ainvoke(input=messages_for_model)
 
             # usage
             usage = (
@@ -467,18 +467,18 @@ class Agent(BaseModel):
                 agent_response.content = response.choices[0].message.content
                 agent_response.output.append(Message(**response.choices[0].message.model_dump()))
                 break
-            
+
             # thinking
             agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.get_all_tools():
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls) 
+                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.output.append(Message(**m))
-        
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
@@ -496,11 +496,11 @@ class Agent(BaseModel):
                     )
                 except Exception as e:
                     logger.warning(f"Error casting source: {e}")
-        
+
         agent_response.finish_reason = "stop"
 
         return agent_response
-    
+
     def run_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -681,7 +681,7 @@ class Agent(BaseModel):
 
                 if delta.content:
                     agent_response.content = delta.content
-                
+
                 for tool_call in delta.tool_calls or []:
                     index = tool_call.index
                     if index not in final_tool_calls:
@@ -714,7 +714,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.output.append(Message(**m))
-        
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
