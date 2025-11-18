@@ -185,7 +185,7 @@ class Agent(BaseModel):
         return response
     
 
-    async def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
+    async def areason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
 
         if self.reasoning_model is None:
             return None
@@ -650,7 +650,7 @@ class Agent(BaseModel):
         # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
-            reasoning_agent_response = await self.reason(messages_for_reasoning_model)
+            reasoning_agent_response = await self.areason(messages_for_reasoning_model)
             usage = (
                 Usage(
                     requests=1,
