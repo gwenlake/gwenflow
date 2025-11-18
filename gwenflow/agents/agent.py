@@ -293,7 +293,12 @@ class Agent(BaseModel):
 
         results = await asyncio.gather(*tasks)
 
-        return results
+        final_results_as_dicts = []
+        for res in results:
+            if res:
+                final_results_as_dicts.append(res.to_dict())
+
+        return final_results_as_dicts
 
     def execute_tool_calls(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List:        
         # results = asyncio.run(self.aexecute_tool_calls(tool_calls))        
