@@ -677,7 +677,7 @@ class Agent(BaseModel):
             message = Message(role="assistant", content="", delta="", tool_calls=[])
             final_tool_calls = {}
 
-            completions = await self.llm.astream(input=messages_for_model)
+            completions = self.llm.astream(input=messages_for_model)
             async for chunk in completions:
                 # usage
                 usage = (
