@@ -1,15 +1,28 @@
-
 import uuid
 import json
 import re
 import asyncio
 
 from typing import List, Union, Optional, Any, Dict, Iterator, Literal, AsyncIterator
-from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
+from pydantic import (
+    BaseModel,
+    model_validator,
+    field_validator,
+    Field,
+    ConfigDict,
+    UUID4,
+)
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
+from gwenflow.types import (
+    Usage,
+    Message,
+    AgentResponse,
+    ItemHelpers,
+    ToolCall,
+    ResponseOutputItem,
+)
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
@@ -23,7 +36,6 @@ DEFAULT_MAX_TURNS = 10
 
 
 class Agent(BaseModel):
-
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
     """The unique id of the agent."""
 
@@ -36,7 +48,7 @@ class Agent(BaseModel):
     system_prompt: str | None = None
     """"System prompt"""
 
-    instructions: (str | List[str] | None) = None
+    instructions: str | List[str] | None = None
     """The instructions for the agent."""
 
     response_model: Dict | None = None
@@ -99,15 +111,19 @@ class Agent(BaseModel):
     def _format_context(self, context: Optional[Union[str, Dict[str, str]]]) -> str:
         text = ""
         if isinstance(context, str):
-            text = f"<context>\n{ context }\n</context>\n\n"
+            text = f"<context>\n{context}\n</context>\n\n"
         elif isinstance(context, dict):
             for key in context.keys():
                 text += f"<{key}>\n"
                 text += context.get(key) + "\n"
                 text += f"</{key}>\n\n"
         return text
-    
-    def get_system_prompt(self, task: str, context: Optional[Union[str, Dict[str, str]]] = None,) -> str:
+
+    def get_system_prompt(
+        self,
+        task: str,
+        context: Optional[Union[str, Dict[str, str]]] = None,
+    ) -> str:
         """Get the system prompt for the agent."""
         if self.system_prompt:
             return self.system_prompt
@@ -120,38 +136,48 @@ class Agent(BaseModel):
                 prompt += " {instructions}".format(instructions=self.instructions)
             elif isinstance(self.instructions, list):
                 instructions = "\n".join([f"- {i}" for i in self.instructions])
-                prompt+= "\n\n## Instructions:\n{instructions}".format(instructions=instructions)
+                prompt += "\n\n## Instructions:\n{instructions}".format(
+                    instructions=instructions
+                )
 
         prompt += "\n\n"
 
         # response model
         if self.response_model:
-            prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
+            prompt += PROMPT_JSON_SCHEMA.format(
+                json_schema=json.dumps(self.response_model, indent=4)
+            ).strip()
             prompt += "\n\n"
 
         # references
         if self.retriever:
             references = self.retriever.search(query=task)
-            if len(references)>0:
+            if len(references) > 0:
                 references = [r.content for r in references]
-                prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
+                prompt += PROMPT_KNOWLEDGE.format(
+                    references="\n\n".join(references)
+                ).strip()
                 prompt += "\n\n"
 
         # context
         if context is not None:
-            prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
+            prompt += PROMPT_CONTEXT.format(
+                context=self._format_context(context)
+            ).strip()
             prompt += "\n\n"
 
         return prompt.strip()
-    
-    def reason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
 
+    def reason(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+    ) -> AgentResponse:
         if self.reasoning_model is None:
             return None
-        
+
         logger.debug("Reasoning...")
 
-        reasoning_agent= Agent(
+        reasoning_agent = Agent(
             name="ReasoningAgent",
             instructions=[
                 "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
@@ -162,21 +188,23 @@ class Agent(BaseModel):
                 "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
             ],
             llm=self.reasoning_model,
-            tools=self.tools
+            tools=self.tools,
         )
-        
+
         response = reasoning_agent.run(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = re.sub(
+            r"<think>.*?</think>", "", response.content, flags=re.DOTALL
+        )
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
-        
+
         self.history.add_message(
             Message(
                 role="assistant",
-                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}"
+                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}",
             )
         )
 
@@ -184,15 +212,16 @@ class Agent(BaseModel):
 
         return response
 
-
-    async def areason(self, input: Union[str, List[Message], List[Dict[str, str]]],) -> AgentResponse:
-
+    async def areason(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+    ) -> AgentResponse:
         if self.reasoning_model is None:
             return None
 
         logger.debug("Reasoning...")
 
-        reasoning_agent= Agent(
+        reasoning_agent = Agent(
             name="ReasoningAgent",
             instructions=[
                 "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
@@ -203,13 +232,15 @@ class Agent(BaseModel):
                 "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
             ],
             llm=self.reasoning_model,
-            tools=self.tools
+            tools=self.tools,
         )
 
         response = await reasoning_agent.arun(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = re.sub(
+            r"<think>.*?</think>", "", response.content, flags=re.DOTALL
+        )
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
@@ -217,14 +248,13 @@ class Agent(BaseModel):
         self.history.add_message(
             Message(
                 role="assistant",
-                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}"
+                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}",
             )
         )
 
         logger.debug("Thought:\n" + reasoning_content)
 
         return response
-
 
     def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
@@ -234,11 +264,10 @@ class Agent(BaseModel):
             # tools += MCPUtil.get_all_function_tools(self.mcp_servers)
             tools += mcp_tools
         return tools
-    
+
     def run_tool(self, tool_call: ToolCall) -> Message:
-    
-        tool_map  = {tool.name: tool for tool in self.get_all_tools()}
-                    
+        tool_map = {tool.name: tool for tool in self.get_all_tools()}
+
         if tool_call.function not in tool_map.keys():
             logger.error(f"Tool {tool_call.function} does not exist")
             return Message(
@@ -269,7 +298,7 @@ class Agent(BaseModel):
             tool_name=tool_call.function,
             content=f"Error executing tool '{tool_call.function}'",
         )
-    
+
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         tasks = []
         for tool_call in tool_calls:
@@ -285,14 +314,14 @@ class Agent(BaseModel):
 
         return final_results_as_dicts
 
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:        
-        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))        
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
+        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
         results = []
         for tool_call in tool_calls:
             result = self.run_tool(tool_call)
             if result:
                 results.append(result.to_dict())
-            
+
         return results
 
     def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
@@ -314,17 +343,18 @@ class Agent(BaseModel):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 tool_call = tool_call.model_dump()
-            thinking.append(f"""**Calling** { tool_call["function"]["name"].replace("Tool","") } on '{ tool_call["function"]["arguments"] }'""")
-        if len(thinking)>0:
+            thinking.append(
+                f"""**Calling** {tool_call["function"]["name"].replace("Tool", "")} on '{tool_call["function"]["arguments"]}'"""
+            )
+        if len(thinking) > 0:
             return "\n".join(thinking)
         return ""
-    
+
     def run(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -351,11 +381,10 @@ class Agent(BaseModel):
                 else Usage()
             )
             agent_response.usage.add(usage)
-    
+
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
 
             # format messages
@@ -383,34 +412,39 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
+                agent_response.messages.append(
+                    Message(**response.choices[0].message.model_dump())
+                )
                 break
-            
+
             # thinking
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
+            agent_response.thinking = self._get_thinking(
+                response.choices[0].message.tool_calls
+            )
 
             # handle tool calls
-            tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
+            tool_calls = self._convert_openai_tool_calls(
+                response.choices[0].message.tool_calls
+            )
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
-        
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-        
+
         agent_response.finish_reason = "stop"
 
         return agent_response
 
     async def arun(
-            self,
-            input: Union[str, List[Message], List[Dict[str, str]]],
-            context: Optional[Union[str, Dict[str, str]]] = None,
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -439,7 +473,6 @@ class Agent(BaseModel):
             agent_response.usage.add(usage)
 
         while True:
-
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
@@ -465,11 +498,15 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
+                agent_response.output.append(
+                    Message(**response.choices[0].message.model_dump())
+                )
                 break
 
             # thinking
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
+            agent_response.thinking = self._get_thinking(
+                response.choices[0].message.tool_calls
+            )
 
             # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
@@ -506,7 +543,6 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -537,9 +573,8 @@ class Agent(BaseModel):
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
-            
+
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
@@ -548,7 +583,6 @@ class Agent(BaseModel):
             final_tool_calls = {}
 
             for chunk in self.llm.stream(input=messages_for_model):
-
                 # usage
                 usage = (
                     Usage(
@@ -572,12 +606,14 @@ class Agent(BaseModel):
 
                 if delta.content:
                     agent_response.content = delta.content
-                
+
                 for tool_call in delta.tool_calls or []:
                     index = tool_call.index
                     if index not in final_tool_calls:
                         final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+                    final_tool_calls[index]["function"]["arguments"] += (
+                        tool_call.function.arguments
+                    )
 
                 yield agent_response
 
@@ -605,7 +641,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
-        
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
@@ -619,7 +655,6 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AsyncIterator[AgentResponse]:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -648,7 +683,6 @@ class Agent(BaseModel):
             agent_response.usage.add(usage)
 
         while True:
-
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
@@ -686,7 +720,9 @@ class Agent(BaseModel):
                     index = tool_call.index
                     if index not in final_tool_calls:
                         final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+                    final_tool_calls[index]["function"]["arguments"] += (
+                        tool_call.function.arguments
+                    )
 
                 yield agent_response
 
