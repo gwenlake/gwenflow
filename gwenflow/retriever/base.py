@@ -3,7 +3,6 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, model_validator, ConfigDict
 
 import hashlib
-from langchain_text_splitters import TokenTextSplitter
 
 from gwenflow.logger import logger
 from gwenflow.types.document import Document
@@ -11,6 +10,7 @@ from gwenflow.embeddings import GwenlakeEmbeddings
 from gwenflow.reranker import GwenlakeReranker
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.vector_stores.lancedb import LanceDB
+from gwenflow.parsers.text_splitters import TokenTextSplitter
 
 
 MIN_CONTENT_LENGTH = 20
