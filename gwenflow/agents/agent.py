@@ -682,7 +682,10 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
 
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
+
+        while num_turns_available > 0:
+            num_turns_available -= 1
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
@@ -735,7 +738,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
-                agent_response.output.append(Message(**message.model_dump()))
+                agent_response.messages.append(Message(**message.model_dump()))
                 break
 
             # thinking
@@ -744,30 +747,16 @@ class Agent(BaseModel):
                 yield agent_response
 
             # handle tool calls
-            tool_calls = message.tool_calls
+            tool_calls = self._convert_openai_tool_calls(message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.output.append(Message(**m))
+                    agent_response.messages.append(Message(**m))
 
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # keep sources
-        for output in agent_response.output:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
 
         agent_response.finish_reason = "stop"
 
