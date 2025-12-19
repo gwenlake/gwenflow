@@ -717,7 +717,6 @@ class Agent(BaseModel):
 
                 agent_response.content = None
                 agent_response.thinking = None
-
                 if delta.content:
                     agent_response.content = delta.content
 
@@ -731,7 +730,6 @@ class Agent(BaseModel):
 
             # convert tool_calls
             message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
-
             # keep answer in memory
             self.history.add_message(message.model_dump())
 
