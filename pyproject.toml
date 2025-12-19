@@ -17,7 +17,7 @@ dependencies = [
     "fsspec",
     "rich",
     "tiktoken",
-    "openai",
+    "openai==2.13.0",
     "langchain",
     "boto3",
     "pyarrow",
