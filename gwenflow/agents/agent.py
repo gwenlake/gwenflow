@@ -28,7 +28,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
-from gwenflow.telemetry.base import trace_agent, trace_tool
+from gwenflow.telemetry.base import trace_agent, trace_tool, trace_agent_stream, trace_agent_astream
 
 from openai.types.chat import ChatCompletionMessageToolCall
 
@@ -543,7 +543,8 @@ class Agent(BaseModel):
         agent_response.finish_reason = "stop"
 
         return agent_response
-
+    
+    @trace_agent_stream()
     def run_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -656,6 +657,7 @@ class Agent(BaseModel):
 
         yield agent_response
 
+    @trace_agent_astream()
     async def arun_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
