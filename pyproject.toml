@@ -17,7 +17,7 @@ dependencies = [
     "fsspec",
     "rich",
     "tiktoken",
-    "openai",
+    "openai==1.69.0",
     "langchain",
     "boto3",
     "pyarrow",
@@ -30,6 +30,11 @@ dependencies = [
     "tenacity>=9.0.0",
     "mcp>=1.6.0",
     "faiss-cpu==1.11.0.post1",
+    "opentelemetry-api>=1.39.1",
+    "opentelemetry-sdk>=1.39.1",
+    "openinference-instrumentation-openai>=0.1.41",
+    "arize-phoenix>=12.29.0",
+    "wikipedia>=1.4.0",
 ]
 
 classifiers = [
