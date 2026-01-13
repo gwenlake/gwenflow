@@ -28,6 +28,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
+from gwenflow.telemetry.base import trace_agent, trace_tool
 
 from openai.types.chat import ChatCompletionMessageToolCall
 
@@ -168,6 +169,7 @@ class Agent(BaseModel):
 
         return prompt.strip()
 
+    @trace_agent(name="ReasoningStep")
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -212,6 +214,7 @@ class Agent(BaseModel):
 
         return response
 
+    @trace_agent(name="ReasoningStep")
     async def areason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -265,6 +268,7 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
 
+    @trace_tool()
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
@@ -350,6 +354,7 @@ class Agent(BaseModel):
             return "\n".join(thinking)
         return ""
 
+    @trace_agent()
     def run(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -440,6 +445,7 @@ class Agent(BaseModel):
 
         return agent_response
 
+    @trace_agent()
     async def arun(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
