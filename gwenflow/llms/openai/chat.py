@@ -6,7 +6,7 @@ from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import Field
 
-from gwenflow.llms import ChatBase
+from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry.base import TelemetryBase
 from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message

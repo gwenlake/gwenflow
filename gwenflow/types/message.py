@@ -81,7 +81,8 @@ class Message(BaseModel):
         return f"Message({self.model_dump()})"
 
     @field_validator("role")
-    def role_checker(self, value: str) -> str:
+    @classmethod
+    def role_checker(cls, value: str) -> str:
         if value not in [USER, ASSISTANT, SYSTEM, TOOL]:
             raise ValueError(f"{value} must be one of {','.join([USER, ASSISTANT, SYSTEM, TOOL])}")
         return value

@@ -1,1 +1,1 @@
-from gwenflow.llms.openai.chat import ChatOpenAI  # noqa: F401
+from gwenflow.llms.openai.chat import ChatOpenAI

@@ -1,7 +1,7 @@
 import copy
 from typing import Dict, List, Union
 
-from gwenflow.types import Message
+from .message import Message
 
 
 class ItemHelpers:

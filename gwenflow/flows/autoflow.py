@@ -1,8 +1,9 @@
 import json
 
 from gwenflow.agents import Agent
-from gwenflow.flows import Flow
 from gwenflow.utils.json import parse_json_markdown
+
+from .base import Flow
 
 EXAMPLE = [
     {
