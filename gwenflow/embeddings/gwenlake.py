@@ -24,7 +24,7 @@ EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
 class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
 
-    base_url: Optional[str] = None 
+    base_url: Optional[str] = None
 
     @cached_property
     def _api(self) -> Api:
@@ -35,22 +35,19 @@ class GwenlakeEmbeddings(Embeddings):
     def validate_environment(cls, values: Dict) -> Dict:
         if "model" not in values:
             values["model"] = "e5-base-v2"
-        values["dimensions"] = EMBEDDING_DIMS[ values["model"] ]
+        values["dimensions"] = EMBEDDING_DIMS[values["model"]]
         return values
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(1))
-    def _embed(self, input: List[str]) -> List[List[float]]:    
+    def _embed(self, input: List[str]) -> List[List[float]]:
         try:
             payload = {"input": input, "model": self.model}
             response = self._api.client.post("/v1/embeddings", json=payload)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Error raised by inference endpoint: {e}")
-        
+
         if response.status_code != 200:
-            raise ValueError(
-                f"Error raised by inference API: rate limit exceeded.\nResponse: "
-                f"{response.text}"
-            )
+            raise ValueError(f"Error raised by inference API: rate limit exceeded.\nResponse: {response.text}")
 
         parsed_response = response.json()
         if "data" not in parsed_response:
@@ -59,10 +56,9 @@ class GwenlakeEmbeddings(Embeddings):
         embeddings = []
         for e in parsed_response["data"]:
             embeddings.append(e["embedding"])
-        
+
         return embeddings
 
-    
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Call out to Gwenlake's embedding endpoint.
 
@@ -75,17 +71,17 @@ class GwenlakeEmbeddings(Embeddings):
 
         if not texts:
             return []
-        
+
         batch_size = 100
         embeddings = []
         try:
             for i in range(0, len(texts), batch_size):
-                i_end = min(len(texts), i+batch_size)
+                i_end = min(len(texts), i + batch_size)
                 batch = texts[i:i_end]
                 batch_processed = []
                 for text in batch:
                     text = text.replace("\n", " ")
-                    text = re.sub(' +', ' ', text)
+                    text = re.sub(" +", " ", text)
                     text = text.strip()
                     if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("passage: "):
                         text = "passage: " + text
@@ -105,7 +101,7 @@ class GwenlakeEmbeddings(Embeddings):
             Embeddings for the text.
         """
         text = text.replace("\n", " ")
-        text = re.sub(' +', ' ', text)
+        text = re.sub(" +", " ", text)
         text = text.strip()
         if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("query: "):
             text = "query: " + text

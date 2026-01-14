@@ -1,4 +1,3 @@
-
 from abc import ABC
 from typing import cast
 from pathlib import Path, PurePosixPath
@@ -37,7 +36,6 @@ class SimpleDirectoryReader(ABC):
         required_exts: list[str] | None = None,
         raise_on_error: bool = False,
     ) -> None:
-
         if not input_dir and not input_files:
             raise ValueError("Must provide either `input_dir` or `input_files`.")
 
@@ -69,19 +67,16 @@ class SimpleDirectoryReader(ABC):
 
     @staticmethod
     def is_hidden(path: Path | PurePosixPath) -> bool:
-        return any(
-            part.startswith(".") and part not in [".", ".."] for part in path.parts
-        )
+        return any(part.startswith(".") and part not in [".", ".."] for part in path.parts)
 
     def _add_files(self, input_dir: Path | PurePosixPath) -> list[Path | PurePosixPath]:
-
         all_files = []
 
         if self.recursive:
             list_files = input_dir.rglob("*")
         else:
             list_files = input_dir.glob("*")
-        
+
         # only keep required_exts
         for file in list_files:
             if self.required_exts:
@@ -90,11 +85,9 @@ class SimpleDirectoryReader(ABC):
             else:
                 all_files.append(file)
 
-        return list(set(all_files)) # remove duplicates
+        return list(set(all_files))  # remove duplicates
 
-    
     def read(self, show_progress: bool = False) -> list[Document]:
-
         documents = []
 
         files_to_process = self.input_files
@@ -115,7 +108,7 @@ class SimpleDirectoryReader(ABC):
                 )
             )
         return documents
-    
+
     @staticmethod
     def read_file(
         input_file: Path | PurePosixPath,
@@ -124,13 +117,12 @@ class SimpleDirectoryReader(ABC):
         errors: str = "ignore",
         raise_on_error: bool = False,
     ) -> list[Document]:
-        
         documents = []
 
         file_suffix = input_file.suffix.lower()
         if not file_suffix:
             return []
-        
+
         # supported formats
         supported_suffix = list(default_file_reader_cls.keys())
         if file_suffix in supported_suffix:
@@ -142,7 +134,7 @@ class SimpleDirectoryReader(ABC):
                     raise Exception("Error loading file") from e
                 print(f"Failed to load file {input_file} with error: {e}. Skipping...", flush=True)
                 return []
-        
+
         # other formats
         else:
             fs = get_default_fs()

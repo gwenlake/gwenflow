@@ -7,8 +7,9 @@ from gwenflow.llms.openai import ChatOpenAI
 from gwenflow.telemetry.base import TelemetryBase
 
 from gwenflow.telemetry.azure.azure_instrument import azure_telemetry
+
+
 class ChatAzureOpenAI(ChatOpenAI):
- 
     api_version: Optional[str] = None
     azure_endpoint: Optional[str] = None
     azure_deployment: Optional[str] = None
@@ -21,7 +22,6 @@ class ChatAzureOpenAI(ChatOpenAI):
         azure_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         api_key = self.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         azure_endpoint = self.azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
         azure_deployment = self.azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
@@ -40,28 +40,25 @@ class ChatAzureOpenAI(ChatOpenAI):
             "timeout": self.timeout,
             "max_retries": self.max_retries,
         }
-        
+
         client_params = {k: v for k, v in client_params.items() if v is not None}
-        
+
         return client_params
 
     def get_client(self) -> AzureOpenAI:
-
         if self.client:
             return self.client
-        
+
         client_params = self._get_client_params()
 
         self.client = AzureOpenAI(**client_params)
         return self.client
 
     def get_async_client(self) -> AsyncAzureOpenAI:
-
         if self.async_client:
             return self.async_client
-        
+
         client_params = self._get_client_params()
 
         self.async_client = AsyncAzureOpenAI(**client_params)
         return self.async_client
-    

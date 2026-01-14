@@ -1,4 +1,3 @@
-
 import uuid
 import json
 from pydantic import BaseModel, Field, UUID4
@@ -6,7 +5,6 @@ from time import time
 
 
 class ResponseOutputItem(BaseModel):
-
     id: str
     """The id of the output."""
 

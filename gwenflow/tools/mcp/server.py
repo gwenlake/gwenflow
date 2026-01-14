@@ -170,6 +170,7 @@ class MCPServerStdioParams(TypedDict):
     explanations of possible values.
     """
 
+
 class MCPServerSseParams(TypedDict):
     """Mirrors the params in`mcp.client.sse.sse_client`."""
 

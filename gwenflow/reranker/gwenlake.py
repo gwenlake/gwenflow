@@ -11,7 +11,7 @@ from gwenflow.logger import logger
 
 class GwenlakeReranker(Reranker):
     """Gwenlake reranker."""
-    
+
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
@@ -25,12 +25,9 @@ class GwenlakeReranker(Reranker):
             response = api.client.post("/v1/rerank", json=payload)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Error raised by inference endpoint: {e}")
-        
+
         if response.status_code != 200:
-            raise ValueError(
-                f"Error raised by inference API: rate limit exceeded.\nResponse: "
-                f"{response.text}"
-            )
+            raise ValueError(f"Error raised by inference API: rate limit exceeded.\nResponse: {response.text}")
 
         parsed_response = response.json()
         if "data" not in parsed_response:
@@ -39,19 +36,18 @@ class GwenlakeReranker(Reranker):
         reranking = []
         for e in parsed_response["data"]:
             reranking.append(e)
-        
+
         return reranking
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
-
         if not documents:
             return []
-        
+
         batch_size = 100
         reranked_documents = []
         try:
             for i in range(0, len(documents), batch_size):
-                i_end = min(len(documents), i+batch_size)
+                i_end = min(len(documents), i + batch_size)
                 batch = documents[i:i_end]
                 batch_processed = []
                 for document in batch:
@@ -62,7 +58,6 @@ class GwenlakeReranker(Reranker):
             return None
 
         if len(reranked_documents) > 0:
-
             compressed_documents = documents.copy()
 
             for i, _ in enumerate(compressed_documents):
@@ -75,7 +70,7 @@ class GwenlakeReranker(Reranker):
             )
 
             if self.top_k is not None:
-                compressed_documents = compressed_documents[:self.top_k]
+                compressed_documents = compressed_documents[: self.top_k]
 
             if self.threshold is not None:
                 compressed_documents = [d for d in compressed_documents if d.score > self.threshold]

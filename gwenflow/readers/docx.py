@@ -7,7 +7,6 @@ from gwenflow.types import Document
 from gwenflow.readers.base import Reader
 
 
-
 class DocxReader(Reader):
     trans: ClassVar[dict[int, int | None]] = {
         0x00A0: 0x20,

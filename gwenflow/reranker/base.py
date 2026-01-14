@@ -4,7 +4,6 @@ from pydantic import BaseModel, ConfigDict
 from gwenflow.types import Document
 
 
-
 class Reranker(BaseModel):
     """Base class for rerankers"""
 
@@ -16,4 +15,3 @@ class Reranker(BaseModel):
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         raise NotImplementedError
-    

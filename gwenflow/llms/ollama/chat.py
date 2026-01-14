@@ -2,12 +2,11 @@ from typing import Any, Dict
 
 from gwenflow.llms.openai import ChatOpenAI
 
+
 class ChatOllama(ChatOpenAI):
- 
     base_url: str
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         client_params = {
             "base_url": self.base_url,
             "api_key": self.api_key,

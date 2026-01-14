@@ -37,8 +37,8 @@ LLM_CONTEXT_WINDOW_SIZES = {
     "mixtral-8x7b-32768": 32768,
 }
 
+
 class ChatBase(BaseModel, ABC):
- 
     model: str
     """The model to use when invoking the LLM."""
 
@@ -50,7 +50,7 @@ class ChatBase(BaseModel, ABC):
 
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     tool_type: str = Field(default="fncall")
-    
+
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @abstractmethod
@@ -64,7 +64,7 @@ class ChatBase(BaseModel, ABC):
     @abstractmethod
     def stream(self, *args, **kwargs) -> Any:
         pass
- 
+
     @abstractmethod
     async def astream(self, *args, **kwargs) -> Any:
         pass

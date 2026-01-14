@@ -14,7 +14,6 @@ except ImportError:
 
 
 class TokenTextSplitter(BaseModel):
-
     chunk_size: int = 500
     chunk_overlap: int = 100
     encoding_name: str = "cl100k_base"
@@ -22,13 +21,12 @@ class TokenTextSplitter(BaseModel):
     normalize_text: bool = False
 
     def split_text(self, text: str) -> List[str]:
-
         _tokenizer = tiktoken.get_encoding(self.encoding_name)
         input_ids = _tokenizer.encode(text)
 
         if self.normalize_text:
             text = text.replace("\n", " ").replace("\r", " ")
-            text = re.sub(' +', ' ', text)        
+            text = re.sub(" +", " ", text)
 
         splits: List[str] = []
         start_idx = 0
@@ -44,16 +42,16 @@ class TokenTextSplitter(BaseModel):
 
         if self.strip_whitespace:
             splits = [s.strip() for s in splits]
-        
+
         return splits
-    
-    def split_documents(self, documents: list[Document], chunk_fields: list = [], metadata_fields: list = []) -> list[Document]:
-    
+
+    def split_documents(
+        self, documents: list[Document], chunk_fields: list = [], metadata_fields: list = []
+    ) -> list[Document]:
         chunks = []
         for document in tqdm(documents):
-
             if not document.id:
-                logger.warning(f"Missing id on document: { document['content'] }. Skipping document.")
+                logger.warning(f"Missing id on document: {document['content']}. Skipping document.")
                 continue
 
             # content
@@ -61,14 +59,14 @@ class TokenTextSplitter(BaseModel):
             if document.content:
                 content = document.content
             elif chunk_fields:
-                content = [ f"{f.upper()}: {document.metadata.get(f)}" for f in chunk_fields if document.metadata.get(f) ]
+                content = [f"{f.upper()}: {document.metadata.get(f)}" for f in chunk_fields if document.metadata.get(f)]
                 content = ", ".join(content)
             else:
-                content = [ f"{k.upper()}: {v}" for k, v in document.metadata.items() if v ]
+                content = [f"{k.upper()}: {v}" for k, v in document.metadata.items() if v]
                 content = ", ".join(content)
-            
+
             if not content:
-                logger.warning(f"Missing content on document id: { document.id }. Skipping document.")
+                logger.warning(f"Missing content on document id: {document.id}. Skipping document.")
                 continue
 
             # meta
@@ -77,7 +75,7 @@ class TokenTextSplitter(BaseModel):
                 metadata = {}
                 for f in metadata_fields:
                     metadata[f] = document.metadata.get(f)
-            metadata["document_id"] = document.id # keep original doc id
+            metadata["document_id"] = document.id  # keep original doc id
 
             # split
             splitted_text = self.split_text(text=content)

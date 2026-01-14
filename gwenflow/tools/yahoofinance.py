@@ -12,6 +12,7 @@ class YahooFinanceSearch(BaseTool):
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
+
             stocks = yf.Search(query)
             return stocks.quotes
         except ImportError:
@@ -25,6 +26,7 @@ class YahooFinancePick(BaseTool):
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
+
             stocks = yf.Search(query)
             return stocks.quotes
         except ImportError:
@@ -38,6 +40,7 @@ class YahooFinanceStock(BaseTool):
     def _run(self, ticker: str = Field(description="The ticker stock to search for.")):
         try:
             import yfinance as yf
+
             stock = yf.Ticker(ticker)
             return stock.info
         except ImportError:
@@ -57,9 +60,7 @@ class YahooFinanceNews(BaseTool):
         try:
             import yfinance as yf
 
-            stocks = yf.Search(
-                query, enable_fuzzy_query=True, news_count=15, max_results=0
-            )
+            stocks = yf.Search(query, enable_fuzzy_query=True, news_count=15, max_results=0)
             # create a dict of news with title and link
             news_dict = {}
             for news in stocks.news:
@@ -73,8 +74,7 @@ class YahooFinanceNews(BaseTool):
 class YahooFinanceScreen(BaseTool):
     name: str = "YahooFinanceScreen"
     description: str = (
-        "Screen for stocks on Yahoo Finance."
-        "This tool will return a list of stocks that meet the criteria."
+        "Screen for stocks on Yahoo Finance.This tool will return a list of stocks that meet the criteria."
     )
 
     def _run(
@@ -88,6 +88,7 @@ class YahooFinanceScreen(BaseTool):
     ):
         try:
             import yfinance as yf
+
             screener = yf.Screener()
             try:
                 query = yf.EquityQuery(operator, eval(values))

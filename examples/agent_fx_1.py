@@ -17,6 +17,7 @@ def get_exchange_rate(currency_iso: str) -> str:
         print(f"Currency not found: {currency_iso}")
     return "Currency not found"
 
+
 tool_get_exchange_rate = FunctionTool.from_function(get_exchange_rate)
 
 
@@ -24,7 +25,10 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 
 agent = Agent(
     name="AgentFX",
-    instructions=["Get recent exchange rates data.","Answer in one sentence and if there is a date, mention this date."],
+    instructions=[
+        "Get recent exchange rates data.",
+        "Answer in one sentence and if there is a date, mention this date.",
+    ],
     llm=llm,
     tools=[tool_get_exchange_rate],
 )
@@ -35,7 +39,7 @@ queries = [
     "What's the exchange rate of the Euro?",
     "What's the exchange rate of the Chine Renminbi?",
     "What's the exchange rate of the Chinese Yuan?",
-    "What's the exchange rate of the Tonga?"
+    "What's the exchange rate of the Tonga?",
 ]
 
 for query in queries:

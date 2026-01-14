@@ -13,7 +13,6 @@ from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_u
 
 
 class Reader(BaseModel):
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def key(self, text) -> str:
@@ -29,10 +28,8 @@ class Reader(BaseModel):
             return str(Path(file))
         return str(file)
 
-    def get_file_content(self, file: Union[Path, io.BytesIO], text_mode: bool=False):
-
+    def get_file_content(self, file: Union[Path, io.BytesIO], text_mode: bool = False):
         try:
-
             if isinstance(file, io.BytesIO):
                 return file
 
@@ -49,7 +46,7 @@ class Reader(BaseModel):
                 if text_mode:
                     return response.text
                 return io.BytesIO(response.content)
-            
+
             else:
                 if not isinstance(file, Path):
                     file = Path(file)
@@ -58,8 +55,8 @@ class Reader(BaseModel):
                 if text_mode:
                     return file.read_text("utf-8")
                 return io.BytesIO(file.read_bytes())
-        
+
         except Exception as e:
             logger.error(f"Error reading file: {e}")
-        
+
         return None

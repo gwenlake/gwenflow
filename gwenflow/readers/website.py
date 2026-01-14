@@ -1,4 +1,3 @@
-
 import time
 import random
 import httpx
@@ -74,16 +73,14 @@ class WebsiteReader(Reader):
         self._urls_to_crawl.append((url, starting_depth))
 
         headers = {
-            'accept': '*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53',
-            'Accept-Language': 'en-US,en;q=0.9,it;q=0.8,es;q=0.7',
-            'referer': 'https://www.google.com/',
+            "accept": "*/*",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53",
+            "Accept-Language": "en-US,en;q=0.9,it;q=0.8,es;q=0.7",
+            "referer": "https://www.google.com/",
         }
 
         with httpx.Client() as client:
-
             while self._urls_to_crawl:
-
                 # Unpack URL and depth from the global list
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -126,7 +123,10 @@ class WebsiteReader(Reader):
                         if parsed_url.netloc.endswith(primary_domain) and not any(
                             parsed_url.path.endswith(ext) for ext in [".jpg", ".png"]
                         ):
-                            if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
+                            if (
+                                full_url not in self._visited
+                                and (full_url, current_depth + 1) not in self._urls_to_crawl
+                            ):
                                 self._urls_to_crawl.append((full_url, current_depth + 1))
 
                 except Exception as e:
@@ -150,5 +150,5 @@ class WebsiteReader(Reader):
                     metadata={"url": str(url)},
                 )
             )
-        
+
         return documents

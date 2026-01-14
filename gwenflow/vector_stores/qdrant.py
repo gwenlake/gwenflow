@@ -18,14 +18,14 @@ from qdrant_client.models import (
     CreateAlias,
     DeleteAliasOperation,
     DeleteAlias,
-    PayloadSchemaType)
+    PayloadSchemaType,
+)
 
 from gwenflow.logger import logger
 from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
-
 
 
 class Index(str, Enum):
@@ -37,8 +37,8 @@ class Index(str, Enum):
     datetime = PayloadSchemaType.DATETIME
     text = PayloadSchemaType.TEXT
 
-class Qdrant(VectorStoreBase):
 
+class Qdrant(VectorStoreBase):
     def __init__(
         self,
         collection: str,
@@ -113,18 +113,17 @@ class Qdrant(VectorStoreBase):
         return []
 
     def get_aliases(self) -> list:
-            """
-            List all aliases.
+        """
+        List all aliases.
 
-            Returns:
-                list: List of alias names.
-            """
-            try:
-                return self.client.get_aliases()
-            except Exception as e:
-                logger.error(f"Error while reading aliases: {e}")
-            return []
-
+        Returns:
+            list: List of alias names.
+        """
+        try:
+            return self.client.get_aliases()
+        except Exception as e:
+            logger.error(f"Error while reading aliases: {e}")
+        return []
 
     def create(self):
         """Create collection."""
@@ -145,7 +144,9 @@ class Qdrant(VectorStoreBase):
         try:
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance, on_disk=self.on_disk),
+                vectors_config=VectorParams(
+                    size=self.embeddings.dimensions, distance=self.distance, on_disk=self.on_disk
+                ),
             )
         except Exception as e:
             logger.error(f"Error while creating collection: {e}")
@@ -191,7 +192,7 @@ class Qdrant(VectorStoreBase):
                     payload=_payload,
                 )
             )
-    
+
         if len(points) > 0:
             self.client.upsert(collection_name=self.collection, points=points)
 
@@ -209,7 +210,7 @@ class Qdrant(VectorStoreBase):
         collection_payload = self.client.get_collection(collection_name=self.collection).payload_schema
         for key, value in filters.items():
             if isinstance(value, dict) and "gte" in value and "lte" in value:
-                if key in collection_payload and collection_payload[key].data_type=="datetime":
+                if key in collection_payload and collection_payload[key].data_type == "datetime":
                     conditions.append(FieldCondition(key=key, range=DatetimeRange(gte=value["gte"], lte=value["lte"])))
                 else:
                     conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
@@ -244,10 +245,9 @@ class Qdrant(VectorStoreBase):
             with_payload=True,
             with_vectors=False,
         )
- 
+
         documents = []
         for d in hits:
-
             if d.payload is None:
                 continue
 
@@ -263,17 +263,16 @@ class Qdrant(VectorStoreBase):
 
             if isinstance(d.id, int):
                 d.id = str(d.id)
-                
 
             documents.append(
                 Document(
                     id=d.id,
                     content=content,
                     metadata=d.payload,
-                    score=1-d.score,
+                    score=1 - d.score,
                 )
             )
-    
+
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
 
@@ -306,7 +305,6 @@ class Qdrant(VectorStoreBase):
         result = self.client.retrieve(collection_name=self.collection, ids=[id], with_payload=True)
         return result[0] if result else None
 
-
     def list(self, filters: dict = None, limit: int = 100) -> list:
         """
         List all vectors in a collection.
@@ -327,7 +325,7 @@ class Qdrant(VectorStoreBase):
             with_vectors=False,
         )
         return result
-    
+
     def create_alias(self, alias_name: str):
         """
         Create an alias for a list of collections.
@@ -337,15 +335,11 @@ class Qdrant(VectorStoreBase):
             collections (List[str]): List of collection names.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            CreateAliasOperation(
-                create_alias=CreateAlias(
-                    collection_name=self.collection, alias_name=alias_name
-                )
-            )
-        ]
-    )
-        
+            change_aliases_operations=[
+                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name))
+            ]
+        )
+
     def delete_alias(self, alias_name: str):
         """
         Delete an alias.
@@ -354,13 +348,11 @@ class Qdrant(VectorStoreBase):
             alias (str): Name of the alias.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            DeleteAliasOperation(
-                delete_alias=DeleteAlias(alias_name=alias_name)
-            ),
-        ]
-    )
-        
+            change_aliases_operations=[
+                DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name)),
+            ]
+        )
+
     def switch_alias(self, alias_name: str):
         """
         Switch an alias to a new collection.
@@ -370,18 +362,12 @@ class Qdrant(VectorStoreBase):
             collection (str): Name of the collection.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            DeleteAliasOperation(
-                delete_alias=DeleteAlias(alias_name=alias_name)
-            ),
-            CreateAliasOperation(
-                create_alias=CreateAlias(
-                    collection_name=self.collection, alias_name=alias_name
-                )
-            )
-        ]
-    )
-        
+            change_aliases_operations=[
+                DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name)),
+                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name)),
+            ]
+        )
+
     def add_index(self, field_name: str, index_type: str):
         """
         Args:
@@ -394,10 +380,7 @@ class Qdrant(VectorStoreBase):
 
         if index_type not in Index.__members__:
             raise ValueError(f"Invalid index_type: {index_type}. Must be one of {list(Index.__members__.keys())}")
-        
+
         self.client.create_payload_index(
-            collection_name=self.collection,
-            field_name=field_name,
-            field_schema=Index(index_type)
+            collection_name=self.collection, field_name=field_name, field_schema=Index(index_type)
         )
-         

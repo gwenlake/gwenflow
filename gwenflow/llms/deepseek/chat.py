@@ -5,12 +5,10 @@ from gwenflow.llms.openai import ChatOpenAI
 
 
 class ChatDeepSeek(ChatOpenAI):
- 
     model: str = "deepseek-chat"
     base_url: str = "https://api.deepseek.com"
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         api_key = self.api_key
         if api_key is None:
             api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -29,4 +27,3 @@ class ChatDeepSeek(ChatOpenAI):
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
         return client_params
-     

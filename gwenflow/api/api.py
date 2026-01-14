@@ -7,7 +7,6 @@ from gwenflow.version import __version__
 
 
 class Api(BaseModel):
- 
     base_url: Optional[str] = "https://api.gwenlake.com"
     api_key: Optional[str] = None
     timeout: Optional[int] = 300
@@ -42,5 +41,6 @@ class Api(BaseModel):
             headers=self.get_headers(),
             timeout=self.timeout,
         )
+
 
 api = Api()

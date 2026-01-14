@@ -1,4 +1,3 @@
-
 import hashlib
 import uuid
 import enum
@@ -8,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, Field, model_valida
 
 class DocumentCreationMode(str, enum.Enum):
     """Enumeration for document creation modes."""
+
     ONE_DOC_PER_FILE = "one-doc-per-file"
     ONE_DOC_PER_PAGE = "one-doc-per-page"
     ONE_DOC_PER_ELEMENT = "one-doc-per-element"

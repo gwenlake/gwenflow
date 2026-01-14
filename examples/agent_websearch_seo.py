@@ -24,11 +24,13 @@ Make sure they’re not competing articles. Split the outline into part 1 and pa
 agent = Agent(
     name="SEO-Prompt",
     llm=ChatOpenAI(model="gpt-4o-mini"),
-    instructions=["You are a journalist who writes articles.",
-                    "You write your articles in markdown",
-                    "You STRICTLY adhere to the requested word count"],
+    instructions=[
+        "You are a journalist who writes articles.",
+        "You write your articles in markdown",
+        "You STRICTLY adhere to the requested word count",
+    ],
     tools=[TavilyWebSearchTool(), WebsiteReaderTool(), PDFReaderTool()],
 )
-  
+
 response = agent.run(task.format(sector="Artificial Intelligence and Data Analytics").strip().replace("\n", " "))
 print(response.content)

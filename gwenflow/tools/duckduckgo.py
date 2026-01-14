@@ -5,7 +5,6 @@ from gwenflow.tools import BaseTool
 
 
 class DuckDuckGoBaseTool(BaseTool):
-
     region: Optional[str] = "wt-wt"
     source: str = "text"
     time: Optional[str] = "y"
@@ -20,17 +19,19 @@ class DuckDuckGoBaseTool(BaseTool):
         try:
             from duckduckgo_search import DDGS  # noqa: F401
         except ImportError:
-            raise ImportError("duckduckgo-search is not installed. Please install it with `pip install duckduckgo-search`.")
+            raise ImportError(
+                "duckduckgo-search is not installed. Please install it with `pip install duckduckgo-search`."
+            )
         return values
 
 
 class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
-
     name: str = "DuckDuckGoSearchTool"
     description: str = "Search for a query in DuckDuckGo and returns the content."
 
     def _run(self, query: str = Field(description="The search query.")):
         from duckduckgo_search import DDGS
+
         with DDGS() as ddgs:
             results = ddgs.text(
                 query,
@@ -44,12 +45,12 @@ class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
 
 
 class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
-
     name: str = "DuckDuckGoNewsTool"
     description: str = "Search for a query in DuckDuckGo News and returns the content."
 
     def _run(self, query: str = Field(description="The search query.")):
         from duckduckgo_search import DDGS
+
         with DDGS() as ddgs:
             results = ddgs.news(
                 query,

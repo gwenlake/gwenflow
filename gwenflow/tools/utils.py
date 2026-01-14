@@ -1,5 +1,6 @@
 import inspect
 
+
 def function_to_json(func, name: str = None, description: str = None) -> dict:
     """
     Converts a Python function into a JSON-serializable dictionary
@@ -25,18 +26,14 @@ def function_to_json(func, name: str = None, description: str = None) -> dict:
     try:
         signature = inspect.signature(func)
     except ValueError as e:
-        raise ValueError(
-            f"Failed to get signature for function {func.__name__}: {str(e)}"
-        )
+        raise ValueError(f"Failed to get signature for function {func.__name__}: {str(e)}")
 
     parameters = {}
     for param in signature.parameters.values():
         try:
             param_type = type_map.get(param.annotation, "string")
         except KeyError as e:
-            raise KeyError(
-                f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
-            )
+            raise KeyError(f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}")
 
         if hasattr(param.default, "description"):
             parameters[param.name] = {
@@ -46,11 +43,7 @@ def function_to_json(func, name: str = None, description: str = None) -> dict:
         else:
             parameters[param.name] = {"type": param_type}
 
-    required = [
-        param.name
-        for param in signature.parameters.values()
-        if param.default == inspect._empty
-    ]
+    required = [param.name for param in signature.parameters.values() if param.default == inspect._empty]
 
     return {
         "type": "function",

@@ -1,4 +1,3 @@
-
 import io
 from typing import List, Union
 from pathlib import Path
@@ -9,9 +8,7 @@ from gwenflow.readers.base import Reader
 
 
 class PDFReader(Reader):
-
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
-
         try:
             import pdfplumber
         except ImportError:
@@ -30,7 +27,7 @@ class PDFReader(Reader):
             with pdfplumber.open(pdf_file) as pdf:
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
-                    safe_text = text.encode('utf-8', errors='ignore').decode('utf-8')
+                    safe_text = text.encode("utf-8", errors="ignore").decode("utf-8")
 
                     tables = page.extract_tables()
 
@@ -40,11 +37,7 @@ class PDFReader(Reader):
                         tables=tables,
                     )
 
-                    doc = Document(
-                        id=self.key(f"{filename}_{i + 1}"),
-                        content=safe_text,
-                        metadata=metadata
-                    )
+                    doc = Document(id=self.key(f"{filename}_{i + 1}"), content=safe_text, metadata=metadata)
                     documents.append(doc)
 
         except Exception as e:

@@ -1,4 +1,3 @@
-
 import uuid
 import json
 import inspect
@@ -13,7 +12,6 @@ from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.types import Message
 from gwenflow.agents import Agent
-
 
 
 PROMPT_REFORMULATE = """\
@@ -61,8 +59,8 @@ Return the task for the messages in the following conversation:
 
 """
 
-class ChatAgent(BaseModel):
 
+class ChatAgent(BaseModel):
     llm: Optional[ChatBase] = Field(None, validate_default=True)
     agent: Agent
 
@@ -73,9 +71,8 @@ class ChatAgent(BaseModel):
     def set_llm(cls, v: Optional[Any]) -> Any:
         llm = v or ChatOpenAI(model="gpt-4o-mini")
         return llm
-    
-    def run(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
 
+    def run(self, messages: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         messages = self.llm._cast_messages(messages)
 
         conversation = []

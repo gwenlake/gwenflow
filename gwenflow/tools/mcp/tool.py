@@ -7,7 +7,6 @@ from gwenflow.tools.mcp.server import MCPServerSse, MCPServerSseParams
 
 
 class MCPTool(BaseTool):
-    
     def _run(self, **kwargs: Any) -> Any:
         params = MCPServerSseParams(url=self.url, headers=self.headers)
         server = MCPServerSse(params=params)
@@ -28,7 +27,7 @@ class MCPTool(BaseTool):
 
         if not tool:
             raise ValueError("Tool not found not in MCP.")
-        
+
         return MCPTool(
             name=tool.__name__,
             description=tool.description,

@@ -5,7 +5,6 @@ from gwenflow.readers.pdf import PDFReader
 
 
 class PDFReaderTool(BaseTool):
-
     name: str = "PDFReaderTool"
     description: str = "This function reads a PDF from a file or an url and returns its content."
 

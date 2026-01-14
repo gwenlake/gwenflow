@@ -19,9 +19,7 @@ def _get_template_variables(template: str) -> list[str]:
     Raises:
         ValueError: If the template format is not supported.
     """
-    input_variables = {
-        v for _, v, _, _ in Formatter().parse(template) if v is not None
-    }
+    input_variables = {v for _, v, _, _ in Formatter().parse(template) if v is not None}
 
     return sorted(input_variables)
 
@@ -34,7 +32,7 @@ class PromptTemplate(BaseModel):
 
     input_variables: list[str]
     """The prompt input variables."""
-    
+
     @model_validator(mode="before")
     @classmethod
     def pre_init_validation(cls, values: dict) -> Any:

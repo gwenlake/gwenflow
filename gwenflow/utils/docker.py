@@ -1,6 +1,6 @@
-
 import shutil
 import subprocess
+
 
 def validate_docker_installation() -> None:
     """Check if Docker is installed and running."""
@@ -17,6 +17,4 @@ def validate_docker_installation() -> None:
             stderr=subprocess.PIPE,
         )
     except subprocess.CalledProcessError:
-        raise RuntimeError(
-            f"Docker is not running. Please start Docker to use code execution with agent: {self.role}"
-        )
+        raise RuntimeError(f"Docker is not running. Please start Docker to use code execution with agent: {self.role}")

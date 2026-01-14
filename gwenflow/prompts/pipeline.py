@@ -14,7 +14,7 @@ class PipelinePromptTemplate(BaseModel):
 
     input_variables: list[str]
     """The prompt input variables."""
-    
+
     @model_validator(mode="before")
     @classmethod
     def get_input_variables(cls, values: dict) -> Any:
@@ -24,7 +24,6 @@ class PipelinePromptTemplate(BaseModel):
             all_variables.update(prompt.input_variables)
         values["input_variables"] = list(all_variables)
         return values
-
 
     def format(self, **kwargs: Any) -> list:
         """Format the prompt with the inputs.
@@ -37,5 +36,5 @@ class PipelinePromptTemplate(BaseModel):
         """
         _formatted = []
         for prompt in self.prompts:
-            _formatted.append( prompt.format(**kwargs) )
+            _formatted.append(prompt.format(**kwargs))
         return _formatted

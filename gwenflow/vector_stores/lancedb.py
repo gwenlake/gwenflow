@@ -22,9 +22,7 @@ from gwenflow.reranker import Reranker
 from gwenflow.types import Document
 
 
-
 class LanceDB(VectorStoreBase):
-
     def __init__(
         self,
         uri: lancedb.URI,
@@ -34,7 +32,6 @@ class LanceDB(VectorStoreBase):
         reranker: Optional[Reranker] = None,
         api_key: str = None,
     ):
-
         # Embedder
         self.embeddings = embeddings
 
@@ -64,13 +61,12 @@ class LanceDB(VectorStoreBase):
         elif self.table is None:
             self.table = self.client.open_table(self.collection)
 
-
     def exists(self) -> bool:
         if self.client:
             if self.collection in self.client.table_names():
                 return True
         return False
-    
+
     def get_collections(self) -> list:
         if self.client:
             return self.client.table_names()
@@ -94,24 +90,27 @@ class LanceDB(VectorStoreBase):
                     payload=json.dumps(_payload),
                 )
             )
-    
+
         if len(data) > 0:
             for d in data:
-                self.table.delete(f"id='{ d['id'] }'")
+                self.table.delete(f"id='{d['id']}'")
             self.table.add(data)
 
-
     def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
-
         query_embedding = self.embeddings.embed_query(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = self.table.search(
-            query=query_embedding,
-            vector_column_name="vector",
-        ).metric("cosine").limit(limit).to_list()
+        results = (
+            self.table.search(
+                query=query_embedding,
+                vector_column_name="vector",
+            )
+            .metric("cosine")
+            .limit(limit)
+            .to_list()
+        )
 
         documents = []
         for item in results:
@@ -124,12 +123,11 @@ class LanceDB(VectorStoreBase):
                     score=item["_distance"],
                 )
             )
-    
+
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
 
         return documents
-
 
     def drop(self):
         if self.exists():
@@ -143,11 +141,11 @@ class LanceDB(VectorStoreBase):
 
     def info(self) -> dict:
         return {}
-    
+
     def delete(self, id: int):
         return False
 
-    def get(self, id: int) -> dict:        
+    def get(self, id: int) -> dict:
         return None
 
     def list(self, filters: dict = None, limit: int = 100) -> list:

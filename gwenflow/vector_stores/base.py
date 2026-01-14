@@ -6,7 +6,6 @@ from gwenflow.types import Document
 
 
 class VectorStoreBase(ABC):
-
     @abstractmethod
     def get_collections(self):
         """List all collections."""

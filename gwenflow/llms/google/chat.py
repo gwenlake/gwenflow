@@ -9,12 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGemini(ChatOpenAI):
- 
     model: str = "gemini-1.5-flash"
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         api_key = self.api_key
         if api_key is None:
             api_key = os.environ.get("GOOGLE_API_KEY")
@@ -33,4 +31,3 @@ class ChatGemini(ChatOpenAI):
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
         return client_params
-     
