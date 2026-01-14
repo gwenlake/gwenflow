@@ -125,7 +125,7 @@ class ChatOpenAI(ChatBase):
                 # text_response = dirtyjson.loads(json_str)
                 text_response = json.loads(json_str)
                 return text_response
-            except:
+            except Exception:
                 pass
 
         return response
@@ -143,7 +143,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.response_format:
             completion.choices[0].message.content = self._parse_response(
@@ -161,7 +161,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.response_format:
             completion.choices[0].message.content = self._parse_response(
@@ -181,7 +181,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         try:
@@ -196,4 +196,4 @@ class ChatOpenAI(ChatBase):
             async for chunk in completion:
                 yield chunk
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e

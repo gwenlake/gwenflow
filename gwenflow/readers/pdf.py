@@ -11,8 +11,8 @@ class PDFReader(Reader):
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
         try:
             import pdfplumber
-        except ImportError:
-            raise ImportError("pdfplumber is not installed. Please install it with `pip install pdfplumber`.")
+        except ImportError as e:
+            raise ImportError("pdfplumber is not installed. Please install it with `pip install pdfplumber`.") from e
 
         try:
             filename = self.get_file_name(file)

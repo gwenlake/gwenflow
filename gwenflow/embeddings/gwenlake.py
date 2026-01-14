@@ -42,7 +42,7 @@ class GwenlakeEmbeddings(Embeddings):
             payload = {"input": input, "model": self.model}
             response = self._api.client.post("/v1/embeddings", json=payload)
         except requests.exceptions.RequestException as e:
-            raise ValueError(f"Error raised by inference endpoint: {e}")
+            raise ValueError(f"Error raised by inference endpoint: {e}") from e
 
         if response.status_code != 200:
             raise ValueError(f"Error raised by inference API: rate limit exceeded.\nResponse: {response.text}")
@@ -84,7 +84,7 @@ class GwenlakeEmbeddings(Embeddings):
                         text = "passage: " + text
                     batch_processed.append(text)
                 embeddings += self._embed(batch_processed)
-        except:
+        except Exception:
             return None
         return embeddings
 

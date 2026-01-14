@@ -18,19 +18,19 @@ class DocxReader(Reader):
         0xFEFF: None,
     }
 
-    def getText(self, file_obj) -> str:
+    def get_text(self, file_obj) -> str:
         try:
             import docx
-        except ImportError:
-            raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`")
+        except ImportError as e:
+            raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`") from e
         doc = docx.Document(file_obj)
         return "\n".join((p.text.translate(self.trans) if p.text else "") for p in doc.paragraphs)
 
-    def getTables(self, file_obj):
+    def get_tables(self, file_obj):
         try:
             import docx
-        except ImportError:
-            raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`")
+        except ImportError as e:
+            raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`") from e
         doc = docx.Document(file_obj)
 
         tables = []
@@ -53,8 +53,8 @@ class DocxReader(Reader):
 
             data = content.getvalue() if isinstance(content, io.BytesIO) else content
 
-            text = self.getText(io.BytesIO(data))
-            tables = self.getTables(io.BytesIO(data))
+            text = self.get_text(io.BytesIO(data))
+            tables = self.get_tables(io.BytesIO(data))
 
             doc = Document(
                 id=self.key(f"{filename}"),

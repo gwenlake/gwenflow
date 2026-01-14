@@ -89,6 +89,7 @@ class PromptTemplate(BaseModel):
         Args:
             template: The template to load.
             kwargs: Any other arguments to pass to the prompt template.
+            role: The role of the prompt (e.g., "user", "assistant", etc.).
 
         Returns:
             The prompt template loaded from the template.

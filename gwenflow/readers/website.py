@@ -12,8 +12,8 @@ from gwenflow.types import Document
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401
-except ImportError:
-    raise ImportError("BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`.")
+except ImportError as e:
+    raise ImportError("BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`.") from e
 
 
 class WebsiteReader(Reader):
@@ -58,7 +58,7 @@ class WebsiteReader(Reader):
             content = [document.content for document in documents]
             content = "\n\n".join(content)
             return content
-        except:
+        except Exception:
             return ""
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:

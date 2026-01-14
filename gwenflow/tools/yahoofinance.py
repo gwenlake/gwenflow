@@ -1,3 +1,5 @@
+from typing import Annotated, Union
+
 from pydantic import Field
 
 from gwenflow.tools import BaseTool
@@ -76,14 +78,17 @@ class YahooFinanceScreen(BaseTool):
     )
 
     def _run(
-        self,
-        operator: str = Field(
-            description="The queries support operators: GT (greater than), LT (less than), BTWN (between), EQ (equals), and logical operators AND and OR for combining multiple conditions."
-        ),
-        values: list[str | int] = Field(
-            description="The values to search for. For example, ['intradaymarketcap', 1000000000] for market cap greater than 1 billion.",
-        ),
+    self,
+    operator: Annotated[
+        str,
+        Field(description="The queries support operators: GT, LT, BTWN, EQ, AND, OR.")
+    ],
+    values: Annotated[
+        list[Union[str, int]],
+        Field(description="The values to search for. Ex: ['intradaymarketcap', 1000000000]")
+    ],
     ):
+
         try:
             import yfinance as yf
 

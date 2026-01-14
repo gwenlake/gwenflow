@@ -42,14 +42,14 @@ class Qdrant(VectorStoreBase):
     def __init__(
         self,
         collection: str,
-        embeddings: Embeddings = GwenlakeEmbeddings(),
+        embeddings: Optional[Embeddings] = None,
         distance: Distance = Distance.COSINE,
-        client: QdrantClient = None,
-        host: str = None,
+        client: Optional[QdrantClient] = None,
+        host: Optional[str] = None,
         port: int = 6333,
-        path: str = None,
-        url: str = None,
-        api_key: str = None,
+        path: Optional[str] = None,
+        url: Optional[str] = None,
+        api_key: Optional[str] = None,
         reranker: Optional[Reranker] = None,
         on_disk: bool = True,
     ):
@@ -57,15 +57,19 @@ class Qdrant(VectorStoreBase):
 
         Args:
             collection (str): Name of the collection.
+            embeddings (Embeddings, optional): Embedding model instance. Defaults to GwenlakeEmbeddings().
+            distance (Distance, optional): Distance metric for vector similarity. Defaults to Distance.COSINE.
             client (QdrantClient, optional): Existing Qdrant client instance. Defaults to None.
             host (str, optional): Host address for Qdrant server. Defaults to None.
-            port (int, optional): Port for Qdrant server. Defaults to None.
-            path (str, optional): Path for local Qdrant database. Defaults to None.
+            port (int, optional): Port for Qdrant server. Defaults to 6333.
+            path (str, optional): Path for local Qdrant database (SQLite/disk). Defaults to None.
             url (str, optional): Full URL for Qdrant server. Defaults to None.
             api_key (str, optional): API key for Qdrant server. Defaults to None.
+            reranker (Reranker, optional): Reranker instance to refine search results. Defaults to None.
+            on_disk (bool, optional): Whether to store vectors on disk. Defaults to True.
         """
         # Embedder
-        self.embeddings = embeddings
+        self.embeddings = embeddings or GwenlakeEmbeddings()
 
         # Distance metric
         self.distance = distance
@@ -315,15 +319,19 @@ class Qdrant(VectorStoreBase):
         return result
 
     def create_alias(self, alias_name: str):
-        """Create an alias for a list of collections.
+        """Create an alias for the current collection.
 
         Args:
-            alias (str): Name of the alias.
-            collections (List[str]): List of collection names.
+            alias_name (str): The name of the alias to create for the current collection.
         """
         self.client.update_collection_aliases(
             change_aliases_operations=[
-                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name))
+                CreateAliasOperation(
+                    create_alias=CreateAlias(
+                        collection_name=self.collection,
+                        alias_name=alias_name
+                    )
+                )
             ]
         )
 
@@ -331,7 +339,7 @@ class Qdrant(VectorStoreBase):
         """Delete an alias.
 
         Args:
-            alias (str): Name of the alias.
+            alias_name (str): Name of the alias.
         """
         self.client.update_collection_aliases(
             change_aliases_operations=[
@@ -343,8 +351,7 @@ class Qdrant(VectorStoreBase):
         """Switch an alias to a new collection.
 
         Args:
-            alias (str): Name of the alias.
-            collection (str): Name of the collection.
+            alias_name (str): Name of the alias.
         """
         self.client.update_collection_aliases(
             change_aliases_operations=[
@@ -354,7 +361,9 @@ class Qdrant(VectorStoreBase):
         )
 
     def add_index(self, field_name: str, index_type: str):
-        """Args:
+        """Add index to a field.
+
+        Args:
             field_name (str): Name of the field to index.
             index_type (str): Type of index (must be one of the valid types).
 

@@ -10,8 +10,8 @@ from gwenflow.types.document import Document
 
 try:
     import tiktoken
-except ImportError:
-    raise ImportError("`tiktoken` is not installed. Please install it with `pip install tiktoken`.")
+except ImportError as e:
+    raise ImportError("`tiktoken` is not installed. Please install it with `pip install tiktoken`.") from e
 
 
 class TokenTextSplitter(BaseModel):

@@ -23,10 +23,10 @@ class WikipediaBaseTool(BaseTool):
             lang = values.get("lang", "en")
             wikipedia.set_lang(lang)
             values["client"] = wikipedia
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "Could not import wikipedia python package. Please install it with `pip install wikipedia`."
-            )
+            ) from e
         return values
 
 

@@ -5,13 +5,8 @@ from typing import Optional
 try:
     import lancedb
     from lancedb.pydantic import LanceModel, Vector
-except ImportError:
-    raise ImportError("`lancedb` not installed.")
-
-try:
-    import pyarrow as pa
-except ImportError:
-    raise ImportError("`pyarrow` not installed.")
+except ImportError as exc:
+    raise ImportError("`lancedb` not installed.") from exc
 
 
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
@@ -27,37 +22,52 @@ class LanceDB(VectorStoreBase):
         uri: lancedb.URI,
         collection: str = "default",
         client: Optional[lancedb.DBConnection] = None,
-        embeddings: Embeddings = GwenlakeEmbeddings(),
+        embeddings: Optional[Embeddings] = None,
         reranker: Optional[Reranker] = None,
-        api_key: str = None,
+        api_key: Optional[str] = None,
     ):
+        """Initialize the LanceDB vector store.
+
+        Args:
+            uri (lancedb.URI): The location of the database (local path or s3://).
+            collection (str, optional): Name of the table/collection. Defaults to "default".
+            client (lancedb.DBConnection, optional): Existing connection instance. Defaults to None.
+            embeddings (Embeddings, optional): Embedding model instance. Defaults to GwenlakeEmbeddings().
+            reranker (Reranker, optional): Reranker instance for post-processing. Defaults to None.
+            api_key (str, optional): API key for remote LanceDB storage (e.g., LanceDB Cloud). Defaults to None.
+        """
         # Embedder
-        self.embeddings = embeddings
+        self.embeddings = embeddings or GwenlakeEmbeddings()
 
         # reranker
         self.reranker = reranker
 
         # collection and uri
         self.collection = collection
-        self.uri: lancedb.URI = uri
-        self.table: lancedb.db.LanceTable = None
+        self.uri = uri
 
-        self.client: lancedb.DBConnection = client or lancedb.connect(uri=self.uri, api_key=api_key)
+        # Client initialization
+        self.client = client or lancedb.connect(uri=self.uri, api_key=api_key)
+
+        self.table: Optional[lancedb.db.LanceTable] = None
         self.create()
 
     def create(self):
+        """Create the table with the required schema if it doesn't exist."""
         if not self.exists():
-
-            class schema(LanceModel):
+            class Schema(LanceModel):
                 id: str
-                vector: Vector(self.embeddings.dimensions)
+                vector: Vector(self.embeddings.dimensions) # type: ignore
                 payload: str
 
             logger.debug(f"Creating collection: {self.collection}")
-            self.table = self.client.create_table(self.collection, schema=schema, mode="overwrite", exist_ok=True)
-            # self.table.create_index(column='vector', index_type='IVF_PQ', metric="cosine", num_partitions=256, num_sub_vectors=32)
-
-        elif self.table is None:
+            self.table = self.client.create_table(
+                self.collection,
+                schema=Schema,
+                mode="overwrite",
+                exist_ok=True
+            )
+        else:
             self.table = self.client.open_table(self.collection)
 
     def exists(self) -> bool:

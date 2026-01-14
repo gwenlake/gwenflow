@@ -19,10 +19,10 @@ class DuckDuckGoBaseTool(BaseTool):
         """Validate that the python package exists in environment."""
         try:
             from duckduckgo_search import DDGS  # noqa: F401
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "duckduckgo-search is not installed. Please install it with `pip install duckduckgo-search`."
-            )
+            ) from e
         return values
 
 

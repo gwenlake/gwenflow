@@ -1,4 +1,3 @@
-from abc import ABC
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -20,7 +19,7 @@ def get_default_fs() -> fsspec.AbstractFileSystem:
     return LocalFileSystem()
 
 
-class SimpleDirectoryReader(ABC):
+class SimpleDirectoryReader():
     """SimpleDirectoryReader."""
 
     def __init__(

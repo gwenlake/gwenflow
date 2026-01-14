@@ -4,9 +4,10 @@ import boto3
 import urllib3
 from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection, helpers
 
+from gwenflow.logger import logger
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from gwenflow.logger import logger
 
 
 class OpenSearchDocumentStore:

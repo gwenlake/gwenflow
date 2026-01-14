@@ -15,8 +15,8 @@ from gwenflow.utils.aws import (
 
 try:
     import faiss
-except ImportError:
-    raise ImportError("`faiss` is not installed.")
+except ImportError as exc:
+    raise ImportError("`faiss` is not installed.") from exc
 
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.logger import logger
@@ -29,11 +29,11 @@ class FAISS(VectorStoreBase):
     def __init__(
         self,
         filename: str,
-        embeddings: Embeddings = GwenlakeEmbeddings(),
+        embeddings: Optional[Embeddings] = None,
         reranker: Optional[Reranker] = None,
     ):
         # Embedder
-        self.embeddings = embeddings
+        self.embeddings = embeddings or GwenlakeEmbeddings()
 
         # reranker
         self.reranker = reranker
@@ -93,7 +93,7 @@ class FAISS(VectorStoreBase):
             return []
         query_embedding = np.array([query_embedding], dtype="float32")
 
-        D, I = self.index.search(query_embedding, k=limit)
+        D, I = self.index.search(query_embedding, k=limit)  # noqa: E741, N806
 
         documents = []
         for idx, score in zip(I[0], D[0], strict=False):

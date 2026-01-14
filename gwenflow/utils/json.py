@@ -1,5 +1,7 @@
 import json
 import re
+from datetime import date, datetime
+from typing import Any
 
 
 def parse_json_markdown(json_string: str) -> dict:
@@ -28,18 +30,19 @@ def parse_json_markdown(json_string: str) -> dict:
     return parsed
 
 
-def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict:
+def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict[str, Any]:
     try:
         json_obj = parse_json_markdown(text)
     except json.JSONDecodeError as e:
-        raise Exception(f"Got invalid JSON object. Error: {e}")
+        raise ValueError(f"Got invalid JSON object. Error: {e}") from e
+
     for key in expected_keys:
         if key not in json_obj:
-            raise Exception(f"Got invalid return object. Expected key `{key}` to be present, but got {json_obj}")
+            raise ValueError(
+                f"Got invalid return object. Expected key `{key}` to be present, "
+                f"but got {json_obj}"
+            ) from None
     return json_obj
-
-
-from datetime import date, datetime
 
 
 def json_serial(obj):

@@ -24,7 +24,7 @@ class GwenlakeReranker(Reranker):
             payload = {"query": query, "input": input, "model": self.model}
             response = api.client.post("/v1/rerank", json=payload)
         except requests.exceptions.RequestException as e:
-            raise ValueError(f"Error raised by inference endpoint: {e}")
+            raise ValueError(f"Error raised by inference endpoint: {e}") from e
 
         if response.status_code != 200:
             raise ValueError(f"Error raised by inference API: rate limit exceeded.\nResponse: {response.text}")

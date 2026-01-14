@@ -1,4 +1,4 @@
-class GwenflowException(Exception):
+class GwenflowException(Exception):  # noqa: N818
     """Base class for all exceptions in Gwenflow."""
 
 

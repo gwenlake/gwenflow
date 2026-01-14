@@ -6,8 +6,8 @@ from operator import attrgetter
 
 try:
     import boto3
-except ImportError:
-    raise ImportError("Please install boto3 with `pip install boto3`.")
+except ImportError as error:
+    raise ImportError("Please install boto3 with `pip install boto3`.") from error
 
 
 def aws_get_instance_ip_address(instance_id, region_name="eu-west-3"):
@@ -31,8 +31,7 @@ s3object = namedtuple("S3Obj", ["key", "mtime", "size", "ETag"])
 
 
 def aws_s3_list_files(bucket, path, start=None, end=None, recursive=True, list_dirs=True, list_objs=True, limit=None):
-    """Iterator that lists a bucket's objects under path, (optionally) starting with
-    start and ending before end.
+    """Iterator that lists a bucket's objects under path, (optionally) starting with start and ending before end.
 
     If recursive is False, then list only the "depth=0" items (dirs and objects).
 
@@ -153,7 +152,7 @@ def aws_s3_uri_to_bucket_key(uri: str):
         bucket = tmp.split("/")[0]
         key = tmp.replace(bucket, "").strip("/")
         return bucket, key
-    except:
+    except Exception:
         pass
     return None, None
 

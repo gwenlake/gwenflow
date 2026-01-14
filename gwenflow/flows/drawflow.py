@@ -132,7 +132,7 @@ class DrawFlow(BaseModel):
         for node_id, col in columns.items():
             columns_inv[col].append(node_id)
 
-        for col, nodes in columns_inv.items():
+        for _, nodes in columns_inv.items():
             for index, node_id in enumerate(nodes):
                 rows[node_id] = index + 1
 
