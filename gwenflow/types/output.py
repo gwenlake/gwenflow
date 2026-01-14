@@ -1,7 +1,7 @@
-import uuid
 import json
-from pydantic import BaseModel, Field, UUID4
 from time import time
+
+from pydantic import BaseModel, Field
 
 
 class ResponseOutputItem(BaseModel):

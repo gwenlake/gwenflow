@@ -1,7 +1,8 @@
 import uuid
-from typing import Optional, Any
-from pydantic import BaseModel, Field, field_validator, UUID4, ConfigDict
 from time import time
+from typing import Any, Optional
+
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
 from gwenflow.types.message import Message
 from gwenflow.types.usage import Usage

@@ -3,8 +3,8 @@ from typing import Any, Callable
 from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from gwenflow.tools.utils import function_to_json
 from gwenflow.tools.base import BaseTool
+from gwenflow.tools.utils import function_to_json
 
 
 class FunctionTool(BaseTool):

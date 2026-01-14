@@ -1,22 +1,21 @@
-import requests
 import json
-import dotenv
 
-from gwenflow import ChatOpenAI, Agent, FunctionTool
+import dotenv
+import requests
+
+from gwenflow import Agent, ChatOpenAI, FunctionTool
 
 dotenv.load_dotenv(override=True)
 
 
 def get_bike_availability(station_name: str = None) -> str:
-    """
-    Get the current number of bikes available at a given Rennes station.
+    """Get the current number of bikes available at a given Rennes station.
     The station_name must match exactly the station name in the API.
     Otherwise, we return the full record
     Returns JSON string with station data or error message.
     """
-
     url_station = f"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records?where=nom=%22{station_name}%22&limit=1"
-    url_general = f"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records"
+    url_general = "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records"
 
     try:
         if not station_name:

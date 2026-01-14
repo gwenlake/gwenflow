@@ -1,7 +1,7 @@
 from pydantic import Field
 
-from gwenflow.tools import BaseTool
 from gwenflow.readers.pdf import PDFReader
+from gwenflow.tools import BaseTool
 
 
 class PDFReaderTool(BaseTool):

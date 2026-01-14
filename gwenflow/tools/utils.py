@@ -2,8 +2,7 @@ import inspect
 
 
 def function_to_json(func, name: str = None, description: str = None) -> dict:
-    """
-    Converts a Python function into a JSON-serializable dictionary
+    """Converts a Python function into a JSON-serializable dictionary
     that describes the function's signature, including its name,
     description, and parameters.
 

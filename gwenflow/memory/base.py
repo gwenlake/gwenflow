@@ -1,6 +1,7 @@
 import uuid
-from typing import Optional, Callable, Any, List
-from pydantic import BaseModel, field_validator, Field
+from typing import Any, Callable, List, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 from gwenflow.types import Message
 from gwenflow.utils.tokens import num_tokens_from_string

@@ -1,13 +1,12 @@
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, model_validator, field_validator, Field
+from typing import Any, List, Optional
 
 import yaml
+from pydantic import BaseModel, model_validator
 
-from gwenflow.logger import logger
 from gwenflow.agents import Agent
 from gwenflow.llms import ChatBase
+from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
-
 
 MAX_TRIALS = 5
 
@@ -84,10 +83,10 @@ class Flow(BaseModel):
             print("---")
             print(f"Agent  : {step.agent.name}")
             if step.depends_on:
-                print(f"Depends on:", ",".join(step.depends_on))
+                print("Depends on:", ",".join(step.depends_on))
             if step.agent.tools:
                 available_tools = [tool.name for tool in step.agent.tools]
-                print(f"Tools  :", ",".join(available_tools))
+                print("Tools  :", ",".join(available_tools))
 
     def run(self, query: str) -> str:
         outputs = {}

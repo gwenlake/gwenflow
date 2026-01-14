@@ -1,9 +1,9 @@
-import os
-
-from pydantic import Field
-import requests
 import json
-from typing import Dict, Any, List
+import os
+from typing import Any, Dict, List
+
+import requests
+from pydantic import Field
 
 from gwenflow.tools import BaseTool
 
@@ -17,8 +17,7 @@ class WebSearchTool(BaseTool):
     base_url: str = "https://www.googleapis.com/customsearch/v1"
 
     def _run(self, query: str = Field(description="The search query."), num_results: int = 10) -> Dict[str, Any]:
-        """
-        Effectue une recherche web en utilisant l'API Google Custom Search.
+        """Effectue une recherche web en utilisant l'API Google Custom Search.
 
         Args:
             query: La requête de recherche
@@ -59,8 +58,7 @@ class WebSearchTool(BaseTool):
             return {"success": False, "error": f"Erreur inattendue: {str(e)}", "query": query, "results": []}
 
     def _parse_results(self, data: Dict[str, Any]) -> List[Dict[str, str]]:
-        """
-        Parse les résultats de l'API Google Custom Search.
+        """Parse les résultats de l'API Google Custom Search.
 
         Args:
             data: Réponse JSON de l'API

@@ -1,12 +1,11 @@
 import asyncio
 import json
-
 from abc import ABC, abstractmethod
 from typing import Any
+
 from pydantic import BaseModel, model_validator
 
 from gwenflow.tools.utils import function_to_json
-from gwenflow.logger import logger
 
 
 class BaseTool(BaseModel, ABC):

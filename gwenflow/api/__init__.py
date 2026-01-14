@@ -1,3 +1,3 @@
-from gwenflow.api.api import api, Api
+from gwenflow.api.api import Api, api
 
 __all__ = ["api", "Api"]

@@ -1,9 +1,7 @@
 import dotenv
 
-from gwenflow import ChatOpenAI, Agent
-from gwenflow.tools import TavilyWebSearchTool, WebsiteReaderTool, PDFReaderTool
-from gwenflow import set_log_level_to_debug
-
+from gwenflow import Agent, ChatOpenAI, set_log_level_to_debug
+from gwenflow.tools import PDFReaderTool, TavilyWebSearchTool, WebsiteReaderTool
 
 set_log_level_to_debug()
 

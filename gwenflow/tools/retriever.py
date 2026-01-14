@@ -1,10 +1,11 @@
-from typing import List, Any, Optional
-from pydantic import field_validator, Field
+from typing import Any, List, Optional
+
+from pydantic import Field, field_validator
 
 from gwenflow.logger import logger
+from gwenflow.retriever.base import Retriever
 from gwenflow.tools import BaseTool
 from gwenflow.types.document import Document
-from gwenflow.retriever.base import Retriever
 
 
 class RetrieverTool(BaseTool):

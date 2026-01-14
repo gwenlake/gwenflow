@@ -1,12 +1,12 @@
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
-from typing import Any, Dict, List, Optional, cast
-import os
-import requests
+from typing import Dict, List
 
-from gwenflow.types import Document
-from gwenflow.reranker.base import Reranker
+import requests
+from pydantic import model_validator
+
 from gwenflow.api import api
 from gwenflow.logger import logger
+from gwenflow.reranker.base import Reranker
+from gwenflow.types import Document
 
 
 class GwenlakeReranker(Reranker):

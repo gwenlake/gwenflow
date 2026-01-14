@@ -1,11 +1,12 @@
-import re
 import hashlib
+import re
+from typing import List
+
 from pydantic import BaseModel
-from typing import List, Callable
 from tqdm import tqdm
 
-from gwenflow.types.document import Document
 from gwenflow.logger import logger
+from gwenflow.types.document import Document
 
 try:
     import tiktoken

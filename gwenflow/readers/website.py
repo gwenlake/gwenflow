@@ -1,15 +1,14 @@
-import time
 import random
-import httpx
+import time
+from typing import Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
-from typing import Set, Dict, List, Tuple
+import httpx
 
 from gwenflow.logger import logger
 from gwenflow.readers import PDFReader
 from gwenflow.readers.base import Reader
 from gwenflow.types import Document
-from gwenflow.readers.base import Reader
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401
@@ -40,7 +39,6 @@ class WebsiteReader(Reader):
 
     def _extract_html_content(self, soup: BeautifulSoup) -> str:
         """Extracts the main content from a BeautifulSoup object."""
-
         for tag in ["article", "main"]:
             element = soup.find(tag)
             if element:
@@ -65,7 +63,6 @@ class WebsiteReader(Reader):
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """Crawls an url and returns a dictionary of URLs and their corresponding content."""
-
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
@@ -137,7 +134,6 @@ class WebsiteReader(Reader):
 
     def read(self, url: str) -> List[Document]:
         """Reads a website and returns a list of documents."""
-
         documents = []
 
         result = self.crawl(url)

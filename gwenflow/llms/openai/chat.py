@@ -1,15 +1,16 @@
 import json
 import os
-from typing import Optional, Union, Any, List, Dict, Iterator
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.llms import ChatBase
-from gwenflow.types import Message, ItemHelpers
-from gwenflow.utils import extract_json_str
-from pydantic import Field
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
+from typing import Any, Dict, Iterator, List, Optional, Union
 
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from pydantic import Field
+
+from gwenflow.llms import ChatBase
+from gwenflow.telemetry.base import TelemetryBase
+from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
+from gwenflow.types import ItemHelpers, Message
+from gwenflow.utils import extract_json_str
 
 
 class ChatOpenAI(ChatBase):
@@ -118,7 +119,6 @@ class ChatOpenAI(ChatBase):
 
     def _parse_response(self, response: str, response_format: dict = None) -> str:
         """Process the response."""
-
         if response_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)

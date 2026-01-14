@@ -1,10 +1,10 @@
+import hashlib
 import io
 import os
-import logging
-import hashlib
-import numpy as np
 import pickle
-from typing import Optional, Any
+from typing import Optional
+
+import numpy as np
 
 from gwenflow.utils.aws import (
     aws_s3_download_in_buffer,
@@ -18,11 +18,11 @@ try:
 except ImportError:
     raise ImportError("`faiss` is not installed.")
 
-from gwenflow.logger import logger
-from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
+from gwenflow.vector_stores.base import VectorStoreBase
 
 
 class FAISS(VectorStoreBase):
@@ -84,7 +84,7 @@ class FAISS(VectorStoreBase):
 
     def search(self, query: str, limit: int = 5) -> list[Document]:
         if not self.index:
-            logger.error(f"Error no index.")
+            logger.error("Error no index.")
             return []
 
         query_embedding = self.embeddings.embed_query(query)
@@ -96,7 +96,7 @@ class FAISS(VectorStoreBase):
         D, I = self.index.search(query_embedding, k=limit)
 
         documents = []
-        for idx, score in zip(I[0], D[0]):
+        for idx, score in zip(I[0], D[0], strict=False):
             if idx == -1:
                 continue
             document = self.metadata[idx].copy()

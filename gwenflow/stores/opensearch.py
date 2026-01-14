@@ -1,9 +1,8 @@
 from typing import Any
-import logging
-import boto3
-from opensearchpy import OpenSearch, helpers, AWSV4SignerAuth, RequestsHttpConnection
 
+import boto3
 import urllib3
+from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection, helpers
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

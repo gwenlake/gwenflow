@@ -1,5 +1,3 @@
-from typing import Any
-
 from pydantic import Field
 
 from gwenflow.tools import BaseTool

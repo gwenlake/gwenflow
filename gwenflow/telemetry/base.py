@@ -1,13 +1,13 @@
 import functools
-from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict
+from typing import Dict, Optional
+
+from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from openinference.semconv.trace import SpanAttributes, OpenInferenceSpanKindValues
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TelemetryBase(BaseModel):

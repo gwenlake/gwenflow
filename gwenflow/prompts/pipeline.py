@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, model_validator
-from typing import Any, Optional, Union
 
 from gwenflow.prompts.template import PromptTemplate
 

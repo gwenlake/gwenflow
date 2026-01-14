@@ -1,14 +1,13 @@
 import json
-import uuid
 import re
+import uuid
+from typing import Dict, Iterator, List, Optional, Union
 
-from typing import List, Union, Optional, Dict, Iterator
 from pydantic import BaseModel
 
+from gwenflow.agents.agent import DEFAULT_MAX_TURNS, Agent
 from gwenflow.logger import logger
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
-from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
-
+from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, Usage
 
 PROMPT_TOOLS = """\
 You have access to the following tools. Only use these tools.

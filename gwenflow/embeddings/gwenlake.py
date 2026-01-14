@@ -1,15 +1,13 @@
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
-from typing import Any, Dict, List, Optional, cast
-import os
 import re
-import requests
-from tenacity import retry, stop_after_attempt, wait_fixed
 from functools import cached_property
+from typing import Dict, List, Optional
 
-from gwenflow.api import api, Api
+import requests
+from pydantic import model_validator
+from tenacity import retry, stop_after_attempt, wait_fixed
+
+from gwenflow.api import Api, api
 from gwenflow.embeddings.base import Embeddings
-from gwenflow.version import __version__
-
 
 EMBEDDING_DIMS = {
     "e5-base-v2": 768,
@@ -68,7 +66,6 @@ class GwenlakeEmbeddings(Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
-
         if not texts:
             return []
 

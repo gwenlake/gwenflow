@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, model_validator
 from pathlib import Path
-from typing import Any, Optional, Union
 from string import Formatter
+from typing import Any, Optional, Union
+
+from pydantic import BaseModel, model_validator
 
 
 def _get_template_variables(template: str) -> list[str]:

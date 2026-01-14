@@ -1,8 +1,9 @@
-import requests
 import json
-import dotenv
 
-from gwenflow import ChatOpenAI, Agent, FunctionTool
+import dotenv
+import requests
+
+from gwenflow import Agent, ChatOpenAI, FunctionTool
 
 dotenv.load_dotenv(override=True)
 
@@ -13,7 +14,7 @@ def get_exchange_rate(currency_iso: str) -> str:
         response = requests.get("http://www.floatrates.com/daily/usd.json").json()
         data = response[currency_iso.lower()]
         return json.dumps(data)
-    except Exception as e:
+    except Exception:
         print(f"Currency not found: {currency_iso}")
     return "Currency not found"
 

@@ -1,7 +1,6 @@
 from gwenflow import Agent, ChatOpenAI
 from gwenflow.memory.chat_memory_buffer import ChatMemoryBuffer
 
-
 messages = [
     {"role": "user", "content": "anything about alzheimer?"},
     {"role": "assistant", "content": "Alzheimer is a disease."},

@@ -1,12 +1,11 @@
 import os
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
-from openai import AzureOpenAI, AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AzureOpenAI
 
 from gwenflow.llms.openai import ChatOpenAI
-from gwenflow.telemetry.base import TelemetryBase
-
 from gwenflow.telemetry.azure.azure_instrument import azure_telemetry
+from gwenflow.telemetry.base import TelemetryBase
 
 
 class ChatAzureOpenAI(ChatOpenAI):

@@ -1,13 +1,13 @@
 import functools
 import json
-from typing import TYPE_CHECKING, Any
-
-from gwenflow.exceptions import GwenflowException, UserError, ModelBehaviorError
-from gwenflow.logger import logger
-from gwenflow.tools import FunctionTool, BaseTool
-from gwenflow.tools.mcp.server import MCPServer
+from typing import Any
 
 from mcp.types import Tool
+
+from gwenflow.exceptions import GwenflowException, UserError
+from gwenflow.logger import logger
+from gwenflow.tools import BaseTool, FunctionTool
+from gwenflow.tools.mcp.server import MCPServer
 
 
 class MCPUtil:

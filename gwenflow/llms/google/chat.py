@@ -1,9 +1,8 @@
-from typing import Any, Dict
-import os
 import logging
+import os
+from typing import Any, Dict
 
 from gwenflow.llms.openai import ChatOpenAI
-
 
 logger = logging.getLogger(__name__)
 

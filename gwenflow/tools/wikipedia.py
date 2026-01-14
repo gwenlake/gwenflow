@@ -1,8 +1,8 @@
 from typing import Any
+
 from pydantic import Field, model_validator
 
 from gwenflow.tools import BaseTool
-
 
 WIKIPEDIA_MAX_QUERY_LENGTH = 300
 
@@ -52,7 +52,7 @@ class WikipediaTool(WikipediaBaseTool):
                 if (doc_content_chars + len(page_title) + len(page.summary) + 20) < self.doc_content_chars_max:
                     documents.append(summary)
                     doc_content_chars += len(page_title) + len(page.summary) + 20
-            except Exception as e:
+            except Exception:
                 pass
 
         if not documents:

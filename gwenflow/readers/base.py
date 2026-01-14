@@ -1,11 +1,10 @@
-from typing import Any, List, Union
-from pydantic import BaseModel, Field, ConfigDict
-
-import io
-import requests
 import hashlib
-from typing import List
+import io
 from pathlib import Path
+from typing import Any, List, Union
+
+import requests
+from pydantic import BaseModel, ConfigDict
 
 from gwenflow.logger import logger
 from gwenflow.types import Document

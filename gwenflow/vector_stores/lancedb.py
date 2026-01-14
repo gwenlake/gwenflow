@@ -1,11 +1,10 @@
-import logging
 import hashlib
 import json
-from typing import List, Optional, Dict, Any
+from typing import Optional
 
 try:
     import lancedb
-    from lancedb.pydantic import Vector, LanceModel
+    from lancedb.pydantic import LanceModel, Vector
 except ImportError:
     raise ImportError("`lancedb` not installed.")
 
@@ -15,11 +14,11 @@ except ImportError:
     raise ImportError("`pyarrow` not installed.")
 
 
-from gwenflow.logger import logger
-from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
+from gwenflow.vector_stores.base import VectorStoreBase
 
 
 class LanceDB(VectorStoreBase):
@@ -77,7 +76,7 @@ class LanceDB(VectorStoreBase):
         embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
         data = []
-        for document, embedding in zip(documents, embeddings):
+        for document, embedding in zip(documents, embeddings, strict=False):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             _id = document.id

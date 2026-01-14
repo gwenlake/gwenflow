@@ -1,6 +1,6 @@
 import io
-import os
 import json
+import os
 from collections import namedtuple
 from operator import attrgetter
 
@@ -31,8 +31,7 @@ s3object = namedtuple("S3Obj", ["key", "mtime", "size", "ETag"])
 
 
 def aws_s3_list_files(bucket, path, start=None, end=None, recursive=True, list_dirs=True, list_objs=True, limit=None):
-    """
-    Iterator that lists a bucket's objects under path, (optionally) starting with
+    """Iterator that lists a bucket's objects under path, (optionally) starting with
     start and ending before end.
 
     If recursive is False, then list only the "depth=0" items (dirs and objects).

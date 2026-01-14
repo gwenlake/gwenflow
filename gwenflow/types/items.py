@@ -1,5 +1,5 @@
 import copy
-from typing import Union, List, Dict
+from typing import Dict, List, Union
 
 from gwenflow.types import Message
 

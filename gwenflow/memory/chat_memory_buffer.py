@@ -1,11 +1,11 @@
 from typing import Optional
-from pydantic import field_validator, Field
 
-from gwenflow.utils.tokens import keep_tokens_from_text
-from gwenflow.types import Message
-from gwenflow.memory.base import BaseChatMemory
+from pydantic import Field, field_validator
+
 from gwenflow.logger import logger
-
+from gwenflow.memory.base import BaseChatMemory
+from gwenflow.types import Message
+from gwenflow.utils.tokens import keep_tokens_from_text
 
 DEFAULT_TOKEN_LIMIT = 8192
 DEFAULT_TOKEN_LIMIT_RATIO = 0.75

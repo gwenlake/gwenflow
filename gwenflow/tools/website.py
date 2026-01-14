@@ -1,8 +1,7 @@
-import json
 from pydantic import Field
 
-from gwenflow.tools import BaseTool
 from gwenflow.readers.website import WebsiteReader
+from gwenflow.tools import BaseTool
 
 
 class WebsiteReaderTool(BaseTool):

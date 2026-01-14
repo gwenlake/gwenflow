@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
+
 from gwenflow.types import Document
 
 

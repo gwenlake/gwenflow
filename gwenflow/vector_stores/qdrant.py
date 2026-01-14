@@ -1,31 +1,31 @@
-import logging
 import hashlib
-from typing import Optional
+import logging
 from enum import Enum
+from typing import Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
+    CreateAlias,
+    CreateAliasOperation,
+    DatetimeRange,
+    DeleteAlias,
+    DeleteAliasOperation,
     Distance,
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointIdsList,
     PointStruct,
     Range,
-    DatetimeRange,
     VectorParams,
-    CreateAliasOperation,
-    CreateAlias,
-    DeleteAliasOperation,
-    DeleteAlias,
-    PayloadSchemaType,
 )
 
-from gwenflow.logger import logger
-from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
+from gwenflow.vector_stores.base import VectorStoreBase
 
 
 class Index(str, Enum):
@@ -53,8 +53,7 @@ class Qdrant(VectorStoreBase):
         reranker: Optional[Reranker] = None,
         on_disk: bool = True,
     ):
-        """
-        Initialize the Qdrant vector store.
+        """Initialize the Qdrant vector store.
 
         Args:
             collection (str): Name of the collection.
@@ -65,7 +64,6 @@ class Qdrant(VectorStoreBase):
             url (str, optional): Full URL for Qdrant server. Defaults to None.
             api_key (str, optional): API key for Qdrant server. Defaults to None.
         """
-
         # Embedder
         self.embeddings = embeddings
 
@@ -100,8 +98,7 @@ class Qdrant(VectorStoreBase):
         self.create()
 
     def get_collections(self) -> list:
-        """
-        List all collections.
+        """List all collections.
 
         Returns:
             list: List of collection names.
@@ -113,8 +110,7 @@ class Qdrant(VectorStoreBase):
         return []
 
     def get_aliases(self) -> list:
-        """
-        List all aliases.
+        """List all aliases.
 
         Returns:
             list: List of alias names.
@@ -160,8 +156,7 @@ class Qdrant(VectorStoreBase):
         return result.count
 
     def info(self) -> dict:
-        """
-        Get information about the collection.
+        """Get information about the collection.
 
         Returns:
             dict: Collection information.
@@ -169,8 +164,7 @@ class Qdrant(VectorStoreBase):
         return self.client.get_collection(collection_name=self.collection)
 
     def insert(self, documents: list[Document]):
-        """
-        Insert documents into a collection.
+        """Insert documents into a collection.
 
         Args:
             documents (list): List of documents to insert.
@@ -179,7 +173,7 @@ class Qdrant(VectorStoreBase):
         _embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
         points = []
-        for document, embedding in zip(documents, _embeddings):
+        for document, embedding in zip(documents, _embeddings, strict=False):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             _id = document.id
@@ -197,8 +191,7 @@ class Qdrant(VectorStoreBase):
             self.client.upsert(collection_name=self.collection, points=points)
 
     def _create_filter(self, filters: dict) -> Filter:
-        """
-        Create a Filter object from the provided filters.
+        """Create a Filter object from the provided filters.
 
         Args:
             filters (dict): Filters to apply.
@@ -219,8 +212,7 @@ class Qdrant(VectorStoreBase):
         return Filter(must=conditions) if conditions else None
 
     def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
-        """
-        Search for similar vectors.
+        """Search for similar vectors.
 
         Args:
             query (str): Query.
@@ -230,7 +222,6 @@ class Qdrant(VectorStoreBase):
         Returns:
             list: Search results.
         """
-
         query_embedding = self.embeddings.embed_query(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -279,8 +270,7 @@ class Qdrant(VectorStoreBase):
         return documents
 
     def delete(self, id: int):
-        """
-        Delete a vector by ID.
+        """Delete a vector by ID.
 
         Args:
             id (int): ID of the vector to delete.
@@ -293,8 +283,7 @@ class Qdrant(VectorStoreBase):
         )
 
     def get(self, id: int) -> dict:
-        """
-        Retrieve a vector by ID.
+        """Retrieve a vector by ID.
 
         Args:
             id (int): ID of the vector to retrieve.
@@ -306,8 +295,7 @@ class Qdrant(VectorStoreBase):
         return result[0] if result else None
 
     def list(self, filters: dict = None, limit: int = 100) -> list:
-        """
-        List all vectors in a collection.
+        """List all vectors in a collection.
 
         Args:
             filters (dict, optional): Filters to apply to the list. Defaults to None.
@@ -327,8 +315,7 @@ class Qdrant(VectorStoreBase):
         return result
 
     def create_alias(self, alias_name: str):
-        """
-        Create an alias for a list of collections.
+        """Create an alias for a list of collections.
 
         Args:
             alias (str): Name of the alias.
@@ -341,8 +328,7 @@ class Qdrant(VectorStoreBase):
         )
 
     def delete_alias(self, alias_name: str):
-        """
-        Delete an alias.
+        """Delete an alias.
 
         Args:
             alias (str): Name of the alias.
@@ -354,8 +340,7 @@ class Qdrant(VectorStoreBase):
         )
 
     def switch_alias(self, alias_name: str):
-        """
-        Switch an alias to a new collection.
+        """Switch an alias to a new collection.
 
         Args:
             alias (str): Name of the alias.
@@ -369,15 +354,13 @@ class Qdrant(VectorStoreBase):
         )
 
     def add_index(self, field_name: str, index_type: str):
-        """
-        Args:
+        """Args:
             field_name (str): Name of the field to index.
             index_type (str): Type of index (must be one of the valid types).
 
         Raises:
             ValueError: If the index type is not valid.
         """
-
         if index_type not in Index.__members__:
             raise ValueError(f"Invalid index_type: {index_type}. Must be one of {list(Index.__members__.keys())}")
 

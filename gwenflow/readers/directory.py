@@ -1,14 +1,14 @@
 from abc import ABC
-from typing import cast
 from pathlib import Path, PurePosixPath
+from typing import cast
 
 import fsspec
 from fsspec.implementations.local import LocalFileSystem
 from tqdm import tqdm
 
-from gwenflow.types import Document
 from gwenflow.readers.json import JSONReader
 from gwenflow.readers.pdf import PDFReader
+from gwenflow.types import Document
 
 default_file_reader_cls = {
     ".json": JSONReader,

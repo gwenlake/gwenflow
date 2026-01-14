@@ -1,5 +1,6 @@
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-from typing import Any, Dict, Optional, Union, List, Tuple, Literal
 
 SYSTEM = "system"
 USER = "user"
@@ -94,7 +95,6 @@ class Message(BaseModel):
 
     def to_openai(self) -> Dict[str, Any]:
         """Format a message into the format expected by OpenAI."""
-
         message_dict: Dict[str, Any] = {
             "role": self.role,
             "content": self.content,

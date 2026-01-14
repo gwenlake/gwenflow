@@ -1,9 +1,11 @@
 import json
 from collections import defaultdict, deque
-from pydantic import BaseModel, Field, field_validator
-from gwenflow.flows import Flow
+
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
+from pydantic import BaseModel, Field, field_validator
+
+from gwenflow.flows import Flow
 
 HTML_TEMPLATE = """
 <div>
@@ -18,9 +20,7 @@ HTML_TEMPLATE = """
 
 
 def escapejs(value):
-    """
-    Escapes special characters for JavaScript.
-    """
+    """Escapes special characters for JavaScript."""
     if value is None:
         return ""
     escaped = (
@@ -80,7 +80,7 @@ class DrawFlow(BaseModel):
     def _find_longest_path_to_sources(self, start_node):
         """Finds the longest path to sources in a graph. Based on BFS Algorithm."""
         adj_list = defaultdict(list)
-        in_degree = {node_id: 0 for node_id in self.nodes}
+        in_degree = dict.fromkeys(self.nodes, 0)
 
         for node in self.nodes.values():
             if not node.outputs:

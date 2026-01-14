@@ -1,6 +1,7 @@
 import os
-from httpx import Client, AsyncClient
 from typing import Optional
+
+from httpx import AsyncClient, Client
 from pydantic import BaseModel
 
 from gwenflow.version import __version__

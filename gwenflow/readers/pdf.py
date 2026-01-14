@@ -1,10 +1,10 @@
 import io
-from typing import List, Union
 from pathlib import Path
+from typing import List, Union
 
 from gwenflow.logger import logger
-from gwenflow.types import Document
 from gwenflow.readers.base import Reader
+from gwenflow.types import Document
 
 
 class PDFReader(Reader):

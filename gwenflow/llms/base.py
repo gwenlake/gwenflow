@@ -1,11 +1,9 @@
-from typing import Optional, Union, Any, List, Dict
-from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Union
 
-from gwenflow.logger import logger
+from pydantic import BaseModel, ConfigDict, Field
+
 from gwenflow.tools import BaseTool
-from gwenflow.types import Message
-
 
 LLM_CONTEXT_WINDOW_SIZES = {
     # openai

@@ -1,5 +1,3 @@
-import enum
-from typing import Union
 import tiktoken
 
 # o200k_base for gpt-4o, cl100k_base for others
