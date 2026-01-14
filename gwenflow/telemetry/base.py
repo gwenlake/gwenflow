@@ -1,7 +1,5 @@
-import functools
 from typing import Dict, Optional
 
-from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -35,123 +33,8 @@ class TelemetryBase(BaseModel):
         self.current_provider = provider
         return provider
 
-    def add_phoenix_exporter(self):  # TODO create own class for Phoenix exporter
+    def add_exporter(self):
         if self.enabled and self.current_provider:
             exporter = OTLPSpanExporter(endpoint=self.endpoint)
             processor = BatchSpanProcessor(exporter)
             self.current_provider.add_span_processor(processor)
-
-
-# TODO create class
-tracer = trace.get_tracer("gwenflow")
-
-
-def trace_agent(name: str = None):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            provider = trace.get_tracer_provider()
-            if not hasattr(provider, "resource"):
-                return func(self, *args, **kwargs)
-
-            session_id = kwargs.get("session_id") or getattr(self, "session_id", "no_session")
-            span_name = name or f"Agent:{self.name}"
-
-            with tracer.start_as_current_span(span_name) as span:
-                span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-                span.set_attribute("agent.id", str(self.id))
-                span.set_attribute("llm.model_name", getattr(self.llm, "model", "unknown"))
-                span.set_attribute(SpanAttributes.SESSION_ID, session_id)
-
-                query = kwargs.get("query") or (args[0] if args else "None")
-                span.set_attribute(SpanAttributes.INPUT_VALUE, str(query))
-                try:
-                    result = func(self, *args, **kwargs)
-                    span.set_attribute(SpanAttributes.OUTPUT_VALUE, str(result))
-                    return result
-                except Exception as e:
-                    span.record_exception(e)
-                    raise
-
-        return wrapper
-
-    return decorator
-
-
-def trace_tool(name: str = None):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            provider = trace.get_tracer_provider()
-
-            if not hasattr(provider, "resource"):
-                return func(self, *args, **kwargs)
-
-            span_name = name or func.__name__
-            with tracer.start_as_current_span(span_name) as span:
-                span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.TOOL.value)
-
-                span.set_attribute(SpanAttributes.INPUT_VALUE, str(args) + str(kwargs))
-
-                result = func(self, *args, **kwargs)
-
-                span.set_attribute(SpanAttributes.OUTPUT_VALUE, str(result))
-                return result
-
-        return wrapper
-
-    return decorator
-
-
-def trace_agent_stream(name: str = None):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            provider = trace.get_tracer_provider()
-            if not hasattr(provider, "resource"):
-                return func(self, *args, **kwargs)
-
-            span_name = name or f"AgentStream:{self.name}"
-            with tracer.start_as_current_span(span_name) as span:
-                span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-
-                full_content = []
-
-                for chunk in func(self, *args, **kwargs):
-                    if hasattr(chunk, "content") and chunk.content:
-                        full_content.append(chunk.content)
-                    yield chunk
-
-                span.set_attribute(SpanAttributes.OUTPUT_VALUE, "".join(full_content))
-
-        return wrapper
-
-    return decorator
-
-
-def trace_agent_astream(name: str = None):
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(self, *args, **kwargs):
-            provider = trace.get_tracer_provider()
-
-            if not hasattr(provider, "resource"):
-                async for chunk in func(self, *args, **kwargs):
-                    yield chunk
-                return
-
-            span_name = name or f"AgentStream:{self.name}"
-            with tracer.start_as_current_span(span_name) as span:
-                span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-
-                full_content = []
-                async for chunk in func(self, *args, **kwargs):
-                    if hasattr(chunk, "content") and chunk.content:
-                        full_content.append(str(chunk.content))
-                    yield chunk
-
-                span.set_attribute(SpanAttributes.OUTPUT_VALUE, "".join(full_content))
-
-        return wrapper
-
-    return decorator

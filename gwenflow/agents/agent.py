@@ -19,7 +19,7 @@ from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.telemetry.base import trace_agent, trace_agent_astream, trace_agent_stream, trace_tool
+from gwenflow.telemetry import Tracer
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 from gwenflow.types import (
@@ -162,7 +162,7 @@ class Agent(BaseModel):
 
         return prompt.strip()
 
-    @trace_agent(name="ReasoningStep")
+    @Tracer.agent(name="ReasoningStep")
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -205,7 +205,7 @@ class Agent(BaseModel):
 
         return response
 
-    @trace_agent(name="ReasoningStep")
+    @Tracer.agent(name="ReasoningStep")
     async def areason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -257,7 +257,7 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
 
-    @trace_tool()
+    @Tracer.tool()
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
@@ -343,7 +343,7 @@ class Agent(BaseModel):
             return "\n".join(thinking)
         return ""
 
-    @trace_agent()
+    @Tracer.agent()
     def run(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -428,7 +428,7 @@ class Agent(BaseModel):
 
         return agent_response
 
-    @trace_agent()
+    @Tracer.agent()
     async def arun(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -523,7 +523,7 @@ class Agent(BaseModel):
 
         return agent_response
 
-    @trace_agent_stream()
+    @Tracer.stream()
     def run_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -634,7 +634,7 @@ class Agent(BaseModel):
 
         yield agent_response
 
-    @trace_agent_astream()
+    @Tracer.astream()
     async def arun_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
