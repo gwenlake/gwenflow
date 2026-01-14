@@ -13,7 +13,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
+from gwenflow.telemetry import TelemetryBase
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
@@ -79,6 +79,12 @@ class Agent(BaseModel):
 
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Session ID for the agent."""
+
+    parent_flow_id: Optional[str] = None
+    """Parent flow ID for topology tracking."""
+
+    depends_on: List[str] = Field(default_factory=list)
+    """Dependencies on other agents."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -186,6 +192,12 @@ class Agent(BaseModel):
             tools=self.tools,
         )
 
+        from opentelemetry import trace
+        current_span = trace.get_current_span()
+        current_id = current_span.get_span_context().span_id
+
+        reasoning_agent.parent_flow_id = hex(current_id)
+        reasoning_agent.depends_on = [self.name]
         response = reasoning_agent.run(input)
 
         # only keep text outside <think>
@@ -228,6 +240,11 @@ class Agent(BaseModel):
             llm=self.reasoning_model,
             tools=self.tools,
         )
+
+        from opentelemetry import trace
+        current_id = trace.get_current_span().get_span_context().span_id
+        reasoning_agent.parent_flow_id = hex(current_id)
+        reasoning_agent.depends_on = [self.name]
 
         response = await reasoning_agent.arun(input)
 
