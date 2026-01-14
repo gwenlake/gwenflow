@@ -9,12 +9,10 @@ class DecoratorTracer:
         self.tracer = trace.get_tracer(tracer_name)
 
     def _is_enabled(self) -> bool:
-        """Vérifie si un provider avec une ressource valide est configuré."""
         provider = trace.get_tracer_provider()
         return hasattr(provider, "resource") and provider.resource.attributes.get("service.name") != "unknown_service"
 
     def agent(self, name: str = None):
-        """Décorateur pour les méthodes run() classiques des agents."""
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self_agent, *args, **kwargs):
@@ -43,7 +41,6 @@ class DecoratorTracer:
         return decorator
 
     def tool(self, name: str = None):
-        """Décorateur pour l'exécution des outils."""
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self_inst, *args, **kwargs):
@@ -62,7 +59,6 @@ class DecoratorTracer:
         return decorator
 
     def stream(self, name: str = None):
-        """Décorateur pour le streaming synchrone (Iterator)."""
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self_agent, *args, **kwargs):
@@ -83,7 +79,6 @@ class DecoratorTracer:
         return decorator
 
     def astream(self, name: str = None):
-        """Décorateur pour le streaming asynchrone (AsyncIterator)."""
         def decorator(func):
             @functools.wraps(func)
             async def wrapper(self_agent, *args, **kwargs):
