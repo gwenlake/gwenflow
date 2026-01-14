@@ -47,8 +47,12 @@ class TokenTextSplitter(BaseModel):
         return splits
 
     def split_documents(
-        self, documents: list[Document], chunk_fields: list = [], metadata_fields: list = []
+        self, documents: list[Document], chunk_fields: list = None, metadata_fields: list = None
     ) -> list[Document]:
+        if metadata_fields is None:
+            metadata_fields = []
+        if chunk_fields is None:
+            chunk_fields = []
         chunks = []
         for document in tqdm(documents):
             if not document.id:

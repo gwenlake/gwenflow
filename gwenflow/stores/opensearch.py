@@ -92,7 +92,7 @@ class OpenSearchDocumentStore:
 
         body = {"query": query, "size": per_page}
 
-        if (page > 1) and (all == False):
+        if (page > 1) and (all is False):
             body["from"] = (page - 1) * per_page
 
         if track_total_hits:

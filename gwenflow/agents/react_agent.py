@@ -77,7 +77,7 @@ class ReactAgentFinish(BaseModel):
 
 class ReactMessageParser(BaseModel):
     @classmethod
-    def parse(self, text: str) -> Union[ReactAgentAction, ReactAgentFinish]:
+    def parse(cls, text: str) -> Union[ReactAgentAction, ReactAgentFinish]:
         includes_answer = SPECIAL_TOK_FINAL_ANSWER in text
         regex = r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
         action_match = re.search(regex, text, re.DOTALL)

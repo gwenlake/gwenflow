@@ -84,7 +84,7 @@ def aws_s3_list_files(bucket, path, start=None, end=None, recursive=True, list_d
         >>> for p in aws_s3_list_files(bucket, "some/dir", recursive=False, list_objs=False):
         ...     print(p)
     """
-    kwargs = dict()
+    kwargs = {}
     if start is not None:
         if not start.startswith(path):
             start = os.path.join(path, start)

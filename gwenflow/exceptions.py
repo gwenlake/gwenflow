@@ -12,7 +12,7 @@ class MaxTurnsExceeded(GwenflowException):
 
 
 class ModelBehaviorError(GwenflowException):
-    """Exception raised when the model does something unexpected"""
+    """Exception raised when the model does something unexpected."""
 
     message: str
 

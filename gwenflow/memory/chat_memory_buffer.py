@@ -16,7 +16,7 @@ class ChatMemoryBuffer(BaseChatMemory):
     token_limit: Optional[int] = Field(None, validate_default=True)
 
     @field_validator("token_limit", mode="before")
-    def set_token_limit(cls, v: Optional[int]) -> int:
+    def set_token_limit(self, v: Optional[int]) -> int:
         token_limit = v or int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
         return token_limit
 

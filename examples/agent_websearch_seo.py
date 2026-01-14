@@ -9,7 +9,7 @@ dotenv.load_dotenv(override=True)
 
 
 task = """
-Create an outline for an article that will be 2,000 words on the keyword 'Best SEO prompts' for 
+Create an outline for an article that will be 2,000 words on the keyword 'Best SEO prompts' for
 a company working in the following sector '{sector}', based on the top 10 results from Google.
 Include every relevant heading possible. Keep the keyword density
 of the headings high. For each section of the outline, include the word count. Include FAQs section in the outline too,

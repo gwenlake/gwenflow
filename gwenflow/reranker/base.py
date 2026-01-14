@@ -6,7 +6,7 @@ from gwenflow.types import Document
 
 
 class Reranker(BaseModel):
-    """Base class for rerankers"""
+    """Base class for rerankers."""
 
     model: str
     top_k: Optional[int] = None

@@ -14,7 +14,7 @@ class DocumentCreationMode(str, enum.Enum):
 
 
 class Document(BaseModel):
-    """Base class for Documents"""
+    """Base class for Documents."""
 
     id: Optional[str] = None
     content: str
@@ -31,15 +31,15 @@ class Document(BaseModel):
         return self
 
     def to_dict(self) -> Dict[str, Any]:
-        """Returns a dictionary representation of the document"""
+        """Returns a dictionary representation of the document."""
         return self.model_dump(include={"id", "content", "metadata", "score"}, exclude_none=True)
 
     @classmethod
     def from_dict(cls, document: Dict[str, Any]) -> "Document":
-        """Returns a Document object from a dictionary representation"""
+        """Returns a Document object from a dictionary representation."""
         return cls.model_validate(**document)
 
     @classmethod
     def from_json(cls, document: str) -> "Document":
-        """Returns a Document object from a json string representation"""
+        """Returns a Document object from a json string representation."""
         return cls.model_validate_json(document)

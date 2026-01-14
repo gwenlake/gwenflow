@@ -31,11 +31,11 @@ class PDFReader(Reader):
 
                     tables = page.extract_tables()
 
-                    metadata = dict(
-                        filename=filename,
-                        page=i + 1,
-                        tables=tables,
-                    )
+                    metadata = {
+                        "filename": filename,
+                        "page": i + 1,
+                        "tables": tables,
+                    }
 
                     doc = Document(id=self.key(f"{filename}_{i + 1}"), content=safe_text, metadata=metadata)
                     documents.append(doc)

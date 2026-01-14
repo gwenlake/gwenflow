@@ -51,17 +51,17 @@ EXAMPLE = [
 
 
 task = """
-You are an energy renovation consultant specializing in sustainable home upgrades for residential properties. 
-Your task is to identify the top 5 most effective energy renovation strategies based on the top 10 Google search results 
-and the 3 most relevant PDF documents found on Google. 
-Each strategy must be practical, actionable, and aimed 
-at maximizing energy efficiency while considering cost-effectiveness and ROI. 
+You are an energy renovation consultant specializing in sustainable home upgrades for residential properties.
+Your task is to identify the top 5 most effective energy renovation strategies based on the top 10 Google search results
+and the 3 most relevant PDF documents found on Google.
+Each strategy must be practical, actionable, and aimed
+at maximizing energy efficiency while considering cost-effectiveness and ROI.
 You must provide the output EXCLUSIVELY in JSON format, adhering strictly to the following structure without any additional text, context, or formatting:
 
 {EXAMPLE}
 
-Ensure that each strategy includes specific metrics, technical specifications, or case study references where applicable. 
-Focus on strategies that balance cost, ROI, and environmental impact. 
+Ensure that each strategy includes specific metrics, technical specifications, or case study references where applicable.
+Focus on strategies that balance cost, ROI, and environmental impact.
 Do not include any introductory or concluding text, only the JSON outputs of each strategy.
 """
 

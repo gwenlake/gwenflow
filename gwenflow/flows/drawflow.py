@@ -45,7 +45,7 @@ class Node(BaseModel):
     pos_y: int = 0
 
     @field_validator("id", "name", "role", mode="before")
-    def non_empty_string(cls, value):
+    def non_empty_string(self, value):
         if not value.strip():
             raise ValueError("Field cannot be an empty string.")
         return value

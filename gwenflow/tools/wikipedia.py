@@ -58,4 +58,4 @@ class WikipediaTool(WikipediaBaseTool):
         if not documents:
             return "No good Wikipedia Search Result was found"
 
-        return [doc for doc in documents]
+        return list(documents)

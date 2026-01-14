@@ -112,7 +112,7 @@ class FAISS(VectorStoreBase):
 
     def save(self):
         try:
-            faiss_data = dict(index=self.index, metadata=self.metadata)
+            faiss_data = {"index": self.index, "metadata": self.metadata}
             if self.filename.startswith("s3://"):
                 logger.info(f"Saving FAISS index to S3 at {self.filename} ...")
                 bucket, key = aws_s3_uri_to_bucket_key(self.filename)

@@ -83,11 +83,11 @@ class LanceDB(VectorStoreBase):
             _payload = document.metadata
             _payload["content"] = document.content
             data.append(
-                dict(
-                    id=_id,
-                    vector=embedding,
-                    payload=json.dumps(_payload),
-                )
+                {
+                    "id": _id,
+                    "vector": embedding,
+                    "payload": json.dumps(_payload),
+                }
             )
 
         if len(data) > 0:

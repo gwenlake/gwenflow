@@ -7,7 +7,7 @@ from gwenflow.types import Message
 class ItemHelpers:
     @classmethod
     def input_to_message_list(
-        self,
+        cls,
         input: Union[str, List[Message], List[Dict[str, str]]],
     ) -> List[Message]:
         """Converts a string or list of messages into a list of messages."""

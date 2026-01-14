@@ -21,7 +21,7 @@ def get_default_fs() -> fsspec.AbstractFileSystem:
 
 
 class SimpleDirectoryReader(ABC):
-    """SimpleDirectoryReader"""
+    """SimpleDirectoryReader."""
 
     def __init__(
         self,

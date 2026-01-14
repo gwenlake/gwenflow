@@ -17,7 +17,7 @@ except ImportError:
 
 
 class WebsiteReader(Reader):
-    """Reader for Websites"""
+    """Reader for Websites."""
 
     max_depth: int = 3
     max_links: int = 100000

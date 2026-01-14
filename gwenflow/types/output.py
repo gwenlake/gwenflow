@@ -18,7 +18,7 @@ class ResponseOutputItem(BaseModel):
 
     def to_dict(self) -> list:
         """Convert the output into a list of dict."""
-        return [d for d in self.output]  # type: ignore
+        return list(self.output)  # type: ignore
 
     def to_json(self, max_results: int = None) -> str:
         if max_results:
