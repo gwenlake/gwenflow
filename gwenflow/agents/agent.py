@@ -79,6 +79,9 @@ class Agent(BaseModel):
     team: List["Agent"] | None = None
     """Team of agents."""
 
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    """Session ID for the agent."""
+    
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("id", mode="before")

@@ -53,12 +53,14 @@ def trace_agent(name: str = None):
             if not hasattr(provider, "resource"):
                 return func(self, *args, **kwargs)
 
+            session_id = kwargs.get("session_id") or getattr(self, "session_id", "no_session")
             span_name = name or f"Agent:{self.name}"
+
             with tracer.start_as_current_span(span_name) as span:
                 span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-
                 span.set_attribute("agent.id", str(self.id))
                 span.set_attribute("llm.model_name", getattr(self.llm, 'model', 'unknown'))
+                span.set_attribute(SpanAttributes.SESSION_ID, session_id)
 
                 query = kwargs.get("query") or (args[0] if args else "None")
                 span.set_attribute(SpanAttributes.INPUT_VALUE, str(query))
