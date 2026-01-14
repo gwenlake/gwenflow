@@ -1,10 +1,10 @@
-from typing import Optional, List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
 
 class Embeddings(BaseModel):
-    """Base class for embeddings"""
+    """Base class for embeddings."""
 
     model: str
     dimensions: Optional[int] = 1536

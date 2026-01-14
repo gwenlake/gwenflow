@@ -1,0 +1,31 @@
+repos:
+  # RUFF
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.6
+    hooks:
+      # formatter
+      - id: ruff-format
+      #  linter
+      - id: ruff-check
+        args:
+          - --fix
+          - --exit-non-zero-on-fix
+
+  # Pytest
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: bash -c 'uv run pytest tests/ -v --tb=short'
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+  # Detect Secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0 
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']

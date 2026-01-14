@@ -1,1 +1,1 @@
-from gwenflow.llms.ollama.chat import ChatOllama
+from gwenflow.llms.ollama.chat import ChatOllama  # noqa: F401

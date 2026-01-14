@@ -1,31 +1,31 @@
-import logging
 import hashlib
-from typing import Optional
+import logging
 from enum import Enum
+from typing import Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
+    CreateAlias,
+    CreateAliasOperation,
+    DatetimeRange,
+    DeleteAlias,
+    DeleteAliasOperation,
     Distance,
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointIdsList,
     PointStruct,
     Range,
-    DatetimeRange,
     VectorParams,
-    CreateAliasOperation,
-    CreateAlias,
-    DeleteAliasOperation,
-    DeleteAlias,
-    PayloadSchemaType)
+)
 
-from gwenflow.logger import logger
-from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
-
+from gwenflow.vector_stores.base import VectorStoreBase
 
 
 class Index(str, Enum):
@@ -37,37 +37,39 @@ class Index(str, Enum):
     datetime = PayloadSchemaType.DATETIME
     text = PayloadSchemaType.TEXT
 
-class Qdrant(VectorStoreBase):
 
+class Qdrant(VectorStoreBase):
     def __init__(
         self,
         collection: str,
-        embeddings: Embeddings = GwenlakeEmbeddings(),
+        embeddings: Optional[Embeddings] = None,
         distance: Distance = Distance.COSINE,
-        client: QdrantClient = None,
-        host: str = None,
+        client: Optional[QdrantClient] = None,
+        host: Optional[str] = None,
         port: int = 6333,
-        path: str = None,
-        url: str = None,
-        api_key: str = None,
+        path: Optional[str] = None,
+        url: Optional[str] = None,
+        api_key: Optional[str] = None,
         reranker: Optional[Reranker] = None,
         on_disk: bool = True,
     ):
-        """
-        Initialize the Qdrant vector store.
+        """Initialize the Qdrant vector store.
 
         Args:
             collection (str): Name of the collection.
+            embeddings (Embeddings, optional): Embedding model instance. Defaults to GwenlakeEmbeddings().
+            distance (Distance, optional): Distance metric for vector similarity. Defaults to Distance.COSINE.
             client (QdrantClient, optional): Existing Qdrant client instance. Defaults to None.
             host (str, optional): Host address for Qdrant server. Defaults to None.
-            port (int, optional): Port for Qdrant server. Defaults to None.
-            path (str, optional): Path for local Qdrant database. Defaults to None.
+            port (int, optional): Port for Qdrant server. Defaults to 6333.
+            path (str, optional): Path for local Qdrant database (SQLite/disk). Defaults to None.
             url (str, optional): Full URL for Qdrant server. Defaults to None.
             api_key (str, optional): API key for Qdrant server. Defaults to None.
+            reranker (Reranker, optional): Reranker instance to refine search results. Defaults to None.
+            on_disk (bool, optional): Whether to store vectors on disk. Defaults to True.
         """
-
         # Embedder
-        self.embeddings = embeddings
+        self.embeddings = embeddings or GwenlakeEmbeddings()
 
         # Distance metric
         self.distance = distance
@@ -100,8 +102,7 @@ class Qdrant(VectorStoreBase):
         self.create()
 
     def get_collections(self) -> list:
-        """
-        List all collections.
+        """List all collections.
 
         Returns:
             list: List of collection names.
@@ -113,18 +114,16 @@ class Qdrant(VectorStoreBase):
         return []
 
     def get_aliases(self) -> list:
-            """
-            List all aliases.
+        """List all aliases.
 
-            Returns:
-                list: List of alias names.
-            """
-            try:
-                return self.client.get_aliases()
-            except Exception as e:
-                logger.error(f"Error while reading aliases: {e}")
-            return []
-
+        Returns:
+            list: List of alias names.
+        """
+        try:
+            return self.client.get_aliases()
+        except Exception as e:
+            logger.error(f"Error while reading aliases: {e}")
+        return []
 
     def create(self):
         """Create collection."""
@@ -145,7 +144,9 @@ class Qdrant(VectorStoreBase):
         try:
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config=VectorParams(size=self.embeddings.dimensions, distance=self.distance, on_disk=self.on_disk),
+                vectors_config=VectorParams(
+                    size=self.embeddings.dimensions, distance=self.distance, on_disk=self.on_disk
+                ),
             )
         except Exception as e:
             logger.error(f"Error while creating collection: {e}")
@@ -159,8 +160,7 @@ class Qdrant(VectorStoreBase):
         return result.count
 
     def info(self) -> dict:
-        """
-        Get information about the collection.
+        """Get information about the collection.
 
         Returns:
             dict: Collection information.
@@ -168,8 +168,7 @@ class Qdrant(VectorStoreBase):
         return self.client.get_collection(collection_name=self.collection)
 
     def insert(self, documents: list[Document]):
-        """
-        Insert documents into a collection.
+        """Insert documents into a collection.
 
         Args:
             documents (list): List of documents to insert.
@@ -178,7 +177,7 @@ class Qdrant(VectorStoreBase):
         _embeddings = self.embeddings.embed_documents([document.content for document in documents])
         logger.info(f"Inserting {len(documents)} documents into collection {self.collection}")
         points = []
-        for document, embedding in zip(documents, _embeddings):
+        for document, embedding in zip(documents, _embeddings, strict=False):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             _id = document.id
@@ -191,13 +190,12 @@ class Qdrant(VectorStoreBase):
                     payload=_payload,
                 )
             )
-    
+
         if len(points) > 0:
             self.client.upsert(collection_name=self.collection, points=points)
 
     def _create_filter(self, filters: dict) -> Filter:
-        """
-        Create a Filter object from the provided filters.
+        """Create a Filter object from the provided filters.
 
         Args:
             filters (dict): Filters to apply.
@@ -209,7 +207,7 @@ class Qdrant(VectorStoreBase):
         collection_payload = self.client.get_collection(collection_name=self.collection).payload_schema
         for key, value in filters.items():
             if isinstance(value, dict) and "gte" in value and "lte" in value:
-                if key in collection_payload and collection_payload[key].data_type=="datetime":
+                if key in collection_payload and collection_payload[key].data_type == "datetime":
                     conditions.append(FieldCondition(key=key, range=DatetimeRange(gte=value["gte"], lte=value["lte"])))
                 else:
                     conditions.append(FieldCondition(key=key, range=Range(gte=value["gte"], lte=value["lte"])))
@@ -218,8 +216,7 @@ class Qdrant(VectorStoreBase):
         return Filter(must=conditions) if conditions else None
 
     def search(self, query: str, limit: int = 5, filters: dict = None) -> list[Document]:
-        """
-        Search for similar vectors.
+        """Search for similar vectors.
 
         Args:
             query (str): Query.
@@ -229,7 +226,6 @@ class Qdrant(VectorStoreBase):
         Returns:
             list: Search results.
         """
-
         query_embedding = self.embeddings.embed_query(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -244,10 +240,9 @@ class Qdrant(VectorStoreBase):
             with_payload=True,
             with_vectors=False,
         )
- 
+
         documents = []
         for d in hits:
-
             if d.payload is None:
                 continue
 
@@ -263,25 +258,23 @@ class Qdrant(VectorStoreBase):
 
             if isinstance(d.id, int):
                 d.id = str(d.id)
-                
 
             documents.append(
                 Document(
                     id=d.id,
                     content=content,
                     metadata=d.payload,
-                    score=1-d.score,
+                    score=1 - d.score,
                 )
             )
-    
+
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
 
         return documents
 
     def delete(self, id: int):
-        """
-        Delete a vector by ID.
+        """Delete a vector by ID.
 
         Args:
             id (int): ID of the vector to delete.
@@ -294,8 +287,7 @@ class Qdrant(VectorStoreBase):
         )
 
     def get(self, id: int) -> dict:
-        """
-        Retrieve a vector by ID.
+        """Retrieve a vector by ID.
 
         Args:
             id (int): ID of the vector to retrieve.
@@ -306,10 +298,8 @@ class Qdrant(VectorStoreBase):
         result = self.client.retrieve(collection_name=self.collection, ids=[id], with_payload=True)
         return result[0] if result else None
 
-
     def list(self, filters: dict = None, limit: int = 100) -> list:
-        """
-        List all vectors in a collection.
+        """List all vectors in a collection.
 
         Args:
             filters (dict, optional): Filters to apply to the list. Defaults to None.
@@ -327,63 +317,52 @@ class Qdrant(VectorStoreBase):
             with_vectors=False,
         )
         return result
-    
+
     def create_alias(self, alias_name: str):
-        """
-        Create an alias for a list of collections.
+        """Create an alias for the current collection.
 
         Args:
-            alias (str): Name of the alias.
-            collections (List[str]): List of collection names.
+            alias_name (str): The name of the alias to create for the current collection.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            CreateAliasOperation(
-                create_alias=CreateAlias(
-                    collection_name=self.collection, alias_name=alias_name
+            change_aliases_operations=[
+                CreateAliasOperation(
+                    create_alias=CreateAlias(
+                        collection_name=self.collection,
+                        alias_name=alias_name
+                    )
                 )
-            )
-        ]
-    )
-        
+            ]
+        )
+
     def delete_alias(self, alias_name: str):
-        """
-        Delete an alias.
+        """Delete an alias.
 
         Args:
-            alias (str): Name of the alias.
+            alias_name (str): Name of the alias.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            DeleteAliasOperation(
-                delete_alias=DeleteAlias(alias_name=alias_name)
-            ),
-        ]
-    )
-        
+            change_aliases_operations=[
+                DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name)),
+            ]
+        )
+
     def switch_alias(self, alias_name: str):
-        """
-        Switch an alias to a new collection.
+        """Switch an alias to a new collection.
 
         Args:
-            alias (str): Name of the alias.
-            collection (str): Name of the collection.
+            alias_name (str): Name of the alias.
         """
         self.client.update_collection_aliases(
-        change_aliases_operations=[
-            DeleteAliasOperation(
-                delete_alias=DeleteAlias(alias_name=alias_name)
-            ),
-            CreateAliasOperation(
-                create_alias=CreateAlias(
-                    collection_name=self.collection, alias_name=alias_name
-                )
-            )
-        ]
-    )
-        
+            change_aliases_operations=[
+                DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name)),
+                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name)),
+            ]
+        )
+
     def add_index(self, field_name: str, index_type: str):
-        """
+        """Add index to a field.
+
         Args:
             field_name (str): Name of the field to index.
             index_type (str): Type of index (must be one of the valid types).
@@ -391,13 +370,9 @@ class Qdrant(VectorStoreBase):
         Raises:
             ValueError: If the index type is not valid.
         """
-
         if index_type not in Index.__members__:
             raise ValueError(f"Invalid index_type: {index_type}. Must be one of {list(Index.__members__.keys())}")
-        
+
         self.client.create_payload_index(
-            collection_name=self.collection,
-            field_name=field_name,
-            field_schema=Index(index_type)
+            collection_name=self.collection, field_name=field_name, field_schema=Index(index_type)
         )
-         

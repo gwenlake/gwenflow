@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, model_validator
 from pathlib import Path
-from typing import Any, Optional, Union
 from string import Formatter
+from typing import Any, Optional, Union
+
+from pydantic import BaseModel, model_validator
 
 
 def _get_template_variables(template: str) -> list[str]:
@@ -19,9 +20,7 @@ def _get_template_variables(template: str) -> list[str]:
     Raises:
         ValueError: If the template format is not supported.
     """
-    input_variables = {
-        v for _, v, _, _ in Formatter().parse(template) if v is not None
-    }
+    input_variables = {v for _, v, _, _ in Formatter().parse(template) if v is not None}
 
     return sorted(input_variables)
 
@@ -34,7 +33,7 @@ class PromptTemplate(BaseModel):
 
     input_variables: list[str]
     """The prompt input variables."""
-    
+
     @model_validator(mode="before")
     @classmethod
     def pre_init_validation(cls, values: dict) -> Any:
@@ -90,6 +89,7 @@ class PromptTemplate(BaseModel):
         Args:
             template: The template to load.
             kwargs: Any other arguments to pass to the prompt template.
+            role: The role of the prompt (e.g., "user", "assistant", etc.).
 
         Returns:
             The prompt template loaded from the template.

@@ -1,19 +1,19 @@
 import json
 import os
-from typing import Optional, Union, Any, List, Dict, Iterator
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.llms import ChatBase
-from gwenflow.types import Message, ItemHelpers
-from gwenflow.utils import extract_json_str
-from pydantic import Field
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
+from typing import Any, Dict, Iterator, List, Optional, Union
 
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from pydantic import Field
+
+from gwenflow.llms import ChatBase
+from gwenflow.telemetry.base import TelemetryBase
+from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
+from gwenflow.types import ItemHelpers, Message
+from gwenflow.utils import extract_json_str
 
 
 class ChatOpenAI(ChatBase):
- 
     model: str = "gpt-4o-mini"
 
     # model parameters
@@ -54,7 +54,6 @@ class ChatOpenAI(ChatBase):
         openai_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         api_key = self.api_key
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
@@ -65,7 +64,7 @@ class ChatOpenAI(ChatBase):
 
         organization = self.organization
         if organization is None:
-            organization = os.environ.get('OPENAI_ORG_ID')
+            organization = os.environ.get("OPENAI_ORG_ID")
 
         client_params = {
             "api_key": api_key,
@@ -81,7 +80,6 @@ class ChatOpenAI(ChatBase):
 
     @property
     def _model_params(self) -> Dict[str, Any]:
-
         model_params = {
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -100,11 +98,11 @@ class ChatOpenAI(ChatBase):
         if self.tools and self.tool_type == "fncall":
             model_params["tools"] = [tool.to_openai() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
-        
+
         model_params = {k: v for k, v in model_params.items() if v is not None}
 
         return model_params
-    
+
     def get_client(self) -> OpenAI:
         if self.client:
             return self.client
@@ -121,14 +119,13 @@ class ChatOpenAI(ChatBase):
 
     def _parse_response(self, response: str, response_format: dict = None) -> str:
         """Process the response."""
-
         if response_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)
                 # text_response = dirtyjson.loads(json_str)
                 text_response = json.loads(json_str)
                 return text_response
-            except:
+            except Exception:
                 pass
 
         return response
@@ -136,7 +133,7 @@ class ChatOpenAI(ChatBase):
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """Format a message into the format expected by OpenAI."""
         return message.to_openai()
-    
+
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
@@ -146,10 +143,12 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.response_format:
-            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
+            completion.choices[0].message.content = self._parse_response(
+                completion.choices[0].message.content, response_format=self.response_format
+            )
 
         return completion
 
@@ -162,10 +161,12 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.response_format:
-            completion.choices[0].message.content = self._parse_response(completion.choices[0].message.content, response_format=self.response_format)
+            completion.choices[0].message.content = self._parse_response(
+                completion.choices[0].message.content, response_format=self.response_format
+            )
 
         return completion
 
@@ -180,7 +181,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         try:
@@ -195,4 +196,4 @@ class ChatOpenAI(ChatBase):
             async for chunk in completion:
                 yield chunk
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e

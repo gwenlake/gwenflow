@@ -1,16 +1,14 @@
 import asyncio
 import json
-
 from abc import ABC, abstractmethod
 from typing import Any
+
 from pydantic import BaseModel, model_validator
 
 from gwenflow.tools.utils import function_to_json
-from gwenflow.logger import logger
 
 
 class BaseTool(BaseModel, ABC):
-
     name: str
     """The unique name of the tool that clearly communicates its purpose."""
 
@@ -32,7 +30,7 @@ class BaseTool(BaseModel, ABC):
             _schema = function_to_json(self._run, name=self.name, description=self.description)
             self.params_json_schema = _schema["function"]["parameters"]
         return self
-    
+
     def to_openai(self) -> dict:
         return {
             "type": "function",
@@ -49,7 +47,7 @@ class BaseTool(BaseModel, ABC):
         elif isinstance(response, BaseModel):
             return response.model_dump_json(exclude_none=True)
         return json.dumps(response, ensure_ascii=False)
-        
+
     @abstractmethod
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""

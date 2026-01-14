@@ -1,21 +1,18 @@
-
 import io
-from typing import List, Union
 from pathlib import Path
+from typing import List, Union
 
 from gwenflow.logger import logger
-from gwenflow.types import Document
 from gwenflow.readers.base import Reader
+from gwenflow.types import Document
 
 
 class PDFReader(Reader):
-
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
-
         try:
             import pdfplumber
-        except ImportError:
-            raise ImportError("pdfplumber is not installed. Please install it with `pip install pdfplumber`.")
+        except ImportError as e:
+            raise ImportError("pdfplumber is not installed. Please install it with `pip install pdfplumber`.") from e
 
         try:
             filename = self.get_file_name(file)
@@ -30,21 +27,17 @@ class PDFReader(Reader):
             with pdfplumber.open(pdf_file) as pdf:
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
-                    safe_text = text.encode('utf-8', errors='ignore').decode('utf-8')
+                    safe_text = text.encode("utf-8", errors="ignore").decode("utf-8")
 
                     tables = page.extract_tables()
 
-                    metadata = dict(
-                        filename=filename,
-                        page=i + 1,
-                        tables=tables,
-                    )
+                    metadata = {
+                        "filename": filename,
+                        "page": i + 1,
+                        "tables": tables,
+                    }
 
-                    doc = Document(
-                        id=self.key(f"{filename}_{i + 1}"),
-                        content=safe_text,
-                        metadata=metadata
-                    )
+                    doc = Document(id=self.key(f"{filename}_{i + 1}"), content=safe_text, metadata=metadata)
                     documents.append(doc)
 
         except Exception as e:

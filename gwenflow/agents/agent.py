@@ -1,37 +1,35 @@
-import uuid
+import asyncio
 import json
 import re
-import asyncio
-
-from typing import List, Union, Optional, Any, Dict, Iterator, Literal, AsyncIterator
-from pydantic import (
-    BaseModel,
-    model_validator,
-    field_validator,
-    Field,
-    ConfigDict,
-    UUID4,
-)
-
-from gwenflow.logger import logger
-from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import (
-    Usage,
-    Message,
-    AgentResponse,
-    ItemHelpers,
-    ToolCall,
-    ResponseOutputItem,
-)
-from gwenflow.tools import BaseTool
-from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.retriever import Retriever
-from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
-from gwenflow.tools.mcp import MCPServer, MCPUtil
-from gwenflow.telemetry.base import trace_agent, trace_tool, trace_agent_stream, trace_agent_astream
+import uuid
+from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
 from openai.types.chat import ChatCompletionMessageToolCall
+from pydantic import (
+    UUID4,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
+from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
+from gwenflow.llms import ChatBase, ChatOpenAI
+from gwenflow.logger import logger
+from gwenflow.memory import ChatMemoryBuffer
+from gwenflow.retriever import Retriever
+from gwenflow.telemetry.base import trace_agent, trace_agent_astream, trace_agent_stream, trace_tool
+from gwenflow.tools import BaseTool
+from gwenflow.tools.mcp import MCPServer, MCPUtil
+from gwenflow.types import (
+    AgentResponse,
+    ItemHelpers,
+    Message,
+    ResponseOutputItem,
+    ToolCall,
+    Usage,
+)
 
 DEFAULT_MAX_TURNS = 10
 
@@ -81,7 +79,7 @@ class Agent(BaseModel):
 
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Session ID for the agent."""
-    
+
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("id", mode="before")
@@ -140,17 +138,13 @@ class Agent(BaseModel):
                 prompt += " {instructions}".format(instructions=self.instructions)
             elif isinstance(self.instructions, list):
                 instructions = "\n".join([f"- {i}" for i in self.instructions])
-                prompt += "\n\n## Instructions:\n{instructions}".format(
-                    instructions=instructions
-                )
+                prompt += "\n\n## Instructions:\n{instructions}".format(instructions=instructions)
 
         prompt += "\n\n"
 
         # response model
         if self.response_model:
-            prompt += PROMPT_JSON_SCHEMA.format(
-                json_schema=json.dumps(self.response_model, indent=4)
-            ).strip()
+            prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
             prompt += "\n\n"
 
         # references
@@ -158,16 +152,12 @@ class Agent(BaseModel):
             references = self.retriever.search(query=task)
             if len(references) > 0:
                 references = [r.content for r in references]
-                prompt += PROMPT_KNOWLEDGE.format(
-                    references="\n\n".join(references)
-                ).strip()
+                prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
                 prompt += "\n\n"
 
         # context
         if context is not None:
-            prompt += PROMPT_CONTEXT.format(
-                context=self._format_context(context)
-            ).strip()
+            prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
             prompt += "\n\n"
 
         return prompt.strip()
@@ -199,9 +189,7 @@ class Agent(BaseModel):
         response = reasoning_agent.run(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(
-            r"<think>.*?</think>", "", response.content, flags=re.DOTALL
-        )
+        reasoning_content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL)
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
@@ -244,9 +232,7 @@ class Agent(BaseModel):
         response = await reasoning_agent.arun(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(
-            r"<think>.*?</think>", "", response.content, flags=re.DOTALL
-        )
+        reasoning_content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL)
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
@@ -420,20 +406,14 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(
-                    Message(**response.choices[0].message.model_dump())
-                )
+                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
 
             # thinking
-            agent_response.thinking = self._get_thinking(
-                response.choices[0].message.tool_calls
-            )
+            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             # handle tool calls
-            tool_calls = self._convert_openai_tool_calls(
-                response.choices[0].message.tool_calls
-            )
+            tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
@@ -507,15 +487,11 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.output.append(
-                    Message(**response.choices[0].message.model_dump())
-                )
+                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
                 break
 
             # thinking
-            agent_response.thinking = self._get_thinking(
-                response.choices[0].message.tool_calls
-            )
+            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
@@ -546,7 +522,7 @@ class Agent(BaseModel):
         agent_response.finish_reason = "stop"
 
         return agent_response
-    
+
     @trace_agent_stream()
     def run_stream(
         self,
@@ -621,9 +597,7 @@ class Agent(BaseModel):
                     index = tool_call.index
                     if index not in final_tool_calls:
                         final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += (
-                        tool_call.function.arguments
-                    )
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
 
                 yield agent_response
 
@@ -734,9 +708,7 @@ class Agent(BaseModel):
                     index = tool_call.index
                     if index not in final_tool_calls:
                         final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += (
-                        tool_call.function.arguments
-                    )
+                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
 
                 yield agent_response
 

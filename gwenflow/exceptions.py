@@ -1,6 +1,4 @@
-
-
-class GwenflowException(Exception):
+class GwenflowException(Exception):  # noqa: N818
     """Base class for all exceptions in Gwenflow."""
 
 
@@ -14,7 +12,7 @@ class MaxTurnsExceeded(GwenflowException):
 
 
 class ModelBehaviorError(GwenflowException):
-    """Exception raised when the model does something unexpected"""
+    """Exception raised when the model does something unexpected."""
 
     message: str
 

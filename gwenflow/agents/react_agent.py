@@ -1,14 +1,13 @@
 import json
-import uuid
 import re
+import uuid
+from typing import Dict, Iterator, List, Optional, Union
 
-from typing import List, Union, Optional, Dict, Iterator
 from pydantic import BaseModel
 
+from gwenflow.agents.agent import DEFAULT_MAX_TURNS, Agent
 from gwenflow.logger import logger
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
-from gwenflow.agents.agent import Agent, DEFAULT_MAX_TURNS
-
+from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, Usage
 
 PROMPT_TOOLS = """\
 You have access to the following tools. Only use these tools.
@@ -71,17 +70,16 @@ class ReactAgentAction(BaseModel):
             arguments=json.loads(self.action_input),
         )
 
+
 class ReactAgentFinish(BaseModel):
     final_answer: str
 
-class ReactMessageParser(BaseModel):
 
+class ReactMessageParser(BaseModel):
     @classmethod
-    def parse(self, text: str) -> Union[ReactAgentAction, ReactAgentFinish]:
+    def parse(cls, text: str) -> Union[ReactAgentAction, ReactAgentFinish]:
         includes_answer = SPECIAL_TOK_FINAL_ANSWER in text
-        regex = (
-            r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
-        )
+        regex = r"Action\s*\d*\s*:[\s]*(.*?)[\s]*Action\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
         action_match = re.search(regex, text, re.DOTALL)
         if action_match:
             if includes_answer:
@@ -108,15 +106,18 @@ class ReactMessageParser(BaseModel):
 
 
 class ReactAgent(Agent):
-    
     def _prepend_react_prompt(self, messages: List[Message]) -> List[Message]:
-        tool_names = ','.join(t.name for t in self.tools)
+        tool_names = ",".join(t.name for t in self.tools)
         tool_descs = [t.to_openai()["function"] for t in self.tools]
         prompt_tools = PROMPT_TOOLS.format(tools=json.dumps(tool_descs, indent=2, ensure_ascii=False))
 
-        messages[-1].content = prompt_tools + "\n" + PROMPT_REACT.format(
-            tool_names=tool_names,
-            query=messages[-1].content,
+        messages[-1].content = (
+            prompt_tools
+            + "\n"
+            + PROMPT_REACT.format(
+                tool_names=tool_names,
+                query=messages[-1].content,
+            )
         )
 
         return messages
@@ -126,7 +127,6 @@ class ReactAgent(Agent):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -157,11 +157,10 @@ class ReactAgent(Agent):
                 else Usage()
             )
             agent_response.usage.add(usage)
-    
+
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
 
             # format messages
@@ -194,20 +193,20 @@ class ReactAgent(Agent):
                 agent_response.content = parsed_message.final_answer
                 agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
-            
+
             # thinking
             agent_response.thinking = parsed_message.thought
             logger.debug(parsed_message.thought)
 
             # handle tool calls
             tool_message = self.run_tool(parsed_message.get_tool_call())
-            self.history.add_message(Message(role="user", content=f"Observation: { tool_message.content }"))
-            agent_response.messages.append(Message(role="user", content=f"Observation: { tool_message.content }"))
-        
+            self.history.add_message(Message(role="user", content=f"Observation: {tool_message.content}"))
+            agent_response.messages.append(Message(role="user", content=f"Observation: {tool_message.content}"))
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-        
+
         agent_response.finish_reason = "stop"
 
         return agent_response
@@ -217,7 +216,6 @@ class ReactAgent(Agent):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -252,7 +250,6 @@ class ReactAgent(Agent):
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
 
             # format messages
@@ -263,7 +260,6 @@ class ReactAgent(Agent):
             output = ""
 
             for chunk in self.llm.stream(input=messages_for_model):
-
                 # usage
                 usage = (
                     Usage(
@@ -286,34 +282,33 @@ class ReactAgent(Agent):
 
                 output += delta.content
 
-                special_func_token = 'Action: '
-                special_args_token = 'Action Input: '
-                special_thought_token = 'Thought: '
-                special_final_token = 'Final Answer: '
+                special_func_token = "Action: "
+                special_args_token = "Action Input: "
+                special_thought_token = "Thought: "
+                special_final_token = "Final Answer: "
 
-                a = output.rfind(special_func_token) # action
-                i = output.rfind(special_args_token) # iaction nput
-                t = output.rfind(special_thought_token) # thought
-                f = output.rfind(special_final_token) # final
-                
+                a = output.rfind(special_func_token)  # action
+                i = output.rfind(special_args_token)  # iaction nput
+                t = output.rfind(special_thought_token)  # thought
+                f = output.rfind(special_final_token)  # final
+
                 last_delta_message = None
-                if max([a,i,t,f]) == t:
+                if max([a, i, t, f]) == t:
                     agent_response.content = None
                     if last_delta_message != "thought":
                         last_delta_message = "thought"
                         agent_response.thinking = None
                     else:
                         agent_response.thinking = delta.content
-                elif max([a,i,t,f]) == f:
+                elif max([a, i, t, f]) == f:
                     agent_response.thinking = None
                     if last_delta_message != "final":
                         last_delta_message = "final"
                         agent_response.content = None
                     else:
                         agent_response.content = delta.content
-                
-                yield agent_response
 
+                yield agent_response
 
             parsed_message = ReactMessageParser.parse(output)
 
@@ -335,9 +330,9 @@ class ReactAgent(Agent):
 
             # handle tool calls
             observation = self.run_tool(parsed_message.get_tool_call())
-            self.history.add_message(Message(role="user", content=f"Observation: { observation.content }"))
-            agent_response.messages.append(Message(role="user", content=f"Observation: { observation.content }"))
-        
+            self.history.add_message(Message(role="user", content=f"Observation: {observation.content}"))
+            agent_response.messages.append(Message(role="user", content=f"Observation: {observation.content}"))
+
         # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
