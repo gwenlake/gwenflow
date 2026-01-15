@@ -1,5 +1,9 @@
+import dotenv
+
 from gwenflow import Agent, ChatOpenAI
 from gwenflow.memory.chat_memory_buffer import ChatMemoryBuffer
+
+dotenv.load_dotenv(override=True)
 
 messages = [
     {"role": "user", "content": "anything about alzheimer?"},
