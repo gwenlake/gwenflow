@@ -13,7 +13,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from gwenflow.telemetry import TelemetryBase
+
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
