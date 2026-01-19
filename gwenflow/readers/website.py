@@ -1,25 +1,23 @@
-
-import time
 import random
-import httpx
+import time
+from typing import Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
-from typing import Set, Dict, List, Tuple
+import httpx
 
 from gwenflow.logger import logger
 from gwenflow.readers import PDFReader
 from gwenflow.readers.base import Reader
 from gwenflow.types import Document
-from gwenflow.readers.base import Reader
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401
-except ImportError:
-    raise ImportError("BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`.")
+except ImportError as e:
+    raise ImportError("BeautifulSoup is not installed. Please install it with `pip install beautifulsoup4`.") from e
 
 
 class WebsiteReader(Reader):
-    """Reader for Websites"""
+    """Reader for Websites."""
 
     max_depth: int = 3
     max_links: int = 100000
@@ -41,7 +39,6 @@ class WebsiteReader(Reader):
 
     def _extract_html_content(self, soup: BeautifulSoup) -> str:
         """Extracts the main content from a BeautifulSoup object."""
-
         for tag in ["article", "main"]:
             element = soup.find(tag)
             if element:
@@ -61,12 +58,11 @@ class WebsiteReader(Reader):
             content = [document.content for document in documents]
             content = "\n\n".join(content)
             return content
-        except:
+        except Exception:
             return ""
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """Crawls an url and returns a dictionary of URLs and their corresponding content."""
-
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
@@ -74,16 +70,14 @@ class WebsiteReader(Reader):
         self._urls_to_crawl.append((url, starting_depth))
 
         headers = {
-            'accept': '*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53',
-            'Accept-Language': 'en-US,en;q=0.9,it;q=0.8,es;q=0.7',
-            'referer': 'https://www.google.com/',
+            "accept": "*/*",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53",
+            "Accept-Language": "en-US,en;q=0.9,it;q=0.8,es;q=0.7",
+            "referer": "https://www.google.com/",
         }
 
         with httpx.Client() as client:
-
             while self._urls_to_crawl:
-
                 # Unpack URL and depth from the global list
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -126,7 +120,10 @@ class WebsiteReader(Reader):
                         if parsed_url.netloc.endswith(primary_domain) and not any(
                             parsed_url.path.endswith(ext) for ext in [".jpg", ".png"]
                         ):
-                            if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
+                            if (
+                                full_url not in self._visited
+                                and (full_url, current_depth + 1) not in self._urls_to_crawl
+                            ):
                                 self._urls_to_crawl.append((full_url, current_depth + 1))
 
                 except Exception as e:
@@ -137,7 +134,6 @@ class WebsiteReader(Reader):
 
     def read(self, url: str) -> List[Document]:
         """Reads a website and returns a list of documents."""
-
         documents = []
 
         result = self.crawl(url)
@@ -150,5 +146,5 @@ class WebsiteReader(Reader):
                     metadata={"url": str(url)},
                 )
             )
-        
+
         return documents

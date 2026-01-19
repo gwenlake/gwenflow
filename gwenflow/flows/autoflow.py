@@ -1,14 +1,9 @@
-
-from typing import List, Callable, Union, Optional, Any, Dict
-from pydantic import BaseModel
 import json
 
-from gwenflow.logger import logger
 from gwenflow.agents import Agent
-from gwenflow.flows import Flow
-from gwenflow.tools import BaseTool
 from gwenflow.utils.json import parse_json_markdown
 
+from .base import Flow
 
 EXAMPLE = [
     {
@@ -17,7 +12,7 @@ EXAMPLE = [
         "tools": ["wikipedia"],
         "depends_on": [],
     },
-    { 
+    {
         "name": "Summarizer",
         "task": "List of 10 bullet points",
         "tools": None,
@@ -32,9 +27,9 @@ EXAMPLE = [
     {
         "name": "Final Report",
         "task": "Produce a final report in a Powerpoint file (pptx format)",
-        "tools": ["wikipedia","python"],
-        "depends_on": ["Biographer","Summarizer","RelatedTopics"],
-    }
+        "tools": ["wikipedia", "python"],
+        "depends_on": ["Biographer", "Summarizer", "RelatedTopics"],
+    },
 ]
 
 
@@ -102,19 +97,17 @@ Remember to replace the generic content with actual Agent data based on the give
 Now, please create the list of AI Agents based on the provided tasks.
 """
 
+
 class AutoFlow(Flow):
-
     def run(self, query: str) -> str:
-
-        tools = [ tool.name for tool in self.tools ]
+        tools = [tool.name for tool in self.tools]
         tools = ", ".join(tools)
 
         task_prompt = TASK_GENERATOR.format(tasks=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
         response = self.llm.invoke(input=[{"role": "user", "content": task_prompt}])
         response = parse_json_markdown(response.choices[0].message.content)
-        
-        for agent_json in response:
 
+        for agent_json in response:
             tools = []
             if agent_json.get("tools"):
                 for t in self.tools:
@@ -128,11 +121,7 @@ class AutoFlow(Flow):
             )
 
             self.steps.append(
-                { 
-                    "agent": agent,
-                    "task": agent_json.get("task"),
-                    "depends_on": agent_json.get("depends_on") 
-                }
+                {"agent": agent, "task": agent_json.get("task"), "depends_on": agent_json.get("depends_on")}
             )
 
         self.describe()

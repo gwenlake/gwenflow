@@ -1,29 +1,30 @@
-
 import uuid
-from typing import Optional, Callable, Any, List
-from pydantic import BaseModel, field_validator, Field
+from typing import Any, Callable, List, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 from gwenflow.types import Message
 from gwenflow.utils.tokens import num_tokens_from_string
 
 
 class BaseChatMemory(BaseModel):
- 
     id: Optional[str] = Field(None, validate_default=True)
     system_prompt: Optional[str] = None
     messages: list[Message] = []
     tokenizer_fn: Optional[Callable] = Field(None, validate_default=True)
 
     @field_validator("id", mode="before")
+    @classmethod
     def set_id(cls, v: Optional[str]) -> str:
         id = v or str(uuid.uuid4())
         return id
 
     @field_validator("tokenizer_fn", mode="before")
+    @classmethod
     def set_tokenizer_fn(cls, v: Optional[Callable]) -> Callable:
         fn = v or num_tokens_from_string
         return fn
-    
+
     def to_string(self) -> str:
         """Convert memory to string."""
         return self.json()
@@ -31,7 +32,7 @@ class BaseChatMemory(BaseModel):
     def to_dict(self, **kwargs: Any) -> dict:
         """Convert memory to dict."""
         return self.dict()
-    
+
     def reset(self):
         self.messages = []
 

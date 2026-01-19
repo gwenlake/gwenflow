@@ -2,7 +2,6 @@ import logging
 
 from rich.logging import RichHandler
 
-
 LOGGER_NAME = "gwenlake.gwenflow"
 
 

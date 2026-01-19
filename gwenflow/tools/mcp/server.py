@@ -21,10 +21,7 @@ class MCPServer(abc.ABC):
 
     @abc.abstractmethod
     async def connect(self):
-        """Connect to the server. For example, this might mean spawning a subprocess or
-        opening a network connection. The server is expected to remain connected until
-        `cleanup()` is called.
-        """
+        """Connect to the server. For example, this might mean spawning a subprocess or opening a network connection. The server is expected to remain connected until `cleanup()` is called."""
         pass
 
     @property
@@ -35,9 +32,7 @@ class MCPServer(abc.ABC):
 
     @abc.abstractmethod
     async def cleanup(self):
-        """Cleanup the server. For example, this might mean closing a subprocess or
-        closing a network connection.
-        """
+        """Cleanup the server. For example, this might mean closing a subprocess or closing a network connection."""
         pass
 
     @abc.abstractmethod
@@ -52,17 +47,18 @@ class MCPServer(abc.ABC):
 
 
 class _MCPServerWithClientSession(MCPServer, abc.ABC):
-    """Base class for MCP servers that use a `ClientSession` to communicate with the server."""
+
 
     def __init__(self, cache_tools_list: bool):
-        """
+        """Base class for MCP servers that use a `ClientSession` to communicate with the server.
+
         Args:
-            cache_tools_list: Whether to cache the tools list. If `True`, the tools list will be
-            cached and only fetched from the server once. If `False`, the tools list will be
-            fetched from the server on each call to `list_tools()`. The cache can be invalidated
-            by calling `invalidate_tools_cache()`. You should set this to `True` if you know the
-            server will not change its tools list, because it can drastically improve latency
-            (by avoiding a round-trip to the server every time).
+        cache_tools_list: Whether to cache the tools list. If `True`, the tools list will be
+        cached and only fetched from the server once. If `False`, the tools list will be
+        fetched from the server on each call to `list_tools()`. The cache can be invalidated
+        by calling `invalidate_tools_cache()`. You should set this to `True` if you know the
+        server will not change its tools list, because it can drastically improve latency
+        (by avoiding a round-trip to the server every time).
         """
         self.session: ClientSession | None = None
         self.exit_stack: AsyncExitStack = AsyncExitStack()
@@ -143,9 +139,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
 
 
 class MCPServerStdioParams(TypedDict):
-    """Mirrors `mcp.client.stdio.StdioServerParameters`, but lets you pass params without another
-    import.
-    """
+    """Mirrors `mcp.client.stdio.StdioServerParameters`, but lets you pass params without another import."""
 
     command: str
     """The executable to run to start the server. For example, `python` or `node`."""
@@ -170,6 +164,7 @@ class MCPServerStdioParams(TypedDict):
     explanations of possible values.
     """
 
+
 class MCPServerSseParams(TypedDict):
     """Mirrors the params in`mcp.client.sse.sse_client`."""
 
@@ -187,10 +182,7 @@ class MCPServerSseParams(TypedDict):
 
 
 class MCPServerSse(_MCPServerWithClientSession):
-    """MCP server implementation that uses the HTTP with SSE transport. See the [spec]
-    (https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse)
-    for details.
-    """
+    """MCP server implementation that uses the HTTP with SSE transport. See the [spec] (https://spec modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) for details."""
 
     def __init__(
         self,

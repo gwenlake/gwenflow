@@ -1,9 +1,9 @@
 [project]
 name = "gwenflow"
-version = "0.8.2"
+version = "0.8.3"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { file = "LICENSE.txt" }
 keywords = ["gwenflow", "gwenlake", "agents", "llms", "ai", "ml", "nlp", "framework"]
 authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain Barthélémy", email = "sylvain.barthelemy@gwenlake.com" }, { name = "Guillaume Beguec", email = "guillaume.beguec@gwenlake.com" }, { name = "Antoine de Parthenay", email = "antoine.departhenay@gwenlake.com" }]
@@ -17,7 +17,7 @@ dependencies = [
     "fsspec",
     "rich",
     "tiktoken",
-    "openai",
+    "openai==2.15.0",
     "langchain",
     "boto3",
     "pyarrow",
@@ -26,10 +26,14 @@ dependencies = [
     "jinja2",
     "markupsafe",
     "dirtyjson",
-    "asyncio>=3.4.3",
-    "tenacity>=9.0.0",
-    "mcp>=1.6.0",
+    "asyncio==3.4.3",
+    "tenacity==9.0.0",
+    "mcp==1.6.0",
     "faiss-cpu==1.11.0.post1",
+    "opentelemetry-api==1.29",
+    "opentelemetry-sdk==1.29",
+    "opentelemetry-exporter-otlp-proto-http==1.29.0",
+    "openinference-instrumentation-openai==0.1.41",
 ]
 
 classifiers = [
@@ -52,16 +56,16 @@ include = ["gwenflow*"]
 
 [tool.uv]
 dev-dependencies = [
-    "duckduckgo-search>=7.5.2",
-    "openai-responses>=0.11.2",
-    "pytest-cov>=5.0.0",
-    "pytest-dotenv>=0.5.2",
-    "pytest-mock>=3.14.0",
-    "pytest-recording>=0.13.2",
-    "pytest>=8.3.3",
-    "requests-mock>=1.12.1",
-    "ruff>=0.6.9",
-    "syrupy>=4.7.2",
+    "duckduckgo-search==7.5.2",
+    "openai-responses==0.13.1",
+    "pytest-cov==5.0.0",
+    "pytest-dotenv==0.5.2",
+    "pytest-mock==3.14.0",
+    "pytest-recording==0.13.2",
+    "pytest==8.3.3",
+    "requests-mock==1.12.1",
+    "ruff==0.6.9",
+    "syrupy==4.7.2",
 ]
 
 [tool.pytest.ini_options]
@@ -69,3 +73,58 @@ testpaths = ["tests"]
 env_files = [
     ".env.test",
 ]
+
+
+## CONFIGURE RUFF
+
+[tool.ruff]
+target-version = "py312"
+# Don't auto-fix since it can introduce a lot of file updates
+fix = false
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isortxs
+    "B", # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "N", # PEP8 naming convetions
+    "D", # pydocstyle
+    "PD", # Pydantic
+]
+
+ignore = [
+    "C901", # too complex
+    "W191", # indentation contains tabs
+    "D401", # imperative mood
+    "D100", # TODO: enable docstrings for modules
+    "D101", # TODO: enable docstrings for public class
+    "D102", # TODO: enable docstrings for public method
+    "D103", # TODO: enable docstrings for public function
+    "D104", # TODO: enable docstrings for public package
+    "D105", # TODO: enable docstrings for magic methods
+    "D107", # TODO: enable docstrings for __init__
+    "E501", # TODO: temporarily disable line too long
+    "N999", # TODO: temporarily disable invalid module name
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.params.Depends",
+    "fastapi.Query",
+    "fastapi.params.Query",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = true

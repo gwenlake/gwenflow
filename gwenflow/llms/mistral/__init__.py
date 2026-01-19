@@ -1,1 +1,1 @@
-from gwenflow.llms.mistral.chat import ChatMistral
+from gwenflow.llms.mistral.chat import ChatMistral  # noqa: F401

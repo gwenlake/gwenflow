@@ -1,14 +1,14 @@
-import enum
-from typing import Union
 import tiktoken
 
 # o200k_base for gpt-4o, cl100k_base for others
+
 
 def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:
     """Returns the number of tokens in a text string."""
     encoding = tiktoken.get_encoding(encoding_name)
     num_tokens = len(encoding.encode(string))
     return num_tokens
+
 
 def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
     """Return the number of tokens used by a list of messages."""
@@ -26,7 +26,7 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
         "gpt-4-32k-0613",
         "gpt-4o",
         "gpt-4o-mini",
-        }:
+    }:
         tokens_per_message = 3
         tokens_per_name = 1
     elif model == "gpt-3.5-turbo-0301":
@@ -51,6 +51,7 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
                 num_tokens += tokens_per_name
     num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
     return num_tokens
+
 
 def keep_tokens_from_text(text: str, token_limit: int, tokenizer_fn: callable) -> str:
     num_tokens = 0

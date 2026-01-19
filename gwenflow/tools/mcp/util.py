@@ -1,13 +1,13 @@
 import functools
 import json
-from typing import TYPE_CHECKING, Any
-
-from gwenflow.exceptions import GwenflowException, UserError, ModelBehaviorError
-from gwenflow.logger import logger
-from gwenflow.tools import FunctionTool, BaseTool
-from gwenflow.tools.mcp.server import MCPServer
+from typing import Any
 
 from mcp.types import Tool
+
+from gwenflow.exceptions import GwenflowException, UserError
+from gwenflow.logger import logger
+from gwenflow.tools import BaseTool, FunctionTool
+from gwenflow.tools.mcp.server import MCPServer
 
 
 class MCPUtil:
@@ -22,10 +22,7 @@ class MCPUtil:
             server_tools = await cls.get_function_tools(server)
             server_tool_names = {tool.name for tool in server_tools}
             if len(server_tool_names & tool_names) > 0:
-                raise UserError(
-                    f"Duplicate tool names found across MCP servers: "
-                    f"{server_tool_names & tool_names}"
-                )
+                raise UserError(f"Duplicate tool names found across MCP servers: {server_tool_names & tool_names}")
             tool_names.update(server_tool_names)
             tools.extend(server_tools)
 

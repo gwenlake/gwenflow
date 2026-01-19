@@ -1,12 +1,12 @@
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
+
 from gwenflow.types import Document
 
 
-
 class Reranker(BaseModel):
-    """Base class for rerankers"""
+    """Base class for rerankers."""
 
     model: str
     top_k: Optional[int] = None
@@ -16,4 +16,3 @@ class Reranker(BaseModel):
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         raise NotImplementedError
-    

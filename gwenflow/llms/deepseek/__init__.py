@@ -1,1 +1,1 @@
-from gwenflow.llms.deepseek.chat import ChatDeepSeek
+from gwenflow.llms.deepseek.chat import ChatDeepSeek  # noqa: F401

@@ -1,37 +1,39 @@
+import hashlib
 import io
 import os
-import logging
-import hashlib
-import numpy as np
 import pickle
-from typing import Optional, Any
+from typing import Optional
 
-from gwenflow.utils.aws import aws_s3_download_in_buffer, aws_s3_is_file, aws_s3_upload_fileobj, aws_s3_uri_to_bucket_key
+import numpy as np
+
+from gwenflow.utils.aws import (
+    aws_s3_download_in_buffer,
+    aws_s3_is_file,
+    aws_s3_upload_fileobj,
+    aws_s3_uri_to_bucket_key,
+)
 
 try:
     import faiss
-except ImportError:
-    raise ImportError("`faiss` is not installed.")
+except ImportError as exc:
+    raise ImportError("`faiss` is not installed.") from exc
 
-from gwenflow.logger import logger
-from gwenflow.vector_stores.base import VectorStoreBase
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
+from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.types import Document
-
+from gwenflow.vector_stores.base import VectorStoreBase
 
 
 class FAISS(VectorStoreBase):
-
     def __init__(
         self,
         filename: str,
-        embeddings: Embeddings = GwenlakeEmbeddings(),
+        embeddings: Optional[Embeddings] = None,
         reranker: Optional[Reranker] = None,
     ):
-
         # Embedder
-        self.embeddings = embeddings
+        self.embeddings = embeddings or GwenlakeEmbeddings()
 
         # reranker
         self.reranker = reranker
@@ -54,19 +56,19 @@ class FAISS(VectorStoreBase):
             self.load()
 
     def exists(self) -> bool:
-        if self.filename.startswith('s3://'):
+        if self.filename.startswith("s3://"):
             bucket, key = aws_s3_uri_to_bucket_key(self.filename)
-            return aws_s3_is_file(bucket=bucket, key=key)      
+            return aws_s3_is_file(bucket=bucket, key=key)
         else:
             return os.path.isfile(self.filename)
-    
+
     def get_collections(self) -> list:
         return []
 
     def insert(self, documents: list[Document]):
         logger.info(f"Embedding {len(documents)} documents")
         embeddings = self.embeddings.embed_documents([document.content for document in documents])
-        embeddings = np.array(embeddings, dtype='float32')
+        embeddings = np.array(embeddings, dtype="float32")
 
         logger.info(f"Inserting {len(documents)} documents into index")
         data = []
@@ -74,36 +76,35 @@ class FAISS(VectorStoreBase):
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
             data.append(document.model_dump())
-    
+
         if len(documents) > 0:
             self.index.add(embeddings)
             self.metadata.extend(data)
             self.save()
 
     def search(self, query: str, limit: int = 5) -> list[Document]:
-
         if not self.index:
-            logger.error(f"Error no index.")
+            logger.error("Error no index.")
             return []
 
         query_embedding = self.embeddings.embed_query(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
             return []
-        query_embedding = np.array([query_embedding], dtype='float32')
-        
-        D, I = self.index.search(query_embedding, k=limit)
+        query_embedding = np.array([query_embedding], dtype="float32")
+
+        D, I = self.index.search(query_embedding, k=limit)  # noqa: E741, N806
 
         documents = []
-        for idx, score in zip(I[0], D[0]):
-            if(idx==-1):
+        for idx, score in zip(I[0], D[0], strict=False):
+            if idx == -1:
                 continue
             document = self.metadata[idx].copy()
             document.pop("embedding")
             document = Document(**document)
             document.score = score
             documents.append(document)
-    
+
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
 
@@ -111,9 +112,8 @@ class FAISS(VectorStoreBase):
 
     def save(self):
         try:
-            
-            faiss_data = dict(index=self.index, metadata=self.metadata)
-            if self.filename.startswith('s3://'):
+            faiss_data = {"index": self.index, "metadata": self.metadata}
+            if self.filename.startswith("s3://"):
                 logger.info(f"Saving FAISS index to S3 at {self.filename} ...")
                 bucket, key = aws_s3_uri_to_bucket_key(self.filename)
                 buffer = io.BytesIO()
@@ -144,7 +144,7 @@ class FAISS(VectorStoreBase):
             self.metadata = faiss_data["metadata"]
         except Exception as e:
             logger.error(e)
-    
+
     def drop(self):
         try:
             os.remove(self.filename)
@@ -160,16 +160,15 @@ class FAISS(VectorStoreBase):
 
     def info(self) -> dict:
         return {}
-    
+
     def delete(self, id: int):
         return False
-    
+
     def delete_files(self, ids: list[str]) -> bool:
         logger.info(f"Deleting file with document_id: {ids}")
 
         keep_indices = [
-            i for i, doc in enumerate(self.metadata)
-            if doc.get("metadata", {}).get("document_id") not in ids
+            i for i, doc in enumerate(self.metadata) if doc.get("metadata", {}).get("document_id") not in ids
         ]
 
         if len(keep_indices) == len(self.metadata):
@@ -190,7 +189,7 @@ class FAISS(VectorStoreBase):
 
         return True
 
-    def get(self, id: int) -> dict:        
+    def get(self, id: int) -> dict:
         return None
 
     def list(self, filters: dict = None, limit: int = 100) -> list:
