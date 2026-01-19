@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "0.8.2"
+version = "0.8.3"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -17,7 +17,7 @@ dependencies = [
     "fsspec",
     "rich",
     "tiktoken",
-    "openai==1.69.0",
+    "openai==2.15.0",
     "langchain",
     "boto3",
     "pyarrow",
@@ -85,14 +85,14 @@ line-length = 120
 
 [tool.ruff.lint]
 select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isortxs
-    "B",  # flake8-bugbear
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isortxs
+    "B", # flake8-bugbear
     "C4", # flake8-comprehensions
-    "N",  # PEP8 naming convetions
-    "D",  # pydocstyle
+    "N", # PEP8 naming convetions
+    "D", # pydocstyle
     "PD", # Pydantic
 ]
 
