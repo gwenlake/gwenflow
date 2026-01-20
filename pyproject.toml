@@ -28,7 +28,7 @@ dependencies = [
     "dirtyjson",
     "asyncio==3.4.3",
     "tenacity==9.0.0",
-    "mcp==1.6.0",
+    "mcp==1.25.0",
     "faiss-cpu==1.11.0.post1",
     "opentelemetry-api==1.29",
     "opentelemetry-sdk==1.29",
