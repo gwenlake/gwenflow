@@ -27,7 +27,7 @@ class ResponseOpenAI(ChatBase):
     text_format: Optional[Any] = None
     top_logprobs: Optional[int] = None
     reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
-    reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with reasoning models
+    reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
     show_reasoning: bool = False
 
     # clients

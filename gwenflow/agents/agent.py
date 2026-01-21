@@ -138,7 +138,6 @@ class Agent(BaseModel):
 
         prompt = "Your name is {name}.".format(name=self.name)
 
-        # instructions
         if self.instructions:
             if isinstance(self.instructions, str):
                 prompt += " {instructions}".format(instructions=self.instructions)
@@ -148,12 +147,10 @@ class Agent(BaseModel):
 
         prompt += "\n\n"
 
-        # response model
         if self.response_model:
             prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
             prompt += "\n\n"
 
-        # references
         if self.retriever:
             references = self.retriever.search(query=task)
             if len(references) > 0:
@@ -161,7 +158,6 @@ class Agent(BaseModel):
                 prompt += PROMPT_KNOWLEDGE.format(references="\n\n".join(references)).strip()
                 prompt += "\n\n"
 
-        # context
         if context is not None:
             prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
             prompt += "\n\n"
@@ -278,35 +274,39 @@ class Agent(BaseModel):
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
-        if tool_call.function not in tool_map.keys():
-            logger.error(f"Tool {tool_call.function} does not exist")
+        tool_name = tool_call.function
+        if hasattr(tool_name, 'name'):
+            tool_name = tool_name.name
+
+        if tool_name not in tool_map:
+            logger.error(f"Tool {tool_name} does not exist")
             return Message(
                 role="tool",
                 tool_call_id=tool_call.id,
-                tool_name=tool_call.function,
-                content=f"Tool {tool_call.function} does not exist",
+                tool_name=tool_name,
+                content=f"Tool {tool_name} does not exist",
             )
 
         try:
-            logger.debug(f"Tool call: {tool_call.function}({tool_call.arguments})")
-            tool = tool_map[tool_call.function]
+            logger.debug(f"Tool call: {tool_name}({tool_call.arguments})")
+            tool = tool_map[tool_name]
             tool_response = tool.run(**tool_call.arguments)
             if tool_response:
                 return Message(
                     role="tool",
                     tool_call_id=tool_call.id,
-                    tool_name=tool_call.function,
-                    content=tool_response,
+                    tool_name=tool_name,
+                    content=str(tool_response),
                 )
 
         except Exception as e:
-            logger.error(f"Error executing tool '{tool_call.function}': {e}")
+            logger.error(f"Error executing tool '{tool_name}': {e}")
 
         return Message(
             role="tool",
             tool_call_id=tool_call.id,
-            tool_name=tool_call.function,
-            content=f"Error executing tool '{tool_call.function}'",
+            tool_name=tool_name,
+            content=f"Error executing tool '{tool_name}'",
         )
 
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
@@ -366,18 +366,15 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-        # prepare messages and task
+
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
-        # init agent response
         agent_response = AgentResponse()
 
-        # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
-        # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = self.reason(messages_for_reasoning_model)
@@ -398,13 +395,10 @@ class Agent(BaseModel):
         while num_turns_available > 0:
             num_turns_available -= 1
 
-            # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
-            # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
 
-            # usage
             usage = (
                 Usage(
                     requests=1,
@@ -417,19 +411,15 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
 
-            # keep answer in memory
             self.history.add_message(response.choices[0].message.model_dump())
 
-            # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
                 agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
 
-            # thinking
             agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
-            # handle tool calls
             tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
@@ -437,7 +427,6 @@ class Agent(BaseModel):
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
 
-        # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
@@ -451,18 +440,15 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-        # prepare messages and task
+
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
-        # init agent response
         agent_response = AgentResponse()
 
-        # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
-        # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
@@ -479,13 +465,10 @@ class Agent(BaseModel):
             agent_response.usage.add(usage)
 
         while True:
-            # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
-            # call llm and tool
             response = await self.llm.ainvoke(input=messages_for_model)
 
-            # usage
             usage = (
                 Usage(
                     requests=1,
@@ -498,32 +481,26 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
 
-            # keep answer in memory
             self.history.add_message(response.choices[0].message.model_dump())
 
-            # stop if not tool call
             if not response.choices[0].message.tool_calls:
                 agent_response.content = response.choices[0].message.content
-                agent_response.output.append(Message(**response.choices[0].message.model_dump()))
+                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
                 break
 
-            # thinking
             agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
-            # handle tool calls
             tool_calls = response.choices[0].message.tool_calls
             if tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.output.append(Message(**m))
+                    agent_response.messages.append(Message(**m))
 
-        # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        # keep sources
-        for output in agent_response.output:
+        for output in agent_response.messages:
             if output.role == "tool":
                 try:
                     agent_response.sources.append(
@@ -546,18 +523,15 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-        # prepare messages and task
+
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
-        # init agent response
         agent_response = AgentResponse()
 
-        # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
-        # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = self.reason(messages_for_reasoning_model)
@@ -578,15 +552,12 @@ class Agent(BaseModel):
         while num_turns_available > 0:
             num_turns_available -= 1
 
-            # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
-            # call llm and tool
             message = Message(role="assistant", content="", delta="", tool_calls=[])
             final_tool_calls = {}
 
             for chunk in self.llm.stream(input=messages_for_model):
-                # usage
                 usage = (
                     Usage(
                         requests=1,
@@ -618,24 +589,19 @@ class Agent(BaseModel):
 
                 yield agent_response
 
-            # convert tool_calls
             message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
 
-            # keep answer in memory
             self.history.add_message(message.model_dump())
 
-            # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
                 agent_response.messages.append(Message(**message.model_dump()))
                 break
 
-            # thinking
             agent_response.thinking = self._get_thinking(message.tool_calls)
             if agent_response.thinking:
                 yield agent_response
 
-            # handle tool calls
             tool_calls = self._convert_openai_tool_calls(message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
@@ -643,7 +609,6 @@ class Agent(BaseModel):
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
 
-        # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
@@ -657,18 +622,15 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AsyncIterator[AgentResponse]:
-        # prepare messages and task
+
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
-        # init agent response
         agent_response = AgentResponse()
 
-        # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
-        # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
@@ -688,16 +650,13 @@ class Agent(BaseModel):
 
         while num_turns_available > 0:
             num_turns_available -= 1
-            # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
-            # call llm and tool
             message = Message(role="assistant", content="", delta="", tool_calls=[])
             final_tool_calls = {}
 
             completions = self.llm.astream(input=messages_for_model)
             async for chunk in completions:
-                # usage
                 usage = (
                     Usage(
                         requests=1,
@@ -717,6 +676,7 @@ class Agent(BaseModel):
 
                 agent_response.content = None
                 agent_response.thinking = None
+
                 if delta.content:
                     agent_response.content = delta.content
 
@@ -728,23 +688,19 @@ class Agent(BaseModel):
 
                 yield agent_response
 
-            # convert tool_calls
             message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
-            # keep answer in memory
+
             self.history.add_message(message.model_dump())
 
-            # stop if not tool call
             if not message.tool_calls:
                 agent_response.content = message.content
                 agent_response.messages.append(Message(**message.model_dump()))
                 break
 
-            # thinking
             agent_response.thinking = self._get_thinking(message.tool_calls)
             if agent_response.thinking:
                 yield agent_response
 
-            # handle tool calls
             tool_calls = self._convert_openai_tool_calls(message.tool_calls)
             if tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
@@ -752,7 +708,6 @@ class Agent(BaseModel):
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
 
-        # format response
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 

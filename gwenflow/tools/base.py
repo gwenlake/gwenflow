@@ -40,7 +40,7 @@ class BaseTool(BaseModel, ABC):
                 "parameters": self.params_json_schema,
             },
         }
-    
+
     def to_openai_new(self) -> dict:
         return {
             "type": "function",
