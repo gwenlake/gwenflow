@@ -14,24 +14,20 @@ from gwenflow.utils import extract_json_str
 
 
 class ResponseOpenAI(ChatBase):
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5-mini"
 
     # model parameters
+    background: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-    n: Optional[int] = None
-    stop: Optional[Union[str, List[str]]] = None
-    max_completion_tokens: Optional[int] = None
-    max_tokens: Optional[int] = None
-    presence_penalty: Optional[float] = None
-    frequency_penalty: Optional[float] = None
-    logit_bias: Optional[Dict[int, float]] = None
+    max_output_tokens: Optional[int] = None
+    max_tool_calls: Optional[int] = None
+    prompt_cache_key: Optional[bool] = None
+    prompt_cache_retention: Optional[bool] = None
     text_format: Optional[Any] = None
-    seed: Optional[int] = None
-    logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
-    reasoning_effort: Literal['low', 'medium', 'high'] = None
-    reasoning_summary: Literal['auto', 'concise', 'detailed'] = None #Use only auto to make sure it is compatible with reasoning models
+    reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
+    reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with reasoning models
     show_reasoning: bool = False
 
     # clients
@@ -85,18 +81,15 @@ class ResponseOpenAI(ChatBase):
     def _model_params(self) -> Dict[str, Any]:
 
         model_params = {
+            "background": self.background,
+            "max_output_tokens": self.max_output_tokens,
+            "max_tool_calls": self.max_tool_calls,
+            "prompt_cache_key": self.prompt_cache_key,
+            "prompt_cache_retention": self.prompt_cache_retention,
             "temperature": self.temperature,
-            "top_p": self.top_p,
-            "n": self.n,
-            "stop": self.stop,
-            "max_completion_tokens": self.max_tokens or self.max_completion_tokens,
-            "presence_penalty": self.presence_penalty,
-            "frequency_penalty": self.frequency_penalty,
-            "logit_bias": self.logit_bias,
             "texte.format": self.text_format,
-            "seed": self.seed,
-            "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
+            "top_p": self.top_p,
         }
         if self.get_reasoning_model():
             model_params["reasoning"] = {
