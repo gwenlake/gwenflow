@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGemini(ChatOpenAI):
-    model: str = "gemini-1.5-flash"
-    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    model: str = "gemini-3-flash-preview"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
