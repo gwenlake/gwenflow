@@ -14,7 +14,7 @@ from gwenflow.utils import extract_json_str
 
 
 class ResponseOpenAI(ChatBase):
-    model: str = "gpt-5-mini"
+    model: str = "gpt-4o-mini"
 
     # model parameters
     temperature: Optional[float] = None
@@ -84,8 +84,6 @@ class ResponseOpenAI(ChatBase):
     @property
     def _model_params(self) -> Dict[str, Any]:
 
-        is_reasoning = self.model.startswith(("o1", "o3", "gpt-5"))
-
         model_params = {
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -100,7 +98,7 @@ class ResponseOpenAI(ChatBase):
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
         }
-        if is_reasoning:
+        if self.get_reasoning_model():
             model_params["reasoning"] = {
                 "effort": self.reasoning_effort,
                 "summary": self.reasoning_summary

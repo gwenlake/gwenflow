@@ -5,34 +5,82 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from gwenflow.tools import BaseTool
 
-LLM_CONTEXT_WINDOW_SIZES = {
-    # openai
-    "gpt-4": 8192,
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-4-turbo": 128000,
-    "o1-preview": 128000,
-    "o1-mini": 128000,
-    "o3-mini": 128000,
-    # deepseek
-    "deepseek-chat": 128000,
-    "deepseek-r1": 128000,
-    # google
-    "gemma2-9b-it": 8192,
-    "gemma-7b-it": 8192,
-    # meta
-    "llama3-groq-70b-8192-tool-use-preview": 8192,
-    "llama3-groq-8b-8192-tool-use-preview": 8192,
-    "llama-3.1-70b-versatile": 131072,
-    "llama-3.1-8b-instant": 131072,
-    "llama-3.2-1b-preview": 8192,
-    "llama-3.2-3b-preview": 8192,
-    "llama-3.2-11b-text-preview": 8192,
-    "llama-3.2-90b-text-preview": 8192,
-    "llama3-70b-8192": 8192,
-    "llama3-8b-8192": 8192,
-    # mistral
-    "mixtral-8x7b-32768": 32768,
+LLM_MODEL_PARAMETERS = {
+    # --- OPENAI ---
+    "gpt-5.2": {
+        "context_token": 400000,
+        "reasoning": True
+    },
+    "gpt-5.2-pro": {
+        "context_token": 400000,
+        "reasoning": True
+    },
+    "gpt-5-mini": {
+        "context_token": 400000,
+        "reasoning": True
+    },
+    "gpt-4.5": {
+        "context_token": 128000,
+        "reasoning": False
+    },
+    "gpt-4.1": {
+        "context_token": 1047576,
+        "reasoning": False
+    },
+    "o3-pro": {
+        "context_token": 200000,
+        "reasoning": True
+    },
+    "o3-mini-high": {
+        "context_token": 128000,
+        "reasoning": True
+    },
+    "o4-mini": {
+        "context_token": 128000,
+        "reasoning": True
+    },
+    "gpt-4o": {
+        "context_token": 128000,
+        "reasoning": False
+    },
+    "gpt-4o-mini": {
+        "context_token": 128000,
+        "reasoning": False
+    },
+    "o1-preview": {
+        "context_token": 128000,
+        "reasoning": True
+    },
+    "o1-mini": {
+        "context_token": 128000,
+        "reasoning": True
+    },
+
+    # --- DEEPSEEK ---
+    "deepseek-chat": {
+        "context_token": 128000,
+        "reasoning": False
+    },
+    "deepseek-r1": {
+        "context_token": 128000,
+        "reasoning": True
+    },
+
+    # --- META ---
+    "llama-3.1-70b-versatile": {
+        "context_token": 131072,
+        "reasoning": False
+    },
+    "llama-3.1-8b-instant": {
+        "context_token": 131072,
+        "reasoning": False
+    },
+
+    # --- MISTRAL ---
+    "mixtral-8x7b-32768": {
+        "context_token": 32768,
+        "reasoning": False
+    },
 }
 
 
@@ -69,7 +117,10 @@ class ChatBase(BaseModel, ABC):
 
     def get_context_window_size(self) -> int:
         # Only using 75% of the context window size to avoid cutting the message in the middle
-        return int(LLM_CONTEXT_WINDOW_SIZES.get(self.model, 8192) * 0.75)
+        return int(LLM_MODEL_PARAMETERS.get(self.model, {}).get("context_token", 128000) * 0.75)
+
+    def get_reasoning_model(self) -> str:
+        return LLM_MODEL_PARAMETERS.get(self.model, {}).get("reasoning", False)
 
     def get_tool_names(self):
         return [tool.name for tool in self.tools]
