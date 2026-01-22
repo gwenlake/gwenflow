@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import Field
-
+from gwenflow.llms.openai.base import Response, ResponseEvent
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry.base import TelemetryBase
 from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
@@ -24,7 +24,7 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None
+    text_format: Optional[Any] = None # change later to available output type
     top_logprobs: Optional[int] = None
     reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
     reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
@@ -136,87 +136,110 @@ class ResponseOpenAI(ChatBase):
         """Format a message into the format expected by OpenAI."""
         return message.to_openai()
 
-    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-            responses = self.get_client().responses.create(
+            raw_response = self.get_client().responses.create(
                 model=self.model,
                 input=[self._format_message(m) for m in messages_for_model],
                 **self._model_params,
             )
+
+            response = Response.model_validate(raw_response.model_dump())
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.text_format:
-            responses.choices[0].message.content = self._parse_response(
-                responses.choices[0].message.content, text_format=self.text_format
+            content_output = response.get_text()
+            content = self._parse_response(
+                content_output, text_format=self.text_format
             )
+            for item in response.output:
+                if item.type == "message" and item.content:
+                    item.content[0].text = content
+        return response
 
-        return responses
-
-    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-            responses = await self.get_async_client().responses.create(
+            raw_response = await self.get_async_client().responses.create(
                 model=self.model,
                 input=[self._format_message(m) for m in messages_for_model],
                 **self._model_params,
             )
+
+            response = Response.model_validate(raw_response.model_dump())
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         if self.text_format:
-            responses.choices[0].message.content = self._parse_response(
-                responses.choices[0].message.content, text_format=self.text_format
+            content_output = response.get_text()
+            content = self._parse_response(
+                content_output, text_format=self.text_format
             )
+            for item in response.output:
+                if item.type == "message" and item.content:
+                    item.content[0].text = content
+        return response
 
-        return responses
-
-    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
+    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEvent]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-            stream = self.get_client().responses.create(
+
+            client = self.get_client()
+
+            with client.responses.create(
                 model=self.model,
                 input=[self._format_message(m) for m in messages_for_model],
                 stream=True,
                 **self._model_params,
-            )
+                ) as raw_stream:
+                for raw_event in raw_stream:
+                    try:
+                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
+                        event = event_obj.root
 
-            for event in stream:
-                if hasattr(event, 'delta') and event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
-                    yield {'content': event.delta,
-                       'type': 'reasoning',
-                       'sequence_number': event.sequence_number}
+                        if event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
+                            yield event_obj
 
-                elif hasattr(event, 'delta') and event.type == 'response.output_text.delta':
-                    yield {'content': event.delta,
-                           'type': 'output_text',
-                           'sequence_number': event.sequence_number}
+                        elif event.type == 'response.output_text.delta':
+                            yield event_obj
 
+                        elif event.type == "response.completed":
+                            yield event_obj
+                            break
+                    except Exception:
+                        continue
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}") from e
+            raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
 
-    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ChatCompletionChunk]:
+    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEvent]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
-            stream = await self.get_async_client().responses.create(
+            client = self.get_async_client()
+
+            async with await client.responses.create(
                 model=self.model,
                 input=[self._format_message(m) for m in messages_for_model],
                 stream=True,
                 **self._model_params,
-            )
+                ) as raw_stream:
+                async for raw_event in raw_stream:
+                    try:
+                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
+                        event = event_obj.root
 
-            async for event in stream:
-                if hasattr(event, 'delta') and event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
-                    yield {'content': event.delta,
-                       'type': 'reasoning',
-                       'sequence_number': event.sequence_number}
+                        if event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
+                            yield event_obj
 
-                elif hasattr(event, 'delta') and event.type == 'response.output_text.delta':
-                    yield {'content': event.delta,
-                           'type': 'output_text',
-                           'sequence_number': event.sequence_number}
+                        elif event.type == 'response.output_text.delta':
+                            yield event_obj
 
+                        elif event.type == "response.completed":
+                            yield event_obj
+                            break
+                    except Exception:
+                        continue
         except Exception as e:
             raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
