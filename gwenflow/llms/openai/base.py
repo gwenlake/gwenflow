@@ -1,7 +1,9 @@
 from typing import Annotated, Any, List, Literal, Optional, Union
-from gwenflow.types import Usage
-from gwenflow.tools import BaseTool
+
 from pydantic import BaseModel, Field, RootModel
+
+from gwenflow.tools import BaseTool
+from gwenflow.types import Usage
 
 
 class ResponseContent(BaseModel):

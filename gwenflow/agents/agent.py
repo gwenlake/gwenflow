@@ -65,7 +65,7 @@ class Agent(BaseModel):
     tool_choice: Literal["auto", "required", "none"] | str | None = None
     """The tool choice to use when calling the model."""
 
-    reasoning_model: Optional[ChatBase] = Field(None, validate_default=True)
+    reasoning_model: Optional[bool] = Field(None, validate_default=True)
     """Reasoning model."""
 
     history: ChatMemoryBuffer | None = None
@@ -309,6 +309,16 @@ class Agent(BaseModel):
             content=f"Error executing tool '{tool_name}'",
         )
 
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
+        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
+        results = []
+        for tool_call in tool_calls:
+            result = self.run_tool(tool_call)
+            if result:
+                results.append(result.to_dict())
+
+        return results
+
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         tasks = []
         for tool_call in tool_calls:
@@ -323,16 +333,6 @@ class Agent(BaseModel):
                 final_results_as_dicts.append(res.to_dict())
 
         return final_results_as_dicts
-
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
-        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
-        results = []
-        for tool_call in tool_calls:
-            result = self.run_tool(tool_call)
-            if result:
-                results.append(result.to_dict())
-
-        return results
 
     def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
         tool_calls = []
