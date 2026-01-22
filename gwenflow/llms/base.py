@@ -15,7 +15,15 @@ LLM_MODEL_PARAMETERS = {
         "context_token": 400000,
         "reasoning": True
     },
+    "gpt-5": {
+        "context_token": 400000,
+        "reasoning": True
+    },
     "gpt-5-mini": {
+        "context_token": 400000,
+        "reasoning": True
+    },
+    "gpt-5-nano": {
         "context_token": 400000,
         "reasoning": True
     },
