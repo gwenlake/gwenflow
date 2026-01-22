@@ -12,12 +12,6 @@ from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
 from gwenflow.utils import extract_json_str
 
-from openai import OpenAI, AsyncOpenAI
-from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
-
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
-import time
-import uuid
 
 class ChatOpenAI(ChatBase):
     model: str = "gpt-4o-mini"
@@ -102,7 +96,7 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools and self.tool_type == "fncall":
-            model_params["tools"] = [tool.to_openai_new() for tool in self.tools]
+            model_params["tools"] = [tool.to_openai() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
         model_params = {k: v for k, v in model_params.items() if v is not None}
@@ -189,53 +183,17 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-    async def astream(self, input):
+    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-            formatted_input = [
-                                    {
-                                        "role": m.role,
-                                        "content": [{"type": "input_text" if m.role in ["system", "user"] else "output_text", "text": m.content}],
-                                    }
-                                    for m in messages_for_model
-                                ]
-
-            client = self.get_async_client()
-            model_params = self._model_params.copy()
-
-            async with client.responses.stream(
+            completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
-                input=formatted_input,
-                reasoning={"effort": "medium", "summary": "detailed"},
-                **model_params,
-            ) as stream:
-                async for event in stream:
-                    if event.type in ["response.output_text.delta", "response.reasoning_summary_text.delta"]:
-                        yield ChatCompletionChunk(
-                            id=f"chatcmpl-{uuid.uuid4().hex}",
-                            created=int(time.time()),
-                            model=self.model,
-                            object="chat.completion.chunk",
-                            choices=[Choice(delta=ChoiceDelta(content=event.delta), finish_reason=None, index=0)],
-                            usage=None,
-                            logprobs=None,
-                            tool_calls=getattr(event, "tool_calls", None)
-                        )
-
-                    elif event.type == "response.tool_call.delta":
-                        yield ChatCompletionChunk(
-                            id=f"chatcmpl-{uuid.uuid4().hex}",
-                            created=int(time.time()),
-                            model=self.model,
-                            object="chat.completion.chunk",
-                            choices=[Choice(delta=ChoiceDelta(content=None), finish_reason=None, index=0)],
-                            usage=None,
-                            logprobs=None,
-                            tool_calls=event.tool_calls
-                        )
-
-                    elif event.type == "response.completed":
-                        break
-
+                messages=[self._format_message(m) for m in messages_for_model],
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._model_params,
+            )
+            async for chunk in completion:
+                yield chunk
         except Exception as e:
-            raise RuntimeError(f"Error in calling OpenAI Responses API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
