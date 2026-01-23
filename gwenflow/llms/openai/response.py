@@ -3,13 +3,21 @@ import os
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
 from openai import AsyncOpenAI, OpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import Field
-from gwenflow.llms.openai.base import Response, ResponseEvent
+
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry.base import TelemetryBase
 from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
+from gwenflow.types.responses import (
+    Response,
+    ResponseContentDeltaEvent,
+    ResponseContentEvent,
+    ResponseEvent,
+    ResponseReasoningDeltaEvent,
+    ResponseReasoningEvent,
+    ResponseToolCallEvent,
+)
 from gwenflow.utils import extract_json_str
 
 
@@ -24,7 +32,7 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None # change later to available output type
+    text_format: Optional[Any] = None # TODO change later to available output type
     top_logprobs: Optional[int] = None
     reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
     reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
@@ -41,7 +49,7 @@ class ResponseOpenAI(ChatBase):
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
 
-    # telemetry
+    # telemetry #TODO move this elsewhere
     service_name: str = Field(default="gwenflow-service")
     provider: Optional[str] = None
 
@@ -98,7 +106,7 @@ class ResponseOpenAI(ChatBase):
             }
 
         if self.tools and self.tool_type == "base":
-            model_params["tools"] = [tool.to_openai() for tool in self.tools]
+            model_params["tools"] = [tool.to_openai_new() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
         model_params = {k: v for k, v in model_params.items() if v is not None}
@@ -185,7 +193,6 @@ class ResponseOpenAI(ChatBase):
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEvent]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-
             client = self.get_client()
 
             with client.responses.create(
@@ -193,23 +200,28 @@ class ResponseOpenAI(ChatBase):
                 input=[self._format_message(m) for m in messages_for_model],
                 stream=True,
                 **self._model_params,
-                ) as raw_stream:
+            ) as raw_stream:
                 for raw_event in raw_stream:
                     try:
                         event_obj = ResponseEvent.model_validate(raw_event.model_dump())
                         event = event_obj.root
 
-                        if event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
+                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                            if self.show_reasoning:
+                                yield event_obj
+
+                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
                             yield event_obj
 
-                        elif event.type == 'response.output_text.delta':
+                        elif isinstance(event, ResponseToolCallEvent):
                             yield event_obj
 
-                        elif event.type == "response.completed":
-                            yield event_obj
+                        if getattr(event, "type", None) == "response.done":
                             break
+
                     except Exception:
                         continue
+
         except Exception as e:
             raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
 
@@ -230,15 +242,19 @@ class ResponseOpenAI(ChatBase):
                         event_obj = ResponseEvent.model_validate(raw_event.model_dump())
                         event = event_obj.root
 
-                        if event.type == 'response.reasoning_summary_text.delta' and self.show_reasoning:
+                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                            if self.show_reasoning:
+                                yield event_obj
+
+                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
                             yield event_obj
 
-                        elif event.type == 'response.output_text.delta':
+                        elif isinstance(event, ResponseToolCallEvent):
                             yield event_obj
 
-                        elif event.type == "response.completed":
-                            yield event_obj
+                        if getattr(event, "type", None) == "response.done":
                             break
+
                     except Exception:
                         continue
         except Exception as e:
