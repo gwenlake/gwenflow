@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class UsageDetails(BaseModel):
     cached_tokens: int = 0
     reasoning_tokens: int = 0
