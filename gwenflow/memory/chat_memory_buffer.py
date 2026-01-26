@@ -7,7 +7,7 @@ from gwenflow.memory.base import BaseChatMemory
 from gwenflow.types import Message
 from gwenflow.utils.tokens import keep_tokens_from_text
 
-DEFAULT_TOKEN_LIMIT = 8192
+DEFAULT_TOKEN_LIMIT = 128000
 DEFAULT_TOKEN_LIMIT_RATIO = 0.75
 MAX_MESSAGE_CONTENT = 0.5
 
