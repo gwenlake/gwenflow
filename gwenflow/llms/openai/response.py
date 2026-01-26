@@ -32,7 +32,7 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None # TODO change later to available output type
+    text_format: Optional[Any] = None # TODO change "Any" later to available output type
     top_logprobs: Optional[int] = None
     reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
     reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
@@ -95,7 +95,7 @@ class ResponseOpenAI(ChatBase):
             "prompt_cache_key": self.prompt_cache_key,
             "prompt_cache_retention": self.prompt_cache_retention,
             "temperature": self.temperature,
-            "texte.format": self.text_format,
+            "text.format": self.text_format,
             "top_logprobs": self.top_logprobs,
             "top_p": self.top_p,
         }
@@ -144,6 +144,15 @@ class ResponseOpenAI(ChatBase):
         """Format a message into the format expected by OpenAI."""
         return message.to_openai()
 
+    def _handle_max_output_limit_issue(self, response: Response):
+        reason = getattr(response.incomplete_details, "reason", None)
+        if response.status == "incomplete" and reason == "max_output_tokens":
+            print("Ran out of tokens")
+            if response.get_text():
+                print("Partial output:", response.get_text())
+            else:
+                print("Ran out of tokens during generating response")
+
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
@@ -157,14 +166,18 @@ class ResponseOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        if self.text_format:
-            content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
-            for item in response.output:
-                if item.type == "message" and item.content:
-                    item.content[0].text = content
+        self._handle_max_output_limit_issue(response)
+
+        if not self.text_format:
+            return response
+
+        content_raw = response.get_text()
+        parsed_content = self._parse_response(content_raw, text_format=self.text_format)
+
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                item.content = parsed_content
+
         return response
 
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
@@ -180,14 +193,18 @@ class ResponseOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        if self.text_format:
-            content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
-            for item in response.output:
-                if item.type == "message" and item.content:
-                    item.content[0].text = content
+        self._handle_max_output_limit_issue(response)
+
+        if not self.text_format:
+            return response
+
+        content_raw = response.get_text()
+        parsed_content = self._parse_response(content_raw, text_format=self.text_format)
+
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                item.content = parsed_content
+
         return response
 
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEvent]:
@@ -217,13 +234,14 @@ class ResponseOpenAI(ChatBase):
                             yield event_obj
 
                         if getattr(event, "type", None) == "response.done":
+                            self._handle_max_output_limit_issue(event.response)
                             break
 
                     except Exception:
                         continue
 
         except Exception as e:
-            raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
+            raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
 
     async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEvent]:
         try:
@@ -253,9 +271,10 @@ class ResponseOpenAI(ChatBase):
                             yield event_obj
 
                         if getattr(event, "type", None) == "response.done":
+                            self._handle_max_output_limit_issue(event.response)
                             break
 
                     except Exception:
                         continue
         except Exception as e:
-            raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
+            raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
