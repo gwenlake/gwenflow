@@ -41,6 +41,14 @@ class BaseTool(BaseModel, ABC):
             },
         }
 
+    def to_openai_new(self) -> dict:
+        return {
+            "type": "function",
+            "name": self.name,
+            "description": self.description or "",
+            "parameters": self.params_json_schema,
+        }
+
     def _cast_response_to_str(self, response) -> str:
         if isinstance(response, str):
             return response
