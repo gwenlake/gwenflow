@@ -29,6 +29,7 @@ from gwenflow.types import (
     ResponseOutputItem,
     ToolCall,
     Usage,
+    UsageDetails,
 )
 
 DEFAULT_MAX_TURNS = 10
@@ -126,6 +127,60 @@ class Agent(BaseModel):
                 text += context.get(key) + "\n"
                 text += f"</{key}>\n\n"
         return text
+
+    def _convert_response_to_message(self, response: Any) -> Message:
+        text_parts = []
+        tool_calls = []
+        reasoning_parts = []
+
+        for item in response.output:
+            if item.type == "message":
+                for part in item.content:
+                    if hasattr(part, "type"):
+                        if part.type == "text":
+                            text_parts.append(part.text)
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+
+            elif item.type == "function_call":
+                tool_calls.append({
+                    "id": item.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.name,
+                        "arguments": item.arguments
+                    }
+                })
+
+            elif item.type == "reasoning":
+                content = (
+                    getattr(item, "text", None) or
+                    getattr(item, "summary", None) or
+                    ""
+                )
+                if content and content != "none":
+                    reasoning_parts.append(content)
+
+        return Message(
+            role="assistant",
+            content="".join(text_parts) if text_parts else None,
+            tool_calls=tool_calls if tool_calls else None,
+            thinking="".join(reasoning_parts) if reasoning_parts else None
+        )
+
+    def _normalize_to_message(self, response: Any) -> Message:
+        if hasattr(response, "choices"):
+            raw_msg = response.choices[0].message
+            return Message(
+                role=raw_msg.role,
+                content=raw_msg.content,
+                tool_calls=raw_msg.tool_calls,
+            )
+
+        elif hasattr(response, "output"):
+            return self._convert_response_to_message(response)
 
     def get_system_prompt(
         self,
@@ -334,30 +389,40 @@ class Agent(BaseModel):
 
         return final_results_as_dicts
 
-    def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
+    def _convert_openai_tool_calls(self, message: Message) -> list[ToolCall]:
+        if not message.tool_calls:
+            return []
         tool_calls = []
-        for tool_call in openai_tool_calls:
-            if isinstance(tool_call, dict):
-                tool_call = ChatCompletionMessageToolCall(**tool_call)
-            tool_calls.append(
-                ToolCall(
-                    id=tool_call.id,
-                    function=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments),
+        for tc in message.tool_calls:
+            if isinstance(tc, dict):
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id"),
+                        function=tc["function"]["name"],
+                        arguments=json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                    )
                 )
-            )
+            else:
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.id,
+                        function=tc.function.name,
+                        arguments=json.loads(tc.function.arguments)
+                    )
+                )
         return tool_calls
 
-    def _get_thinking(self, tool_calls) -> str:
-        thinking = []
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                tool_call = tool_call.model_dump()
-            thinking.append(
-                f"""**Calling** {tool_call["function"]["name"].replace("Tool", "")} on '{tool_call["function"]["arguments"]}'"""
-            )
-        if len(thinking) > 0:
+    def _get_thinking(self, message: Message) -> str:
+        if message.thinking:
+            return message.thinking
+
+        if message.tool_calls:
+            thinking = []
+            for tc in message.tool_calls:
+                name = tc["function"]["name"] if isinstance(tc, dict) else tc.function.name
+                thinking.append(f"**Calling** {name.replace('Tool', '')}...")
             return "\n".join(thinking)
+
         return ""
 
     @Tracer.agent()
@@ -393,6 +458,9 @@ class Agent(BaseModel):
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
+            if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
+                self.tool_choice = 'auto'
+
             num_turns_available -= 1
 
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -402,36 +470,57 @@ class Agent(BaseModel):
             usage = (
                 Usage(
                     requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
                     total_tokens=response.usage.total_tokens,
+                    input_tokens_details=UsageDetails(
+                        cached_tokens=getattr(response.usage.input_tokens_details, "cached_tokens", 0),
+                        reasoning_tokens=getattr(response.usage.input_tokens_details, "reasoning_tokens", 0)
+                    ),
+                    output_tokens_details=UsageDetails(
+                        cached_tokens=getattr(response.usage.output_tokens_details, "cached_tokens", 0),
+                        reasoning_tokens=getattr(response.usage.output_tokens_details, "reasoning_tokens", 0)
+                    )
                 )
                 if response.usage
                 else Usage()
             )
             agent_response.usage.add(usage)
 
-            self.history.add_message(response.choices[0].message.model_dump())
+            if hasattr(response, "choices"):
+                message = Message(**response.choices[0].message.model_dump())
+            else:
+                message = self._convert_response_to_message(response)
 
-            if not response.choices[0].message.tool_calls:
-                agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
+            self.history.add_message(message)
+
+            current_thinking = self._get_thinking(message)
+            if current_thinking:
+                if agent_response.thinking:
+                    agent_response.thinking += f"\n\n{current_thinking}"
+                else:
+                    agent_response.thinking = current_thinking
+
+            if not message.tool_calls:
+                agent_response.content = message.content
+                agent_response.messages.append(message)
                 break
 
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
-
-            tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
+            tool_calls = self._convert_openai_tool_calls(message)
             if tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
                 for m in tool_messages:
-                    self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
+                    msg_obj = Message(**m) if isinstance(m, dict) else m
+                    self.history.add_message(msg_obj)
+                    agent_response.messages.append(msg_obj)
 
-        if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
+        if self.response_model and agent_response.content:
+            try:
+                agent_response.content = json.loads(agent_response.content)
+            except Exception:
+                pass
 
         agent_response.finish_reason = "stop"
-
         return agent_response
 
     @Tracer.agent()

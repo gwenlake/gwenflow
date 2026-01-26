@@ -5,12 +5,13 @@ from gwenflow.types.output import ResponseOutputItem
 from gwenflow.types.response import AgentResponse
 from gwenflow.types.responses import Response
 from gwenflow.types.tool_call import ToolCall
-from gwenflow.types.usage import Usage
+from gwenflow.types.usage import Usage, UsageDetails
 
 __all__ = [
     "Message",
     "Document",
     "Usage",
+    "UsageDetails",
     "AgentResponse",
     "ResponseOutputItem",
     "ItemHelpers",
