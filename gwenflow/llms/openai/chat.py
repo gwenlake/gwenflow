@@ -96,7 +96,7 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools and self.tool_type == "fncall":
-            model_params["tools"] = [tool.to_openai() for tool in self.tools]
+            model_params["tools"] = [tool.to_openai_chat_completion() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
         model_params = {k: v for k, v in model_params.items() if v is not None}
@@ -132,7 +132,7 @@ class ChatOpenAI(ChatBase):
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """Format a message into the format expected by OpenAI."""
-        return message.to_openai()
+        return message.to_openai_chat_completion()
 
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:

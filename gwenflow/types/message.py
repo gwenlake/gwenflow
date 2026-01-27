@@ -94,8 +94,8 @@ class Message(BaseModel):
         }
         return message_dict
 
-    def to_openai(self) -> Dict[str, Any]:
-        """Format a message into the format expected by OpenAI."""
+    def to_openai_chat_completion(self) -> Dict[str, Any]:
+        """Format a message into the format expected by OpenAI Chat Completion."""
         message_dict: Dict[str, Any] = {
             "role": self.role,
             "content": self.content,
@@ -105,8 +105,48 @@ class Message(BaseModel):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
         if self.tool_calls is not None and len(self.tool_calls) == 0:
             message_dict["tool_calls"] = None
 
         return message_dict
+
+    def to_openai_response(self) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Format a message into the format expected by OpenAI Response."""
+        if self.role == "tool":
+            return {
+                "type": "function_call_output",
+                "call_id": self.tool_call_id,
+                "output": str(self.content) if self.content is not None else ""
+            }
+
+        if self.role == "assistant":
+            if self.tool_calls:
+                items = []
+                if self.content:
+                    items.append({
+                        "role": "assistant",
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": self.content}]
+                    })
+
+                for tc in self.tool_calls:
+                    items.append({
+                        "type": "function_call",
+                        "call_id": tc.get("id"),
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"]
+                    })
+
+                return items if len(items) > 1 else items[0]
+
+            return {
+                "role": "assistant",
+                "type": "message",
+                "content": [{"type": "output_text", "text": self.content or ""}]
+            }
+
+        return {
+            "role": self.role,
+            "type": "message",
+            "content": [{"type": "input_text", "text": self.content or ""}]
+        }
