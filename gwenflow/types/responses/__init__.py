@@ -9,6 +9,7 @@ from gwenflow.types.responses.response_event import (
     ResponseContentDeltaEvent,
     ResponseContentEvent,
     ResponseEvent,
+    ResponseEventRoot,
     ResponseOutputItemEvent,
     ResponseReasoningDeltaEvent,
     ResponseReasoningEvent,
@@ -30,5 +31,6 @@ __all__ = [
     "ResponseReasoningDeltaEvent",
     "ResponseReasoningEvent",
     "ResponseToolCallEvent",
+    "ResponseEventRoot",
     ""
 ]

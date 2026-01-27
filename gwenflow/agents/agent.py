@@ -4,7 +4,6 @@ import re
 import uuid
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
-from openai.types.chat import ChatCompletionMessageToolCall
 from pydantic import (
     UUID4,
     BaseModel,
@@ -26,10 +25,17 @@ from gwenflow.types import (
     AgentResponse,
     ItemHelpers,
     Message,
-    ResponseOutputItem,
     ToolCall,
     Usage,
     UsageDetails,
+)
+from gwenflow.types.responses.response_event import (
+    ResponseContentDeltaEvent,
+    ResponseReasoningDeltaEvent,
+    ResponseReasoningEvent,
+    ResponseContentEvent,
+    ResponseEvent,
+    ResponseToolCallEvent,
 )
 
 DEFAULT_MAX_TURNS = 10
@@ -167,7 +173,7 @@ class Agent(BaseModel):
             role="assistant",
             content="".join(text_parts) if text_parts else None,
             tool_calls=tool_calls if tool_calls else None,
-            thinking="".join(reasoning_parts) if reasoning_parts else None
+            reasoning="".join(reasoning_parts) if reasoning_parts else None
         )
 
     def _normalize_to_message(self, response: Any) -> Message:
@@ -321,7 +327,6 @@ class Agent(BaseModel):
         tools = self.tools
         if self.mcp_servers:
             mcp_tools = asyncio.run(MCPUtil.get_all_function_tools(self.mcp_servers))
-            # tools += MCPUtil.get_all_function_tools(self.mcp_servers)
             tools += mcp_tools
         return tools
 
@@ -354,7 +359,6 @@ class Agent(BaseModel):
             )
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
-        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
         results = []
         for tool_call in tool_calls:
             result = self.run_tool(tool_call)
@@ -429,8 +433,26 @@ class Agent(BaseModel):
 
         num_turns_available = DEFAULT_MAX_TURNS
 
+        if self.reasoning_model:
+            messages_for_reasoning_model = list(self.history.get())
+            reasoning_agent_response = self.reason(messages_for_reasoning_model)
+            usage = (
+                Usage(
+                    requests=1,
+                    input_tokens=reasoning_agent_response.usage.input_tokens,
+                    output_tokens=reasoning_agent_response.usage.output_tokens,
+                    total_tokens=reasoning_agent_response.usage.total_tokens,
+                )
+                if reasoning_agent_response.usage
+                else Usage()
+            )
+            agent_response.usage.add(usage)
+
         while num_turns_available > 0:
+            if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
+                self.tool_choice = 'auto'
             num_turns_available -= 1
+
             messages_for_model = list(self.history.get())
 
             response = self.llm.invoke(input=messages_for_model)
@@ -453,6 +475,7 @@ class Agent(BaseModel):
             message = self._normalize_to_message(response)
             if message.content is None:
                 message.content = ""
+
             self.history.add_message(message)
 
             current_thinking = self._get_thinking(message)
@@ -466,10 +489,11 @@ class Agent(BaseModel):
 
             tool_calls = self._convert_openai_tool_calls(message)
             if tool_calls:
-                tool_results = self.execute_tool_calls(tool_calls=tool_calls)
-                for res_dict in tool_results:
+                tool_results_dicts = self.execute_tool_calls(tool_calls=tool_calls)
+                for res_dict in tool_results_dicts:
                     if res_dict.get("content") is None:
                         res_dict["content"] = "No results found."
+
                     msg_obj = Message(**res_dict)
                     self.history.add_message(msg_obj)
                     agent_response.messages.append(msg_obj)
@@ -483,17 +507,17 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
         agent_response = AgentResponse()
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
+        num_turns_available = DEFAULT_MAX_TURNS
+
         if self.reasoning_model:
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = list(self.history.get())
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
             usage = (
                 Usage(
@@ -507,57 +531,57 @@ class Agent(BaseModel):
             )
             agent_response.usage.add(usage)
 
-        while True:
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+        while num_turns_available > 0:
+            if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
+                self.tool_choice = 'auto'
+            num_turns_available -= 1
+
+            messages_for_model = list(self.history.get())
 
             response = await self.llm.ainvoke(input=messages_for_model)
 
-            usage = (
-                Usage(
+            if response.usage:
+                usage = Usage(
                     requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
                     total_tokens=response.usage.total_tokens,
+                    input_tokens_details=UsageDetails(
+                        reasoning_tokens=getattr(response.usage.input_tokens_details, "reasoning_tokens", 0)
+                    ),
+                    output_tokens_details=UsageDetails(
+                        reasoning_tokens=getattr(response.usage.output_tokens_details, "reasoning_tokens", 0)
+                    )
                 )
-                if response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+                agent_response.usage.add(usage)
 
-            self.history.add_message(response.choices[0].message.model_dump())
+            message = self._normalize_to_message(response)
+            if message.content is None:
+                message.content = ""
 
-            if not response.choices[0].message.tool_calls:
-                agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
+            self.history.add_message(message)
+
+            current_thinking = self._get_thinking(message)
+            if current_thinking:
+                agent_response.thinking = (agent_response.thinking + "\n\n" + current_thinking) if agent_response.thinking else current_thinking
+
+            if not message.tool_calls:
+                agent_response.content = message.content
+                agent_response.messages.append(message)
                 break
 
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
+            tool_calls = self._convert_openai_tool_calls(message)
+            if tool_calls:
+                tool_results_dicts = await self.aexecute_tool_calls(tool_calls=tool_calls)
+                for res_dict in tool_results_dicts:
+                    if res_dict.get("content") is None:
+                        res_dict["content"] = "No results found."
 
-            tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.get_all_tools():
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
-                for m in tool_messages:
-                    self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
-
-        if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
-
-        for output in agent_response.messages:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+                    msg_obj = Message(**res_dict)
+                    self.history.add_message(msg_obj)
+                    agent_response.messages.append(msg_obj)
 
         agent_response.finish_reason = "stop"
-
         return agent_response
 
     @Tracer.stream()
@@ -566,97 +590,122 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
         agent_response = AgentResponse()
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = list(self.history.get())
             reasoning_agent_response = self.reason(messages_for_reasoning_model)
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=reasoning_agent_response.usage.input_tokens,
-                    output_tokens=reasoning_agent_response.usage.output_tokens,
-                    total_tokens=reasoning_agent_response.usage.total_tokens,
-                )
-                if reasoning_agent_response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            if reasoning_agent_response and reasoning_agent_response.usage:
+                agent_response.usage.add(reasoning_agent_response.usage)
 
         num_turns_available = DEFAULT_MAX_TURNS
-
         while num_turns_available > 0:
             num_turns_available -= 1
+            messages_for_model = list(self.history.get())
 
-            messages_for_model = [m.to_dict() for m in self.history.get()]
-
-            message = Message(role="assistant", content="", delta="", tool_calls=[])
+            message = Message(role="assistant", content="", reasoning="", tool_calls=[])
             final_tool_calls = {}
 
             for chunk in self.llm.stream(input=messages_for_model):
-                usage = (
-                    Usage(
-                        requests=1,
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                    )
-                    if chunk.usage
-                    else Usage()
-                )
-                agent_response.usage.add(usage)
-
-                if not chunk.choices or not chunk.choices[0].delta:
-                    continue
-
-                delta = chunk.choices[0].delta
-
                 agent_response.content = None
-                agent_response.thinking = None
+                if hasattr(agent_response, "reasoning"):
+                    agent_response.reasoning = None
 
-                if delta.content:
-                    agent_response.content = delta.content
+                if hasattr(chunk, "choices") and chunk.choices:
+                    delta = chunk.choices[0].delta
 
-                for tool_call in delta.tool_calls or []:
-                    index = tool_call.index
-                    if index not in final_tool_calls:
-                        final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+                    if hasattr(delta, "content") and delta.content:
+                        message.content += delta.content
+                        agent_response.content = delta.content
 
-                yield agent_response
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in final_tool_calls:
+                                final_tool_calls[idx] = tc.model_dump()
+                            else:
+                                final_tool_calls[idx]["function"]["arguments"] += (tc.function.arguments or "")
 
-            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
+                elif hasattr(chunk, "root"):
+                    event = chunk.root
 
-            self.history.add_message(message.model_dump())
+                    if isinstance(event, ResponseEvent):
+                        if event.type in ["response.done", "response.completed"]:
+                            if event.response and event.response.usage:
+                                u = event.response.usage
+                                agent_response.usage.add(Usage(
+                                    requests=1,
+                                    input_tokens=u.input_tokens,
+                                    output_tokens=u.output_tokens,
+                                    total_tokens=u.total_tokens,
+                                    output_tokens_details=UsageDetails(
+                                        reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                                    )
+                                ))
+                        continue
+
+                    elif isinstance(event, (ResponseReasoningDeltaEvent, ResponseReasoningEvent)):
+                        text = getattr(event, "delta", None) or getattr(event, "text", "")
+                        if text:
+                            if message.reasoning is None: message.reasoning = ""
+                            message.reasoning += text
+
+                            if hasattr(self.llm, "show_reasoning") and self.llm.show_reasoning:
+                                if hasattr(agent_response, "reasoning"):
+                                    agent_response.reasoning = text
+                                else:
+                                    agent_response.thinking = text
+
+                    elif isinstance(event, (ResponseContentDeltaEvent, ResponseContentEvent)):
+                        text = getattr(event, "delta", None) or getattr(event, "text", "")
+                        if text:
+                            message.content += text
+                            agent_response.content = text
+
+                    elif isinstance(event, ResponseToolCallEvent):
+                        cid = event.item_id
+                        if cid not in final_tool_calls:
+                            final_tool_calls[cid] = {
+                                "id": cid,
+                                "type": "function",
+                                "function": {"name": getattr(event, "name", ""), "arguments": ""}
+                            }
+
+                        args = getattr(event, "arguments", "")
+                        if args:
+                            final_tool_calls[cid]["function"]["arguments"] += args
+
+                has_reasoning = getattr(agent_response, "reasoning", None) or agent_response.thinking
+                if agent_response.content or final_tool_calls or has_reasoning:
+                    yield agent_response
+
+            message.tool_calls = list(final_tool_calls.values()) if final_tool_calls else None
+
+            message.content = message.content or ""
+
+            self.history.add_message(message)
 
             if not message.tool_calls:
                 agent_response.content = message.content
-                agent_response.messages.append(Message(**message.model_dump()))
+                agent_response.messages.append(message)
                 break
 
-            agent_response.thinking = self._get_thinking(message.tool_calls)
-            if agent_response.thinking:
-                yield agent_response
+            tool_calls = self._convert_openai_tool_calls(message)
+            tool_results = self.execute_tool_calls(tool_calls=tool_calls)
 
-            tool_calls = self._convert_openai_tool_calls(message.tool_calls)
-            if tool_calls and self.get_all_tools():
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                for m in tool_messages:
-                    self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
-
-        if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
+            for res_dict in tool_results:
+                if res_dict.get("content") is None:
+                    res_dict["content"] = "No results found."
+                msg_obj = Message(**res_dict)
+                self.history.add_message(msg_obj)
+                agent_response.messages.append(msg_obj)
 
         agent_response.finish_reason = "stop"
-
         yield agent_response
 
     @Tracer.astream()
@@ -665,95 +714,118 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AsyncIterator[AgentResponse]:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
         agent_response = AgentResponse()
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = list(self.history.get())
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=reasoning_agent_response.usage.input_tokens,
-                    output_tokens=reasoning_agent_response.usage.output_tokens,
-                    total_tokens=reasoning_agent_response.usage.total_tokens,
-                )
-                if reasoning_agent_response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            if reasoning_agent_response and reasoning_agent_response.usage:
+                agent_response.usage.add(reasoning_agent_response.usage)
 
         num_turns_available = DEFAULT_MAX_TURNS
-
         while num_turns_available > 0:
             num_turns_available -= 1
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            messages_for_model = list(self.history.get())
 
-            message = Message(role="assistant", content="", delta="", tool_calls=[])
+            message = Message(role="assistant", content="", reasoning="", tool_calls=[])
             final_tool_calls = {}
 
-            completions = self.llm.astream(input=messages_for_model)
-            async for chunk in completions:
-                usage = (
-                    Usage(
-                        requests=1,
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                    )
-                    if chunk.usage
-                    else Usage()
-                )
-                agent_response.usage.add(usage)
-
-                if not chunk.choices or not chunk.choices[0].delta:
-                    continue
-
-                delta = chunk.choices[0].delta
-
+            async for chunk in self.llm.astream(input=messages_for_model):
                 agent_response.content = None
-                agent_response.thinking = None
+                if hasattr(agent_response, "reasoning"):
+                    agent_response.reasoning = None
 
-                if delta.content:
-                    agent_response.content = delta.content
+                if hasattr(chunk, "choices") and chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, "content") and delta.content:
+                        message.content += delta.content
+                        agent_response.content = delta.content
 
-                for tool_call in delta.tool_calls or []:
-                    index = tool_call.index
-                    if index not in final_tool_calls:
-                        final_tool_calls[index] = tool_call.model_dump()
-                    final_tool_calls[index]["function"]["arguments"] += tool_call.function.arguments
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in final_tool_calls:
+                                final_tool_calls[idx] = tc.model_dump()
+                            else:
+                                final_tool_calls[idx]["function"]["arguments"] += (tc.function.arguments or "")
 
-                yield agent_response
+                elif hasattr(chunk, "root"):
+                    event = chunk.root
 
-            message.tool_calls = [final_tool_calls[k] for k in final_tool_calls.keys()]
+                    if isinstance(event, ResponseEvent):
+                        if event.type in ["response.done", "response.completed"]:
+                            if event.response and event.response.usage:
+                                u = event.response.usage
+                                agent_response.usage.add(Usage(
+                                    requests=1,
+                                    input_tokens=u.input_tokens,
+                                    output_tokens=u.output_tokens,
+                                    total_tokens=u.total_tokens,
+                                    output_tokens_details=UsageDetails(
+                                        reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                                    )
+                                ))
+                        continue
 
-            self.history.add_message(message.model_dump())
+                    elif isinstance(event, (ResponseReasoningDeltaEvent, ResponseReasoningEvent)):
+                        text = getattr(event, "delta", None) or getattr(event, "text", "")
+                        if text:
+                            if message.reasoning is None: message.reasoning = ""
+                            message.reasoning += text
+
+                            if hasattr(self.llm, "show_reasoning") and self.llm.show_reasoning:
+                                if hasattr(agent_response, "reasoning"):
+                                    agent_response.reasoning = text
+                                else:
+                                    agent_response.thinking = text
+
+                    elif isinstance(event, (ResponseContentDeltaEvent, ResponseContentEvent)):
+                        text = getattr(event, "delta", None) or getattr(event, "text", "")
+                        if text:
+                            message.content += text
+                            agent_response.content = text
+
+                    elif isinstance(event, ResponseToolCallEvent):
+                        cid = event.item_id
+                        if cid not in final_tool_calls:
+                            final_tool_calls[cid] = {
+                                "id": cid,
+                                "type": "function",
+                                "function": {"name": getattr(event, "name", ""), "arguments": ""}
+                            }
+
+                        args = getattr(event, "arguments", "")
+                        if args:
+                            final_tool_calls[cid]["function"]["arguments"] += args
+
+                has_reasoning = getattr(agent_response, "reasoning", None) or agent_response.thinking
+                if agent_response.content or final_tool_calls or has_reasoning:
+                    yield agent_response
+
+            message.tool_calls = list(final_tool_calls.values()) if final_tool_calls else None
+            message.content = message.content or ""
+
+            self.history.add_message(message)
 
             if not message.tool_calls:
                 agent_response.content = message.content
-                agent_response.messages.append(Message(**message.model_dump()))
+                agent_response.messages.append(message)
                 break
 
-            agent_response.thinking = self._get_thinking(message.tool_calls)
-            if agent_response.thinking:
-                yield agent_response
+            tool_calls = self._convert_openai_tool_calls(message)
+            tool_results = await self.aexecute_tool_calls(tool_calls=tool_calls)
 
-            tool_calls = self._convert_openai_tool_calls(message.tool_calls)
-            if tool_calls and self.get_all_tools():
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
-                for m in tool_messages:
-                    self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
-
-        if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
+            for res_dict in tool_results:
+                if res_dict.get("content") is None:
+                    res_dict["content"] = "No results found."
+                msg_obj = Message(**res_dict)
+                self.history.add_message(msg_obj)
+                agent_response.messages.append(msg_obj)
 
         agent_response.finish_reason = "stop"
-
         yield agent_response

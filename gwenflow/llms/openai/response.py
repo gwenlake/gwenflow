@@ -14,6 +14,7 @@ from gwenflow.types.responses import (
     ResponseContentDeltaEvent,
     ResponseContentEvent,
     ResponseEvent,
+    ResponseEventRoot,
     ResponseReasoningDeltaEvent,
     ResponseReasoningEvent,
     ResponseToolCallEvent,
@@ -136,7 +137,7 @@ class ResponseOpenAI(ChatBase):
         return message.to_openai_chat_completion()
 
     def _prepare_input_list(self, messages: List[Message]) -> List[Dict[str, Any]]:
-        """Helper to flatten the message list for the Responses API. Help also for handling multiple tool call."""
+        """Helper to flatten the message list for the Responses API. Help also for handling multiple tool calls."""
         api_input_list = []
         for m in messages:
             formatted = self._format_message(m)
@@ -215,10 +216,9 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEvent]:
+    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-
             api_input_list = self._prepare_input_list(messages_for_model)
 
             client = self.get_client()
@@ -230,34 +230,32 @@ class ResponseOpenAI(ChatBase):
                 **self._model_params,
             ) as raw_stream:
                 for raw_event in raw_stream:
-                    try:
-                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
-                        event = event_obj.root
+                    event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
+                    event = event_obj.root
 
-                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
-                            if self.show_reasoning:
-                                yield event_obj
+                    if isinstance(event, ResponseEvent):
+                        if event.type == "response.created":
 
-                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
+                            yield event_obj
+                    elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                        if self.show_reasoning:
                             yield event_obj
 
-                        elif isinstance(event, ResponseToolCallEvent):
-                            yield event_obj
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                        yield event_obj
 
-                        if getattr(event, "type", None) == "response.done":
+                    elif isinstance(event, ResponseEvent):
+                        if event.type == "response.done" or event.type == "response.completed":
                             self._handle_max_output_limit_issue(event.response)
+                            yield event_obj
                             break
-
-                    except Exception:
-                        continue
 
         except Exception as e:
             raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
 
-    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEvent]:
+    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
-
             api_input_list = self._prepare_input_list(messages_for_model)
 
             client = self.get_async_client()
@@ -269,25 +267,25 @@ class ResponseOpenAI(ChatBase):
                 **self._model_params,
                 ) as raw_stream:
                 async for raw_event in raw_stream:
-                    try:
-                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
-                        event = event_obj.root
+                    event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
+                    event = event_obj.root
 
-                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
-                            if self.show_reasoning:
-                                yield event_obj
+                    if isinstance(event, ResponseEvent):
+                        if event.type == "response.created":
 
-                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
+                            yield event_obj
+                    elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                        if self.show_reasoning:
                             yield event_obj
 
-                        elif isinstance(event, ResponseToolCallEvent):
-                            yield event_obj
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                        yield event_obj
 
-                        if getattr(event, "type", None) == "response.done":
+                    elif isinstance(event, ResponseEvent):
+                        if event.type == "response.done" or event.type == "response.completed":
                             self._handle_max_output_limit_issue(event.response)
+                            yield event_obj
                             break
 
-                    except Exception:
-                        continue
         except Exception as e:
             raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e

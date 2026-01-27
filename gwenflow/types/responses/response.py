@@ -68,7 +68,7 @@ class Response(BaseModel):
     model: str
     status: Literal['in_progress', 'completed', 'incomplete']
     incomplete_details: Optional[str] = None
-    usage: Usage
+    usage: Optional[Usage] = None
     output: List[Union[ResponseReasoningItem, ResponseContentItem, ResponseToolCallItem]] = Field(default_factory=list)
     reasoning: Optional[ReasoningItem] = None
     text_format: Optional[Any] = None

@@ -1,17 +1,27 @@
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union, Dict, Any
 
 from pydantic import Field, RootModel, model_validator
 
 from gwenflow.types.responses.base import Logprob, ResponseBase
+from gwenflow.types.responses.response import Response
 
+
+class ResponseEvent(ResponseBase):
+    type: Literal[
+        'response.created',
+        'response.in_progress',
+        'response.done',
+        'response.completed'
+    ]
+    response: Response
 
 class ResponseOutputItemEvent(ResponseBase):
     type: Literal[
         'response.output_item.added',
         'response.output_item.done'
     ]
-    item: str
-    status: Literal['created', 'done']
+    item: Dict[str, Any]
+    status: Optional[str] = None
 
 
 class ResponseReasoningEvent(ResponseBase):
@@ -62,12 +72,14 @@ class ResponseContentDeltaEvent(ResponseBase):
 
 
 AnyResponseEvent = Union[
+        ResponseOutputItemEvent,
         ResponseReasoningEvent,
         ResponseReasoningDeltaEvent,
         ResponseContentEvent,
         ResponseContentDeltaEvent,
         ResponseToolCallEvent,
+        ResponseEvent
     ]
 
-class ResponseEvent(RootModel):
+class ResponseEventRoot(RootModel):
     root: AnyResponseEvent
