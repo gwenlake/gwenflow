@@ -29,8 +29,10 @@ class ResponseReasoningItem(BaseModel):
 
 class ResponseToolCallItem(BaseModel):
     id: str
+    type: Literal['function_call']
+    name: Optional[str] = None
+    arguments: Optional[Union[str, dict]] = None
     status: Optional[Literal['in_progress', 'searching', 'completed']] = None
-    type: Optional[str] = None
 
 
 class ResponseContentItem(BaseModel):
