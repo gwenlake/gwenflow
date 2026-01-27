@@ -146,11 +146,11 @@ class Agent(BaseModel):
 
             elif item.type == "function_call":
                 tool_calls.append({
-                    "id": item.call_id,
+                    "id": getattr(item, "id", None) or getattr(item, "call_id", None),
                     "type": "function",
                     "function": {
-                        "name": item.name,
-                        "arguments": item.arguments
+                        "name": getattr(item, "name", None),
+                        "arguments": getattr(item, "arguments", "{}")
                     }
                 })
 
@@ -328,41 +328,30 @@ class Agent(BaseModel):
     @Tracer.tool()
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
-
         tool_name = tool_call.function
-        if hasattr(tool_name, 'name'):
-            tool_name = tool_name.name
 
         if tool_name not in tool_map:
-            logger.error(f"Tool {tool_name} does not exist")
+            return Message(
+                role="tool", 
+                tool_call_id=tool_call.id, 
+                content=f"Error: Tool {tool_name} not found."
+            )
+
+        try:
+            tool = tool_map[tool_name]
+            result = tool.run(**tool_call.arguments)
             return Message(
                 role="tool",
                 tool_call_id=tool_call.id,
                 tool_name=tool_name,
-                content=f"Tool {tool_name} does not exist",
+                content=str(result) if result else "No results found."
             )
-
-        try:
-            logger.debug(f"Tool call: {tool_name}({tool_call.arguments})")
-            tool = tool_map[tool_name]
-            tool_response = tool.run(**tool_call.arguments)
-            if tool_response:
-                return Message(
-                    role="tool",
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_name,
-                    content=str(tool_response),
-                )
-
         except Exception as e:
-            logger.error(f"Error executing tool '{tool_name}': {e}")
-
-        return Message(
-            role="tool",
-            tool_call_id=tool_call.id,
-            tool_name=tool_name,
-            content=f"Error executing tool '{tool_name}'",
-        )
+            return Message(
+                role="tool",
+                tool_call_id=tool_call.id,
+                content=f"Error during tool execution: {str(e)}"
+            )
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
@@ -431,75 +420,44 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
-
         agent_response = AgentResponse()
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
 
-        if self.reasoning_model:
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
-            reasoning_agent_response = self.reason(messages_for_reasoning_model)
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=reasoning_agent_response.usage.input_tokens,
-                    output_tokens=reasoning_agent_response.usage.output_tokens,
-                    total_tokens=reasoning_agent_response.usage.total_tokens,
-                )
-                if reasoning_agent_response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
-
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-            if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
-                self.tool_choice = 'auto'
-
             num_turns_available -= 1
-
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            messages_for_model = list(self.history.get())
 
             response = self.llm.invoke(input=messages_for_model)
 
-            usage = (
-                Usage(
+            if response.usage:
+                usage = Usage(
                     requests=1,
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
                     total_tokens=response.usage.total_tokens,
                     input_tokens_details=UsageDetails(
-                        cached_tokens=getattr(response.usage.input_tokens_details, "cached_tokens", 0),
                         reasoning_tokens=getattr(response.usage.input_tokens_details, "reasoning_tokens", 0)
                     ),
                     output_tokens_details=UsageDetails(
-                        cached_tokens=getattr(response.usage.output_tokens_details, "cached_tokens", 0),
                         reasoning_tokens=getattr(response.usage.output_tokens_details, "reasoning_tokens", 0)
                     )
                 )
-                if response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+                agent_response.usage.add(usage)
 
-            if hasattr(response, "choices"):
-                message = Message(**response.choices[0].message.model_dump())
-            else:
-                message = self._convert_response_to_message(response)
-
+            message = self._normalize_to_message(response)
+            if message.content is None:
+                message.content = ""
             self.history.add_message(message)
 
             current_thinking = self._get_thinking(message)
             if current_thinking:
-                if agent_response.thinking:
-                    agent_response.thinking += f"\n\n{current_thinking}"
-                else:
-                    agent_response.thinking = current_thinking
+                agent_response.thinking = (agent_response.thinking + "\n\n" + current_thinking) if agent_response.thinking else current_thinking
 
             if not message.tool_calls:
                 agent_response.content = message.content
@@ -507,18 +465,14 @@ class Agent(BaseModel):
                 break
 
             tool_calls = self._convert_openai_tool_calls(message)
-            if tool_calls and self.get_all_tools():
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
-                for m in tool_messages:
-                    msg_obj = Message(**m) if isinstance(m, dict) else m
+            if tool_calls:
+                tool_results = self.execute_tool_calls(tool_calls=tool_calls)
+                for res_dict in tool_results:
+                    if res_dict.get("content") is None:
+                        res_dict["content"] = "No results found."
+                    msg_obj = Message(**res_dict)
                     self.history.add_message(msg_obj)
                     agent_response.messages.append(msg_obj)
-
-        if self.response_model and agent_response.content:
-            try:
-                agent_response.content = json.loads(agent_response.content)
-            except Exception:
-                pass
 
         agent_response.finish_reason = "stop"
         return agent_response
