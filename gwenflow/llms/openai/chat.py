@@ -4,11 +4,8 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from pydantic import Field
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
 from gwenflow.utils import extract_json_str
 
@@ -41,17 +38,6 @@ class ChatOpenAI(ChatBase):
     base_url: Optional[str] = None
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
-
-    # telemetry
-    service_name: str = Field(default="gwenflow-service")
-    provider: Optional[str] = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        telemetry_config = TelemetryBase(service_name=self.service_name)
-        self.provider = telemetry_config.setup_telemetry()
-
-        openai_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
