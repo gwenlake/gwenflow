@@ -222,20 +222,19 @@ class ResponseOpenAI(ChatBase):
 
                     if isinstance(event, ResponseEvent):
                         if event.type == "response.created":
-
                             yield event_obj
+
+                        elif event.type == "response.completed":
+                            self._handle_max_output_limit_issue(event.response)
+                            yield event_obj
+                            break
+
                     elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
                         if self.show_reasoning:
                             yield event_obj
 
                     elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
                         yield event_obj
-
-                    elif isinstance(event, ResponseEvent):
-                        if event.type == "response.done" or event.type == "response.completed":
-                            self._handle_max_output_limit_issue(event.response)
-                            yield event_obj
-                            break
 
         except Exception as e:
             raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
@@ -259,20 +258,19 @@ class ResponseOpenAI(ChatBase):
 
                     if isinstance(event, ResponseEvent):
                         if event.type == "response.created":
-
                             yield event_obj
+
+                        elif event.type == "response.completed":
+                            self._handle_max_output_limit_issue(event.response)
+                            yield event_obj
+                            break
+
                     elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
                         if self.show_reasoning:
                             yield event_obj
 
                     elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
                         yield event_obj
-
-                    elif isinstance(event, ResponseEvent):
-                        if event.type == "response.done" or event.type == "response.completed":
-                            self._handle_max_output_limit_issue(event.response)
-                            yield event_obj
-                            break
 
         except Exception as e:
             raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e

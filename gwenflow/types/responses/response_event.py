@@ -10,7 +10,6 @@ class ResponseEvent(ResponseBase):
     type: Literal[
         'response.created',
         'response.in_progress',
-        'response.done',
         'response.completed'
     ]
     response: Response
