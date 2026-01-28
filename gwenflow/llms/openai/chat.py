@@ -134,7 +134,7 @@ class ChatOpenAI(ChatBase):
         """Format a message into the format expected by OpenAI."""
         return message.to_openai_chat_completion()
 
-    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = self.get_client().chat.completions.create(
@@ -152,7 +152,7 @@ class ChatOpenAI(ChatBase):
 
         return completion
 
-    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
+    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ChatCompletion:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
@@ -170,7 +170,7 @@ class ChatOpenAI(ChatBase):
 
         return completion
 
-    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
+    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ChatCompletionChunk]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             yield from self.get_client().chat.completions.create(
@@ -183,7 +183,7 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
+    async def _astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Any:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
