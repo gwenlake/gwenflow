@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
-from gwenflow.telemetry.decorator import Tracer
+
 from pydantic import BaseModel, ConfigDict, Field
 
+from gwenflow.telemetry.decorator import Tracer
 from gwenflow.tools import BaseTool
 
 LLM_MODEL_PARAMETERS = {
@@ -109,18 +110,17 @@ class ChatBase(BaseModel, ABC):
 
     @Tracer.llm(name="LLM Invoke")
     def invoke(self, *args, **kwargs) -> Any:
-        """Méthode publique appelée par l'utilisateur. Active la trace et délègue."""
         return self._invoke(*args, **kwargs)
 
     @Tracer.llm(name="LLM Async Invoke")
     async def ainvoke(self, *args, **kwargs) -> Any:
         return await self._ainvoke(*args, **kwargs)
 
-    @Tracer.stream(name="LLM Stream")
+    @Tracer.llm(name="LLM Stream")
     def stream(self, *args, **kwargs) -> Any:
         yield from self._stream(*args, **kwargs)
 
-    @Tracer.astream(name="LLM Async Stream")
+    @Tracer.llm(name="LLM Async Stream")
     async def astream(self, *args, **kwargs) -> Any:
         async for chunk in self._astream(*args, **kwargs):
             yield chunk
