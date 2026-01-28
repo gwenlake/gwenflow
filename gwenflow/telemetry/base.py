@@ -1,3 +1,4 @@
+import atexit
 import os
 from typing import Dict
 
@@ -35,6 +36,7 @@ class TelemetryBase(BaseModel):
             processor = BatchSpanProcessor(exporter)
             provider.add_span_processor(processor)
             trace.set_tracer_provider(provider)
+            atexit.register(provider.shutdown)
 
         self._tracer = trace.get_tracer(self.service_name)
 
