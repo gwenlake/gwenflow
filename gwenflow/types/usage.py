@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field
 
 
-class UsageDetails(BaseModel):
+class UsageInputDetails(BaseModel):
     cached_tokens: int = 0
 
-    def add(self, other: "UsageDetails") -> None:
+    def add(self, other: "UsageInputDetails") -> None:
         self.cached_tokens += other.cached_tokens
-class UsageReasoning(UsageDetails):
+class UsageReasoning(BaseModel):
     reasoning_tokens: int = 0
 
     def add(self, other: "UsageReasoning") -> None:
@@ -15,11 +15,11 @@ class UsageReasoning(UsageDetails):
 class Usage(BaseModel):
     requests: int = 0
     input_tokens: int = 0
+    input_tokens_details: UsageInputDetails = Field(default_factory=UsageInputDetails)
     output_tokens: int = 0
+    output_tokens_details: UsageReasoning = Field(default_factory=UsageReasoning)
     total_tokens: int = 0
 
-    input_tokens_details: UsageDetails = Field(default_factory=UsageDetails)
-    output_tokens_details: UsageReasoning = Field(default_factory=UsageReasoning)
 
     def add(self, other: "Usage") -> None:
         self.requests += other.requests if other.requests else 0
