@@ -31,10 +31,10 @@ from gwenflow.types import (
 )
 from gwenflow.types.responses.response_event import (
     ResponseContentDeltaEvent,
-    ResponseReasoningDeltaEvent,
-    ResponseReasoningEvent,
     ResponseContentEvent,
     ResponseEvent,
+    ResponseReasoningDeltaEvent,
+    ResponseReasoningEvent,
     ResponseToolCallEvent,
 )
 
@@ -83,15 +83,6 @@ class Agent(BaseModel):
 
     team: List["Agent"] | None = None
     """Team of agents."""
-
-    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    """Session ID for the agent."""
-
-    parent_flow_id: Optional[str] = None
-    """Parent flow ID for topology tracking."""
-
-    depends_on: List[str] = Field(default_factory=list)
-    """Dependencies on other agents."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -225,7 +216,6 @@ class Agent(BaseModel):
 
         return prompt.strip()
 
-    @Tracer.agent(name="ReasoningStep")
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -249,12 +239,6 @@ class Agent(BaseModel):
             tools=self.tools,
         )
 
-        from opentelemetry import trace
-        current_span = trace.get_current_span()
-        current_id = current_span.get_span_context().span_id
-
-        reasoning_agent.parent_flow_id = hex(current_id)
-        reasoning_agent.depends_on = [self.name]
         response = reasoning_agent.run(input)
 
         # only keep text outside <think>
@@ -274,7 +258,6 @@ class Agent(BaseModel):
 
         return response
 
-    @Tracer.agent(name="ReasoningStep")
     async def areason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -297,11 +280,6 @@ class Agent(BaseModel):
             llm=self.reasoning_model,
             tools=self.tools,
         )
-
-        from opentelemetry import trace
-        current_id = trace.get_current_span().get_span_context().span_id
-        reasoning_agent.parent_flow_id = hex(current_id)
-        reasoning_agent.depends_on = [self.name]
 
         response = await reasoning_agent.arun(input)
 

@@ -3,11 +3,8 @@ import os
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
 from openai import AsyncOpenAI, OpenAI
-from pydantic import Field
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
 from gwenflow.types.responses import (
     Response,
@@ -49,16 +46,6 @@ class ResponseOpenAI(ChatBase):
     base_url: Optional[str] = None
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
-
-    # telemetry #TODO move this elsewhere
-    service_name: str = Field(default="gwenflow-service")
-    provider: Optional[str] = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        telemetry_config = TelemetryBase(service_name=self.service_name)
-        self.provider = telemetry_config.setup_telemetry()
-        openai_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
@@ -156,7 +143,7 @@ class ResponseOpenAI(ChatBase):
             else:
                 print("Ran out of tokens during generating response")
 
-    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
@@ -186,7 +173,7 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
@@ -216,7 +203,7 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEventRoot]:
+    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             api_input_list = self._prepare_input_list(messages_for_model)
@@ -253,7 +240,7 @@ class ResponseOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
 
-    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEventRoot]:
+    async def _astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             api_input_list = self._prepare_input_list(messages_for_model)
