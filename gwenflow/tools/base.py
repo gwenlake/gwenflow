@@ -31,7 +31,7 @@ class BaseTool(BaseModel, ABC):
             self.params_json_schema = _schema["function"]["parameters"]
         return self
 
-    def to_openai(self) -> dict:
+    def to_openai_chat_completion(self) -> dict:
         return {
             "type": "function",
             "function": {
@@ -41,7 +41,7 @@ class BaseTool(BaseModel, ABC):
             },
         }
 
-    def to_openai_new(self) -> dict:
+    def to_openai_response(self) -> dict:
         return {
             "type": "function",
             "name": self.name,

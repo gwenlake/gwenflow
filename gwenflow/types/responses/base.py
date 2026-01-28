@@ -12,5 +12,5 @@ class Logprob(BaseModel): # TODO move this later
     bytes: Optional[List[int]] = None
 
 class ReasoningItem(BaseModel): # TODO move this later
-    effort: Literal['low', 'medium', 'high']
-    summary: Literal['auto', 'concise', 'detailed']
+    effort: Optional[Literal['low', 'medium', 'high', 'none']] = None
+    summary: Optional[Literal['auto', 'concise', 'detailed', 'none']] = None

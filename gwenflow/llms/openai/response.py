@@ -3,17 +3,15 @@ import os
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
 from openai import AsyncOpenAI, OpenAI
-from pydantic import Field
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
 from gwenflow.types.responses import (
     Response,
     ResponseContentDeltaEvent,
     ResponseContentEvent,
     ResponseEvent,
+    ResponseEventRoot,
     ResponseReasoningDeltaEvent,
     ResponseReasoningEvent,
     ResponseToolCallEvent,
@@ -32,7 +30,7 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None # TODO change later to available output type
+    text_format: Optional[Any] = None # TODO change "Any" later to available output type
     top_logprobs: Optional[int] = None
     reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
     reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
@@ -48,17 +46,6 @@ class ResponseOpenAI(ChatBase):
     base_url: Optional[str] = None
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
-
-    # telemetry #TODO move this elsewhere
-    service_name: str = Field(default="gwenflow-service")
-    provider: Optional[str] = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        telemetry_config = TelemetryBase(service_name=self.service_name)
-        self.provider = telemetry_config.setup_telemetry()
-
-        openai_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
@@ -80,14 +67,10 @@ class ResponseOpenAI(ChatBase):
             "timeout": self.timeout,
             "max_retries": self.max_retries,
         }
-
-        client_params = {k: v for k, v in client_params.items() if v is not None}
-
-        return client_params
+        return {k: v for k, v in client_params.items() if v is not None}
 
     @property
     def _model_params(self) -> Dict[str, Any]:
-
         model_params = {
             "background": self.background,
             "max_output_tokens": self.max_output_tokens,
@@ -95,7 +78,7 @@ class ResponseOpenAI(ChatBase):
             "prompt_cache_key": self.prompt_cache_key,
             "prompt_cache_retention": self.prompt_cache_retention,
             "temperature": self.temperature,
-            "texte.format": self.text_format,
+            "text.format": self.text_format,
             "top_logprobs": self.top_logprobs,
             "top_p": self.top_p,
         }
@@ -106,12 +89,10 @@ class ResponseOpenAI(ChatBase):
             }
 
         if self.tools and self.tool_type == "base":
-            model_params["tools"] = [tool.to_openai_new() for tool in self.tools]
+            model_params["tools"] = [tool.to_openai_response() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
-        model_params = {k: v for k, v in model_params.items() if v is not None}
-
-        return model_params
+        return {k: v for k, v in model_params.items() if v is not None}
 
     def get_client(self) -> OpenAI:
         if self.client:
@@ -128,28 +109,49 @@ class ResponseOpenAI(ChatBase):
         return self.async_client
 
     def _parse_response(self, response: str, text_format: dict = None) -> str:
-        """Process the response."""
         if text_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)
-                # text_response = dirtyjson.loads(json_str)
                 text_response = json.loads(json_str)
                 return text_response
             except Exception:
                 pass
-
         return response
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
-        """Format a message into the format expected by OpenAI."""
-        return message.to_openai()
+    def _format_message(self, message: Message) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        if hasattr(message, "to_openai_response"):
+            return message.to_openai_response()
+        return message.to_openai_chat_completion()
 
-    def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    def _prepare_input_list(self, messages: List[Message]) -> List[Dict[str, Any]]:
+        """Helper to flatten the message list for the Responses API. Help also for handling multiple tool calls."""
+        api_input_list = []
+        for m in messages:
+            formatted = self._format_message(m)
+            if isinstance(formatted, list):
+                api_input_list.extend(formatted)
+            else:
+                api_input_list.append(formatted)
+        return api_input_list
+
+    def _handle_max_output_limit_issue(self, response: Response):
+        reason = getattr(response.incomplete_details, "reason", None)
+        if response.status == "incomplete" and reason == "max_output_tokens":
+            print("Ran out of tokens")
+            if response.get_text():
+                print("Partial output:", response.get_text())
+            else:
+                print("Ran out of tokens during generating response")
+
+    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
+
+            api_input_list = self._prepare_input_list(messages_for_model)
+
             raw_response = self.get_client().responses.create(
                 model=self.model,
-                input=[self._format_message(m) for m in messages_for_model],
+                input=api_input_list,
                 **self._model_params,
             )
 
@@ -157,22 +159,29 @@ class ResponseOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        if self.text_format:
-            content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
-            for item in response.output:
-                if item.type == "message" and item.content:
-                    item.content[0].text = content
+        self._handle_max_output_limit_issue(response)
+
+        if not self.text_format:
+            return response
+
+        content_raw = response.get_text()
+        parsed_content = self._parse_response(content_raw, text_format=self.text_format)
+
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                item.content = parsed_content
+
         return response
 
-    async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
+
+            api_input_list = self._prepare_input_list(messages_for_model)
+
             raw_response = await self.get_async_client().responses.create(
                 model=self.model,
-                input=[self._format_message(m) for m in messages_for_model],
+                input=api_input_list,
                 **self._model_params,
             )
 
@@ -180,82 +189,88 @@ class ResponseOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        if self.text_format:
-            content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
-            for item in response.output:
-                if item.type == "message" and item.content:
-                    item.content[0].text = content
+        self._handle_max_output_limit_issue(response)
+
+        if not self.text_format:
+            return response
+
+        content_raw = response.get_text()
+        parsed_content = self._parse_response(content_raw, text_format=self.text_format)
+
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                item.content = parsed_content
+
         return response
 
-    def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEvent]:
+    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
+            api_input_list = self._prepare_input_list(messages_for_model)
+
             client = self.get_client()
 
             with client.responses.create(
                 model=self.model,
-                input=[self._format_message(m) for m in messages_for_model],
+                input=api_input_list,
                 stream=True,
                 **self._model_params,
             ) as raw_stream:
                 for raw_event in raw_stream:
-                    try:
-                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
-                        event = event_obj.root
+                    event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
+                    event = event_obj.root
 
-                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
-                            if self.show_reasoning:
-                                yield event_obj
-
-                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
+                    if isinstance(event, ResponseEvent):
+                        if event.type == "response.created":
                             yield event_obj
 
-                        elif isinstance(event, ResponseToolCallEvent):
+                        elif event.type == "response.completed":
+                            self._handle_max_output_limit_issue(event.response)
                             yield event_obj
-
-                        if getattr(event, "type", None) == "response.done":
                             break
 
-                    except Exception:
-                        continue
+                    elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                        if self.show_reasoning:
+                            yield event_obj
+
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                        yield event_obj
 
         except Exception as e:
-            raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
+            raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e
 
-    async def astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEvent]:
+    async def _astream(self, input: Union[str, List[Message]]) -> AsyncIterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
+            api_input_list = self._prepare_input_list(messages_for_model)
 
             client = self.get_async_client()
 
             async with await client.responses.create(
                 model=self.model,
-                input=[self._format_message(m) for m in messages_for_model],
+                input=api_input_list,
                 stream=True,
                 **self._model_params,
                 ) as raw_stream:
                 async for raw_event in raw_stream:
-                    try:
-                        event_obj = ResponseEvent.model_validate(raw_event.model_dump())
-                        event = event_obj.root
+                    event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
+                    event = event_obj.root
 
-                        if isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
-                            if self.show_reasoning:
-                                yield event_obj
-
-                        elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
+                    if isinstance(event, ResponseEvent):
+                        if event.type == "response.created":
                             yield event_obj
 
-                        elif isinstance(event, ResponseToolCallEvent):
+                        elif event.type == "response.completed":
+                            self._handle_max_output_limit_issue(event.response)
                             yield event_obj
-
-                        if getattr(event, "type", None) == "response.done":
                             break
 
-                    except Exception:
-                        continue
+                    elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
+                        if self.show_reasoning:
+                            yield event_obj
+
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                        yield event_obj
+
         except Exception as e:
-            raise RuntimeError(f"Erreur lors du stream OpenAI : {e}") from e
+            raise RuntimeError(f"Error OpenAI during OpenAI stream : {e}") from e

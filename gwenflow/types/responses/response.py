@@ -2,7 +2,6 @@ from typing import Any, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-from gwenflow.tools import BaseTool
 from gwenflow.types.responses import ReasoningItem
 from gwenflow.types.usage import Usage
 
@@ -17,14 +16,23 @@ class ResponseReasoningItem(BaseModel):
     def extract_summary_text(cls, v: Any) -> Any:
         if v is None:
             return None
-        item = v[0]
-        return item.get("text")
+        if isinstance(v, list) and len(v) > 0:
+            item = v[0]
+            if isinstance(item, dict):
+                return item.get("text")
+            return getattr(item, "text", None)
+
+        if isinstance(v, str):
+            return v
+        return None
 
 
 class ResponseToolCallItem(BaseModel):
     id: str
+    type: Literal['function_call']
+    name: Optional[str] = None
+    arguments: Optional[Union[str, dict]] = None
     status: Optional[Literal['in_progress', 'searching', 'completed']] = None
-    type: Optional[str] = None
 
 
 class ResponseContentItem(BaseModel):
@@ -58,8 +66,9 @@ class Response(BaseModel):
     completed_at: Optional[float] = None
     object: Literal["response"]
     model: str
-    status: Literal['in_progress', 'completed']
-    usage: Usage
+    status: Literal['in_progress', 'completed', 'incomplete']
+    incomplete_details: Optional[str] = None
+    usage: Optional[Usage] = None
     output: List[Union[ResponseReasoningItem, ResponseContentItem, ResponseToolCallItem]] = Field(default_factory=list)
     reasoning: Optional[ReasoningItem] = None
     text_format: Optional[Any] = None

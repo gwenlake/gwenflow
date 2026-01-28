@@ -108,7 +108,7 @@ class ReactMessageParser(BaseModel):
 class ReactAgent(Agent):
     def _prepend_react_prompt(self, messages: List[Message]) -> List[Message]:
         tool_names = ",".join(t.name for t in self.tools)
-        tool_descs = [t.to_openai()["function"] for t in self.tools]
+        tool_descs = [t.to_openai_chat_completion()["function"] for t in self.tools]
         prompt_tools = PROMPT_TOOLS.format(tools=json.dumps(tool_descs, indent=2, ensure_ascii=False))
 
         messages[-1].content = (

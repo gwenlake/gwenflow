@@ -1,16 +1,18 @@
 import uuid
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union, Dict
 
 from pydantic import BaseModel, Field, field_validator
 
-from gwenflow.types import Message
+from gwenflow.types import Message, Response
 from gwenflow.utils.tokens import num_tokens_from_string
 
+
+AnyMessage = Union[Message, Response, Dict[str, Any]]
 
 class BaseChatMemory(BaseModel):
     id: Optional[str] = Field(None, validate_default=True)
     system_prompt: Optional[str] = None
-    messages: list[Message] = []
+    messages: AnyMessage = []
     tokenizer_fn: Optional[Callable] = Field(None, validate_default=True)
 
     @field_validator("id", mode="before")
@@ -55,8 +57,12 @@ class BaseChatMemory(BaseModel):
         for message in messages:
             self.add_message(message)
 
-    def _token_count_for_messages(self, messages: List[Message]) -> int:
-        if len(messages) <= 0:
-            return 0
-        text = " ".join(str(m.content) for m in messages)
-        return self.tokenizer_fn(text)
+    def _token_count_for_messages(self, messages: List[AnyMessage]) -> int:
+        total = 0
+        for m in messages:
+            if hasattr(m, "usage") and m.usage:
+                total += m.usage.total_tokens
+            else:
+                content = getattr(m, "content", str(m))
+                total += self.tokenizer_fn(str(content))
+        return total
