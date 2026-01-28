@@ -27,6 +27,7 @@ class DecoratorTracer:
         return trace.get_tracer(self.tracer_name)
 
     def _get_input_value(self, func, args, kwargs) -> str:
+        """Fonction to capture the user's input."""
         try:
             sig = inspect.signature(func)
             bound_args = sig.bind(*args, **kwargs)
@@ -46,8 +47,46 @@ class DecoratorTracer:
         except Exception:
             return "Error capturing inputs"
 
+    def _capture_usage(self, span, result):
+        """Helper to extract usage for the telemetry endpoint."""
+        if not hasattr(result, "usage") or not result.usage:
+            return
+
+        usage = result.usage
+
+        input_tokens = getattr(usage, "input_tokens", None) 
+        if input_tokens is None:
+            input_tokens = getattr(usage, "prompt_tokens", None)
+
+        if input_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, int(input_tokens))
+
+        output_tokens = getattr(usage, "output_tokens", None)
+        if output_tokens is None:
+            output_tokens = getattr(usage, "completion_tokens", None)
+
+        if output_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, int(output_tokens))
+
+        total_tokens = getattr(usage, "total_tokens", None)
+        if total_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, int(total_tokens))
+
+        input_details = getattr(usage, "input_tokens_details", None)
+        if input_details:
+            cached = getattr(input_details, "cached_tokens", None)
+            if cached is not None:
+                span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_INPUT, int(cached))
+
+        output_details = getattr(usage, "output_tokens_details", None)
+        if output_details is None:
+            output_details = getattr(usage, "completion_tokens_details", None)
+        if output_details:
+            reasoning = getattr(output_details, "reasoning_tokens", None)
+            if reasoning is not None:
+                span.set_attribute(SpanAttributes.LLM_COST_COMPLETION_DETAILS_REASONING, int(reasoning))
+
     def _inject_topology(self, span, instance):
-        """Injecte les liens de parenté si l'objet les possède."""
         if hasattr(instance, "parent_flow_id") and instance.parent_flow_id:
             span.set_attribute("gwenflow.topology.parent_id", str(instance.parent_flow_id))
         if hasattr(instance, "depends_on") and instance.depends_on:
@@ -73,6 +112,7 @@ class DecoratorTracer:
 
                     try:
                         result = func(self_inst, *args, **kwargs)
+                        self._capture_usage(span, result)
                         span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(result))
                         span.set_status(StatusCode.OK)
                         return result
