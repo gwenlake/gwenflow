@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import Field, RootModel, model_validator
+from pydantic import Field, RootModel, model_validator, BaseModel
 
 from gwenflow.types.responses.base import Logprob, ResponseBase
 from gwenflow.types.responses.response import Response
@@ -14,12 +14,18 @@ class ResponseEvent(ResponseBase):
     ]
     response: Response
 
+class ResponseOutputItem(BaseModel):
+    id: str
+    type: str
+    name: Optional[str] = None
+    arguments: Optional[str] = None
+
 class ResponseOutputItemEvent(ResponseBase):
     type: Literal[
         'response.output_item.added',
         'response.output_item.done'
     ]
-    item: Dict[str, Any]
+    item: ResponseOutputItem
     status: Optional[str] = None
 
 
@@ -42,6 +48,9 @@ class ResponseReasoningDeltaEvent(ResponseBase):
 class ResponseToolCallEvent(ResponseBase):
     type: str
     item_id: str
+    name: Optional[str] = None
+    arguments: Optional[str] = None
+    delta: Optional[str] = None
     status: Optional[str] = None
 
     @model_validator(mode="after")
