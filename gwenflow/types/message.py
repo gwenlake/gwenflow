@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+import json
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -90,6 +91,46 @@ class Message(BaseModel):
             raise ValueError(f"{value} must be one of {','.join([USER, ASSISTANT, SYSTEM, TOOL])}")
         return value
 
+    @classmethod
+    def extract_event_from_response_output(cls, response: Any, tool_executor: Callable) -> List["Message"]:
+        messages = []
+
+        global_reasoning = getattr(response.reasoning, "summary", None) if hasattr(response, "reasoning") else None
+
+        accumulated_reasoning = []
+
+        for item in response.output:
+            if item.type == "reasoning":
+                text = getattr(item, "summary", None)
+                if text and text != "detailed" and text != "auto":
+                    accumulated_reasoning.append(text)
+        if accumulated_reasoning:
+            global_reasoning = "\n".join(accumulated_reasoning)
+
+        for item in response.output:
+            if item.type == "function_call":
+                tool_call = {
+                    "id": item.id,
+                    "function": {"name": item.name, "arguments": item.arguments}
+                }
+                execution_result = tool_executor(item.name, item.arguments)
+
+                messages.append(cls(
+                    role="assistant",
+                    tool_calls=[tool_call],
+                    content=execution_result,
+                    reasoning=global_reasoning
+                ))
+
+            elif item.type == "message":
+                messages.append(cls(
+                    role="assistant",
+                    content=item.content,
+                    reasoning=global_reasoning
+                ))
+
+        return messages
+
     def to_dict(self, **kwargs: Any) -> Dict[str, Any]:
         message_dict = self.model_dump(**kwargs)
         message_dict = {
@@ -113,43 +154,50 @@ class Message(BaseModel):
 
         return message_dict
 
-    def to_openai_response(self) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-        """Format a message into the format expected by OpenAI Response."""
-        if self.role == "tool":
-            return {
+    def _safe_serialize(self, obj: Any) -> str:
+        try:
+            if hasattr(obj, "model_dump_json"):
+                return obj.model_dump_json()
+            if hasattr(obj, "dict"):
+                return json.dumps(obj.dict(), default=str)
+            return str(obj)
+        except Exception:
+            return str(obj)
+
+    def to_openai_response(self) -> List[Dict[str, Any]]:
+        items = []
+
+        if self.tool_calls:
+            for tc in self.tool_calls:
+                items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id"),
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"]
+                })
+
+        if self.role == "tool" or (self.tool_calls and self.content):
+            call_id = self.tool_call_id
+            if not call_id and self.tool_calls:
+                call_id = self.tool_calls[0]["id"]
+            items.append({
                 "type": "function_call_output",
-                "call_id": self.tool_call_id,
-                "output": str(self.content) if self.content is not None else ""
-            }
+                "call_id": call_id,
+                "output": self._safe_serialize(self.content)
+            })
 
-        if self.role == "assistant":
-            if self.tool_calls:
-                items = []
-                if self.content:
-                    items.append({
-                        "role": "assistant",
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": self.content}]
-                    })
+        if not items and self.content:
+            if self.role == "user":
+                items.append({
+                    "role": "user",
+                    "type": "message",
+                    "content": [{"type": "input_text", "text": str(self.content)}]
+                })
+            elif self.role == "assistant":
+                items.append({
+                    "role": "assistant",
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": str(self.content)}]
+                })
 
-                for tc in self.tool_calls:
-                    items.append({
-                        "type": "function_call",
-                        "call_id": tc.get("id"),
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"]
-                    })
-
-                return items if len(items) > 1 else items[0]
-
-            return {
-                "role": "assistant",
-                "type": "message",
-                "content": [{"type": "output_text", "text": self.content or ""}]
-            }
-
-        return {
-            "role": self.role,
-            "type": "message",
-            "content": [{"type": "input_text", "text": self.content or ""}]
-        }
+        return items

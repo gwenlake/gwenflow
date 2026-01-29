@@ -12,6 +12,7 @@ from gwenflow.types.responses import (
     ResponseContentEvent,
     ResponseEvent,
     ResponseEventRoot,
+    ResponseOutputItemEvent,
     ResponseReasoningDeltaEvent,
     ResponseReasoningEvent,
     ResponseToolCallEvent,
@@ -88,7 +89,7 @@ class ResponseOpenAI(ChatBase):
                 "summary": self.reasoning_summary
             }
 
-        if self.tools and self.tool_type == "base":
+        if self.tools:
             model_params["tools"] = [tool.to_openai_response() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
@@ -143,17 +144,31 @@ class ResponseOpenAI(ChatBase):
             else:
                 print("Ran out of tokens during generating response")
 
-    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]],
+                instructions: Optional[str] = None,
+                **kwargs) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
             api_input_list = self._prepare_input_list(messages_for_model)
+            final_instructions = instructions or self.system_prompt
+            if api_input_list and isinstance(api_input_list[0], dict) and api_input_list[0].get("role") == "system":
+                if not final_instructions:
+                    final_instructions = api_input_list[0].get("content")
 
-            raw_response = self.get_client().responses.create(
-                model=self.model,
-                input=api_input_list,
+                api_input_list.pop(0)
+
+            create_params = {
+                "model": self.model,
+                "input": api_input_list,
                 **self._model_params,
-            )
+                **kwargs
+            }
+
+            if final_instructions:
+                create_params["instructions"] = final_instructions
+
+            raw_response = self.get_client().responses.create(**create_params)
 
             response = Response.model_validate(raw_response.model_dump())
         except Exception as e:
@@ -173,17 +188,31 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Response:
+    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]],
+                instructions: Optional[str] = None,
+                **kwargs) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
             api_input_list = self._prepare_input_list(messages_for_model)
+            final_instructions = instructions or self.system_prompt
+            if api_input_list and isinstance(api_input_list[0], dict) and api_input_list[0].get("role") == "system":
+                if not final_instructions:
+                    final_instructions = api_input_list[0].get("content")
 
-            raw_response = await self.get_async_client().responses.create(
-                model=self.model,
-                input=api_input_list,
+                api_input_list.pop(0)
+
+            create_params = {
+                "model": self.model,
+                "input": api_input_list,
                 **self._model_params,
-            )
+                **kwargs
+            }
+
+            if final_instructions:
+                create_params["instructions"] = final_instructions
+
+            raw_response = self.get_client().responses.create(**create_params)
 
             response = Response.model_validate(raw_response.model_dump())
         except Exception as e:
@@ -203,37 +232,66 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ResponseEventRoot]:
+    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]],
+                instructions: Optional[str] = None,
+                **kwargs) -> Iterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             api_input_list = self._prepare_input_list(messages_for_model)
+            final_instructions = instructions or self.system_prompt
+            if api_input_list and isinstance(api_input_list[0], dict) and api_input_list[0].get("role") == "system":
+                if not final_instructions:
+                    final_instructions = api_input_list[0].get("content")
+                api_input_list.pop(0)
 
-            client = self.get_client()
-
-            with client.responses.create(
-                model=self.model,
-                input=api_input_list,
-                stream=True,
+            create_params = {
+                "model": self.model,
+                "input": api_input_list,
+                "stream": True,
                 **self._model_params,
-            ) as raw_stream:
+                **kwargs
+            }
+
+            if final_instructions:
+                create_params["instructions"] = final_instructions
+
+            tool_id_name_map = {}
+
+            with self.get_client().responses.create(**create_params) as raw_stream:
                 for raw_event in raw_stream:
                     event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
                     event = event_obj.root
 
-                    if isinstance(event, ResponseEvent):
-                        if event.type == "response.created":
-                            yield event_obj
+                    if isinstance(event, ResponseOutputItemEvent):
+                        if event.type == "response.output_item.added":
+                            item = event.item
+                            if item.type == "function_call" and item.name:
+                                tool_id_name_map[item.id] = item.name
 
-                        elif event.type == "response.completed":
-                            self._handle_max_output_limit_issue(event.response)
+                    elif isinstance(event, ResponseToolCallEvent):
+                        cid = event.item_id
+
+                        if not event.name and cid in tool_id_name_map:
+                            event.name = tool_id_name_map[cid]
+
+                        yield event_obj
+                        continue
+
+                    elif isinstance(event, ResponseEvent):
+                        if event.type == "response.completed":
+                            if event.response.output:
+                                for o in event.response.output:
+                                    if getattr(o, "type", None) == "function_call":
+                                        tool_id_name_map[o.id] = o.name
                             yield event_obj
                             break
+                        yield event_obj
 
                     elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
                         if self.show_reasoning:
                             yield event_obj
 
-                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
                         yield event_obj
 
         except Exception as e:
@@ -246,6 +304,8 @@ class ResponseOpenAI(ChatBase):
 
             client = self.get_async_client()
 
+            tool_id_name_map = {}
+
             async with await client.responses.create(
                 model=self.model,
                 input=api_input_list,
@@ -256,20 +316,42 @@ class ResponseOpenAI(ChatBase):
                     event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
                     event = event_obj.root
 
-                    if isinstance(event, ResponseEvent):
+                    if isinstance(event, ResponseOutputItemEvent):
+                        if event.type == "response.output_item.added":
+                            item = event.item
+                            if item.type == "function_call" and item.name:
+                                tool_id_name_map[item.id] = item.name
+
+                    elif isinstance(event, ResponseToolCallEvent):
+                        cid = getattr(event, "item_id", None) or getattr(event, "call_id", None)
+
+                        if not event.name and cid in tool_id_name_map:
+                            event.name = tool_id_name_map[cid]
+
+                        yield event_obj
+                        continue
+
+                    elif isinstance(event, ResponseEvent):
                         if event.type == "response.created":
                             yield event_obj
 
                         elif event.type == "response.completed":
                             self._handle_max_output_limit_issue(event.response)
+                            if event.response.output:
+                                for o in event.response.output:
+                                    if getattr(o, "type", None) == "function_call":
+                                        tool_id_name_map[o.id] = o.name
                             yield event_obj
                             break
+
+                        else:
+                            yield event_obj
 
                     elif isinstance(event, (ResponseReasoningEvent, ResponseReasoningDeltaEvent)):
                         if self.show_reasoning:
                             yield event_obj
 
-                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent, ResponseToolCallEvent)):
+                    elif isinstance(event, (ResponseContentEvent, ResponseContentDeltaEvent)):
                         yield event_obj
 
         except Exception as e:
