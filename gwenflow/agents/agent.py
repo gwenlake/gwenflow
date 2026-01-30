@@ -143,21 +143,19 @@ class Agent(BaseModel):
                         text_parts.append(part.get("text", ""))
 
             elif item.type == "function_call":
-                tool_calls.append({
-                    "id": getattr(item, "id", None) or getattr(item, "call_id", None),
-                    "type": "function",
-                    "function": {
-                        "name": getattr(item, "name", None),
-                        "arguments": getattr(item, "arguments", "{}")
+                tool_calls.append(
+                    {
+                        "id": getattr(item, "id", None) or getattr(item, "call_id", None),
+                        "type": "function",
+                        "function": {
+                            "name": getattr(item, "name", None),
+                            "arguments": getattr(item, "arguments", "{}"),
+                        },
                     }
-                })
+                )
 
             elif item.type == "reasoning":
-                content = (
-                    getattr(item, "text", None) or
-                    getattr(item, "summary", None) or
-                    ""
-                )
+                content = getattr(item, "text", None) or getattr(item, "summary", None) or ""
                 if content and content != "none":
                     reasoning_parts.append(content)
 
@@ -165,7 +163,7 @@ class Agent(BaseModel):
             role="assistant",
             content="".join(text_parts) if text_parts else None,
             tool_calls=tool_calls if tool_calls else None,
-            reasoning="".join(reasoning_parts) if reasoning_parts else None
+            reasoning="".join(reasoning_parts) if reasoning_parts else None,
         )
 
     def _normalize_to_message(self, response: Any) -> Message:
@@ -309,17 +307,13 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
 
-    @Tracer.tool(name= 'Tool')
+    @Tracer.tool(name="Tool")
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
         tool_name = tool_call.function
 
         if tool_name not in tool_map:
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                content=f"Error: Tool {tool_name} not found."
-            )
+            return Message(role="tool", tool_call_id=tool_call.id, content=f"Error: Tool {tool_name} not found.")
 
         try:
             tool = tool_map[tool_name]
@@ -328,14 +322,10 @@ class Agent(BaseModel):
                 role="tool",
                 tool_call_id=tool_call.id,
                 tool_name=tool_name,
-                content=str(result) if result else "No results found."
+                content=str(result) if result else "No results found.",
             )
         except Exception as e:
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                content=f"Error during tool execution: {str(e)}"
-            )
+            return Message(role="tool", tool_call_id=tool_call.id, content=f"Error during tool execution: {str(e)}")
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         results = []
@@ -371,16 +361,14 @@ class Agent(BaseModel):
                     ToolCall(
                         id=tc.get("id"),
                         function=tc["function"]["name"],
-                        arguments=json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                        arguments=json.loads(tc["function"]["arguments"])
+                        if isinstance(tc["function"]["arguments"], str)
+                        else tc["function"]["arguments"],
                     )
                 )
             else:
                 tool_calls.append(
-                    ToolCall(
-                        id=tc.id,
-                        function=tc.function.name,
-                        arguments=json.loads(tc.function.arguments)
-                    )
+                    ToolCall(id=tc.id, function=tc.function.name, arguments=json.loads(tc.function.arguments))
                 )
         return tool_calls
 
@@ -411,7 +399,7 @@ class Agent(BaseModel):
 
         return str(result_message.content)
 
-    @Tracer.agent(name='Agent Run')
+    @Tracer.agent(name="Agent Run")
     def run(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -424,7 +412,6 @@ class Agent(BaseModel):
         sys_prompt = self.get_system_prompt(task=task, context=context)
         self.history.system_prompt = sys_prompt
         self.history.add_messages(messages)
-
 
         if self.thinking_model:
             messages_for_thinking_model = list(self.history.get())
@@ -445,15 +432,12 @@ class Agent(BaseModel):
 
         while num_turns_available > 0:
             if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
-                self.tool_choice = 'auto'
+                self.tool_choice = "auto"
             num_turns_available -= 1
 
             messages_for_model = list(self.history.get())
 
-            response = self.llm.invoke(
-                input=messages_for_model,
-                instructions=self.history.system_prompt
-            )
+            response = self.llm.invoke(input=messages_for_model, instructions=self.history.system_prompt)
 
             if response.usage:
                 input_details = getattr(response.usage, "input_tokens_details", None)
@@ -462,13 +446,15 @@ class Agent(BaseModel):
                 usage = Usage(
                     requests=1,
                     input_tokens=response.usage.input_tokens,
-                    input_tokens_details=UsageInputDetails(
-                        cached_tokens=getattr(input_details, "cached_tokens", 0)
-                    ) if input_details else None,
+                    input_tokens_details=UsageInputDetails(cached_tokens=getattr(input_details, "cached_tokens", 0))
+                    if input_details
+                    else None,
                     output_tokens=response.usage.output_tokens,
                     output_tokens_details=UsageReasoning(
                         reasoning_tokens=getattr(output_details, "reasoning_tokens", 0)
-                    ) if output_details else None,
+                    )
+                    if output_details
+                    else None,
                     total_tokens=response.usage.total_tokens,
                 )
                 agent_response.usage.add(usage)
@@ -477,8 +463,7 @@ class Agent(BaseModel):
 
             if hasattr(response, "output"):
                 new_messages_to_add = Message.extract_event_from_response_output(
-                    response,
-                    tool_executor=self._tool_executor_callback
+                    response, tool_executor=self._tool_executor_callback
                 )
 
             else:
@@ -500,13 +485,19 @@ class Agent(BaseModel):
 
             for msg in new_messages_to_add:
                 if msg.reasoning:
-                    agent_response.reasoning = (agent_response.reasoning + "\n\n" + msg.reasoning) if agent_response.reasoning else None
+                    agent_response.reasoning = (
+                        (agent_response.reasoning + "\n\n" + msg.reasoning) if agent_response.reasoning else None
+                    )
                 self.history.add_message(msg)
                 agent_response.messages.append(msg)
 
                 current_thinking = self._get_thinking(msg)
                 if current_thinking:
-                    agent_response.thinking = (agent_response.thinking + "\n\n" + current_thinking) if agent_response.thinking else current_thinking
+                    agent_response.thinking = (
+                        (agent_response.thinking + "\n\n" + current_thinking)
+                        if agent_response.thinking
+                        else current_thinking
+                    )
 
                 if msg.role == "assistant" and msg.content and not msg.tool_calls:
                     agent_response.content = msg.content
@@ -517,7 +508,7 @@ class Agent(BaseModel):
         agent_response.finish_reason = "stop"
         return agent_response
 
-    @Tracer.agent(name='Agent Async Run')
+    @Tracer.agent(name="Agent Async Run")
     async def arun(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -530,7 +521,6 @@ class Agent(BaseModel):
         sys_prompt = self.get_system_prompt(task=task, context=context)
         self.history.system_prompt = sys_prompt
         self.history.add_messages(messages)
-
 
         if self.thinking_model:
             messages_for_thinking_model = list(self.history.get())
@@ -551,15 +541,12 @@ class Agent(BaseModel):
 
         while num_turns_available > 0:
             if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
-                self.tool_choice = 'auto'
+                self.tool_choice = "auto"
             num_turns_available -= 1
 
             messages_for_model = list(self.history.get())
 
-            response = await self.llm.ainvoke(
-                input=messages_for_model,
-                instructions=self.history.system_prompt
-            )
+            response = await self.llm.ainvoke(input=messages_for_model, instructions=self.history.system_prompt)
 
             if response.usage:
                 input_details = getattr(response.usage, "input_tokens_details", None)
@@ -568,13 +555,15 @@ class Agent(BaseModel):
                 usage = Usage(
                     requests=1,
                     input_tokens=response.usage.input_tokens,
-                    input_tokens_details=UsageInputDetails(
-                        cached_tokens=getattr(input_details, "cached_tokens", 0)
-                    ) if input_details else None,
+                    input_tokens_details=UsageInputDetails(cached_tokens=getattr(input_details, "cached_tokens", 0))
+                    if input_details
+                    else None,
                     output_tokens=response.usage.output_tokens,
                     output_tokens_details=UsageReasoning(
                         reasoning_tokens=getattr(output_details, "reasoning_tokens", 0)
-                    ) if output_details else None,
+                    )
+                    if output_details
+                    else None,
                     total_tokens=response.usage.total_tokens,
                 )
                 agent_response.usage.add(usage)
@@ -583,8 +572,7 @@ class Agent(BaseModel):
 
             if hasattr(response, "output"):
                 new_messages_to_add = Message.extract_event_from_response_output(
-                    response,
-                    tool_executor=self._tool_executor_callback
+                    response, tool_executor=self._tool_executor_callback
                 )
 
             else:
@@ -606,13 +594,19 @@ class Agent(BaseModel):
 
             for msg in new_messages_to_add:
                 if msg.reasoning:
-                    agent_response.reasoning = (agent_response.reasoning + "\n\n" + msg.reasoning) if agent_response.reasoning else None
+                    agent_response.reasoning = (
+                        (agent_response.reasoning + "\n\n" + msg.reasoning) if agent_response.reasoning else None
+                    )
                 self.history.add_message(msg)
                 agent_response.messages.append(msg)
 
                 current_thinking = self._get_thinking(msg)
                 if current_thinking:
-                    agent_response.thinking = (agent_response.thinking + "\n\n" + current_thinking) if agent_response.thinking else current_thinking
+                    agent_response.thinking = (
+                        (agent_response.thinking + "\n\n" + current_thinking)
+                        if agent_response.thinking
+                        else current_thinking
+                    )
 
                 if msg.role == "assistant" and msg.content and not msg.tool_calls:
                     agent_response.content = msg.content
@@ -647,7 +641,7 @@ class Agent(BaseModel):
 
         while num_turns_available > 0:
             if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
-                self.tool_choice = 'auto'
+                self.tool_choice = "auto"
             num_turns_available -= 1
 
             messages_for_model = list(self.history.get())
@@ -655,10 +649,7 @@ class Agent(BaseModel):
             message = Message(role="assistant", content="", reasoning="", tool_calls=[])
             final_tool_calls = {}
 
-            stream_gen = self.llm.stream(
-                input=messages_for_model,
-                instructions=self.history.system_prompt
-            )
+            stream_gen = self.llm.stream(input=messages_for_model, instructions=self.history.system_prompt)
 
             for chunk in stream_gen:
                 agent_response.content = None
@@ -682,7 +673,7 @@ class Agent(BaseModel):
                                 final_tool_calls[idx] = {
                                     "id": tc.id,
                                     "type": "function",
-                                    "function": {"name": tc.function.name or "", "arguments": ""}
+                                    "function": {"name": tc.function.name or "", "arguments": ""},
                                 }
                             if tc.function.arguments:
                                 final_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
@@ -694,24 +685,29 @@ class Agent(BaseModel):
                     event = chunk.root
 
                     if isinstance(event, ResponseEvent):
-                         if event.type in ["response.done", "response.completed"]:
-                             if event.response and event.response.usage:
+                        if event.type in ["response.done", "response.completed"]:
+                            if event.response and event.response.usage:
                                 u = event.response.usage
-                                agent_response.usage.add(Usage(
-                                    requests=1,
-                                    input_tokens=u.input_tokens,
-                                    output_tokens=u.output_tokens,
-                                    total_tokens=u.total_tokens,
-                                    output_tokens_details=UsageReasoning(
-                                        reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
-                                    ) if getattr(u, "output_tokens_details", None) else None
-                                ))
-                         continue
+                                agent_response.usage.add(
+                                    Usage(
+                                        requests=1,
+                                        input_tokens=u.input_tokens,
+                                        output_tokens=u.output_tokens,
+                                        total_tokens=u.total_tokens,
+                                        output_tokens_details=UsageReasoning(
+                                            reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                                        )
+                                        if getattr(u, "output_tokens_details", None)
+                                        else None,
+                                    )
+                                )
+                        continue
 
                     elif isinstance(event, (ResponseReasoningDeltaEvent, ResponseReasoningEvent)):
                         text = getattr(event, "delta", None) or getattr(event, "text", "")
                         if text:
-                            if message.reasoning is None: message.reasoning = ""
+                            if message.reasoning is None:
+                                message.reasoning = ""
                             message.reasoning += text
                             agent_response.reasoning = text
 
@@ -730,7 +726,7 @@ class Agent(BaseModel):
                                 final_tool_calls[cid] = {
                                     "id": cid,
                                     "type": "function",
-                                    "function": {"name": "", "arguments": ""}
+                                    "function": {"name": "", "arguments": ""},
                                 }
 
                             name_part = getattr(event, "name", "")
@@ -746,9 +742,11 @@ class Agent(BaseModel):
                                 if full_args:
                                     final_tool_calls[cid]["function"]["arguments"] = full_args
 
-                should_yield = (agent_response.content is not None) or \
-                               (agent_response.reasoning is not None) or \
-                               (tool_call_updated)
+                should_yield = (
+                    (agent_response.content is not None)
+                    or (agent_response.reasoning is not None)
+                    or (tool_call_updated)
+                )
 
                 if should_yield:
                     yield agent_response
@@ -805,7 +803,7 @@ class Agent(BaseModel):
         num_turns_available = DEFAULT_MAX_TURNS
         while num_turns_available > 0:
             if num_turns_available <= (DEFAULT_MAX_TURNS - 1):
-                self.tool_choice = 'auto'
+                self.tool_choice = "auto"
             num_turns_available -= 1
             messages_for_model = list(self.history.get())
 
@@ -832,7 +830,7 @@ class Agent(BaseModel):
                             if idx not in final_tool_calls:
                                 final_tool_calls[idx] = tc.model_dump()
                             else:
-                                final_tool_calls[idx]["function"]["arguments"] += (tc.function.arguments or "")
+                                final_tool_calls[idx]["function"]["arguments"] += tc.function.arguments or ""
 
                 elif hasattr(chunk, "root"):
                     event = chunk.root
@@ -841,21 +839,24 @@ class Agent(BaseModel):
                         if event.type in ["response.done", "response.completed"]:
                             if event.response and event.response.usage:
                                 u = event.response.usage
-                                agent_response.usage.add(Usage(
-                                    requests=1,
-                                    input_tokens=u.input_tokens,
-                                    output_tokens=u.output_tokens,
-                                    total_tokens=u.total_tokens,
-                                    output_tokens_details=UsageReasoning(
-                                        reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                                agent_response.usage.add(
+                                    Usage(
+                                        requests=1,
+                                        input_tokens=u.input_tokens,
+                                        output_tokens=u.output_tokens,
+                                        total_tokens=u.total_tokens,
+                                        output_tokens_details=UsageReasoning(
+                                            reasoning_tokens=getattr(u.output_tokens_details, "reasoning_tokens", 0)
+                                        ),
                                     )
-                                ))
+                                )
                         continue
 
                     elif isinstance(event, (ResponseReasoningDeltaEvent, ResponseReasoningEvent)):
                         text = getattr(event, "delta", None) or getattr(event, "text", "")
                         if text:
-                            if message.reasoning is None: message.reasoning = ""
+                            if message.reasoning is None:
+                                message.reasoning = ""
                             message.reasoning += text
 
                             if hasattr(self.llm, "show_reasoning") and self.llm.show_reasoning:
@@ -879,7 +880,7 @@ class Agent(BaseModel):
                                 final_tool_calls[cid] = {
                                     "id": cid,
                                     "type": "function",
-                                    "function": {"name": "", "arguments": ""}
+                                    "function": {"name": "", "arguments": ""},
                                 }
 
                             name_part = getattr(event, "name", "")

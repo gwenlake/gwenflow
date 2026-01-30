@@ -32,5 +32,5 @@ __all__ = [
     "ResponseReasoningEvent",
     "ResponseToolCallEvent",
     "ResponseEventRoot",
-    ""
+    "",
 ]

@@ -7,9 +7,7 @@ set_log_level_to_debug()
 
 dotenv.load_dotenv(override=True)
 
-telemetry = TelemetryBase(service_name="gwenflow-v1",
-                          enabled=True,
-                          endpoint='http://localhost:6006/v1/traces')
+telemetry = TelemetryBase(service_name="gwenflow-v1", enabled=True, endpoint="http://localhost:6006/v1/traces")
 
 telemetry.setup_telemetry()
 telemetry.add_exporter()

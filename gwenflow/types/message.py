@@ -109,25 +109,15 @@ class Message(BaseModel):
 
         for item in response.output:
             if item.type == "function_call":
-                tool_call = {
-                    "id": item.id,
-                    "function": {"name": item.name, "arguments": item.arguments}
-                }
+                tool_call = {"id": item.id, "function": {"name": item.name, "arguments": item.arguments}}
                 execution_result = tool_executor(item.name, item.arguments)
 
-                messages.append(cls(
-                    role="assistant",
-                    tool_calls=[tool_call],
-                    content=execution_result,
-                    reasoning=global_reasoning
-                ))
+                messages.append(
+                    cls(role="assistant", tool_calls=[tool_call], content=execution_result, reasoning=global_reasoning)
+                )
 
             elif item.type == "message":
-                messages.append(cls(
-                    role="assistant",
-                    content=item.content,
-                    reasoning=global_reasoning
-                ))
+                messages.append(cls(role="assistant", content=item.content, reasoning=global_reasoning))
 
         return messages
 
@@ -169,35 +159,35 @@ class Message(BaseModel):
 
         if self.tool_calls:
             for tc in self.tool_calls:
-                items.append({
-                    "type": "function_call",
-                    "call_id": tc.get("id"),
-                    "name": tc["function"]["name"],
-                    "arguments": tc["function"]["arguments"]
-                })
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tc.get("id"),
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    }
+                )
 
         if self.role == "tool" or (self.tool_calls and self.content):
             call_id = self.tool_call_id
             if not call_id and self.tool_calls:
                 call_id = self.tool_calls[0]["id"]
-            items.append({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": self._safe_serialize(self.content)
-            })
+            items.append(
+                {"type": "function_call_output", "call_id": call_id, "output": self._safe_serialize(self.content)}
+            )
 
         if not items and self.content:
             if self.role == "user":
-                items.append({
-                    "role": "user",
-                    "type": "message",
-                    "content": [{"type": "input_text", "text": str(self.content)}]
-                })
+                items.append(
+                    {"role": "user", "type": "message", "content": [{"type": "input_text", "text": str(self.content)}]}
+                )
             elif self.role == "assistant":
-                items.append({
-                    "role": "assistant",
-                    "type": "message",
-                    "content": [{"type": "output_text", "text": str(self.content)}]
-                })
+                items.append(
+                    {
+                        "role": "assistant",
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": str(self.content)}],
+                    }
+                )
 
         return items

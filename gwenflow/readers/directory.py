@@ -19,7 +19,7 @@ def get_default_fs() -> fsspec.AbstractFileSystem:
     return LocalFileSystem()
 
 
-class SimpleDirectoryReader():
+class SimpleDirectoryReader:
     """SimpleDirectoryReader."""
 
     def __init__(

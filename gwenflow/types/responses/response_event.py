@@ -7,12 +7,9 @@ from gwenflow.types.responses.response import Response
 
 
 class ResponseEvent(ResponseBase):
-    type: Literal[
-        'response.created',
-        'response.in_progress',
-        'response.completed'
-    ]
+    type: Literal["response.created", "response.in_progress", "response.completed"]
     response: Response
+
 
 class ResponseOutputItem(BaseModel):
     id: str
@@ -20,27 +17,27 @@ class ResponseOutputItem(BaseModel):
     name: Optional[str] = None
     arguments: Optional[str] = None
 
+
 class ResponseOutputItemEvent(ResponseBase):
-    type: Literal[
-        'response.output_item.added',
-        'response.output_item.done'
-    ]
+    type: Literal["response.output_item.added", "response.output_item.done"]
     item: ResponseOutputItem
     status: Optional[str] = None
 
 
 class ResponseReasoningEvent(ResponseBase):
     type: Literal[
-        'response.reasoning_summary_part.added',
-        'response.reasoning_summary_part.done',
+        "response.reasoning_summary_part.added",
+        "response.reasoning_summary_part.done",
     ]
     item_id: str
 
+
 class ResponseReasoningDeltaEvent(ResponseBase):
     type: Literal[
-        'response.reasoning_summary_text.created',
-        'response.reasoning_summary_text.delta',
-        'response.reasoning_summary_text.done']
+        "response.reasoning_summary_text.created",
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_summary_text.done",
+    ]
     delta: Optional[str] = None
     item_id: str
 
@@ -61,33 +58,31 @@ class ResponseToolCallEvent(ResponseBase):
             self.status = "completed"
         return self
 
+
 class ResponseContentEvent(ResponseBase):
-    type: Literal[
-        'response.content_part.added',
-        'response.content_part.done']
+    type: Literal["response.content_part.added", "response.content_part.done"]
     item_id: str
     logprobs: Optional[List[Logprob]] = Field(default_factory=list)
     text: Optional[str] = None
 
+
 class ResponseContentDeltaEvent(ResponseBase):
-    type: Literal[
-    'response.output_text.created',
-    'response.output_text.delta',
-    'response.output_text.done']
+    type: Literal["response.output_text.created", "response.output_text.delta", "response.output_text.done"]
     delta: Optional[str] = None
     item_id: str
     logprobs: Optional[List[Logprob]] = Field(default_factory=list)
 
 
 AnyResponseEvent = Union[
-        ResponseOutputItemEvent,
-        ResponseReasoningEvent,
-        ResponseReasoningDeltaEvent,
-        ResponseContentEvent,
-        ResponseContentDeltaEvent,
-        ResponseToolCallEvent,
-        ResponseEvent
-    ]
+    ResponseOutputItemEvent,
+    ResponseReasoningEvent,
+    ResponseReasoningDeltaEvent,
+    ResponseContentEvent,
+    ResponseContentDeltaEvent,
+    ResponseToolCallEvent,
+    ResponseEvent,
+]
+
 
 class ResponseEventRoot(RootModel):
     root: AnyResponseEvent

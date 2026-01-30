@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 class TelemetryBase(BaseModel):
     service_name: str = Field(default="gwenflow-service")
-    endpoint: str = Field(default_factory=lambda: os.getenv("OPENTELEMETRY_ENDPOINT", "http://localhost:4318/v1/traces"))
+    endpoint: str = Field(
+        default_factory=lambda: os.getenv("OPENTELEMETRY_ENDPOINT", "http://localhost:4318/v1/traces")
+    )
     headers: Dict[str, str] = Field(default_factory=dict)
     enabled: bool = Field(default=True)
 
@@ -28,10 +30,7 @@ class TelemetryBase(BaseModel):
             resource = Resource.create({"service.name": self.service_name})
             provider = TracerProvider(resource=resource)
 
-            exporter = OTLPSpanExporter(
-                endpoint=self.endpoint,
-                headers=self.headers
-            )
+            exporter = OTLPSpanExporter(endpoint=self.endpoint, headers=self.headers)
 
             processor = BatchSpanProcessor(exporter)
             provider.add_span_processor(processor)

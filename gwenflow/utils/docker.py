@@ -13,8 +13,7 @@ def validate_docker_installation(agent_role: str) -> None:
     """
     if not shutil.which("docker"):
         raise RuntimeError(
-            f"Docker is not installed. Please install Docker to use code "
-            f"execution with agent: {agent_role}"
+            f"Docker is not installed. Please install Docker to use code " f"execution with agent: {agent_role}"
         )
 
     try:
@@ -25,6 +24,5 @@ def validate_docker_installation(agent_role: str) -> None:
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(
-            f"Docker is not running. Please start Docker to use code "
-            f"execution with agent: {agent_role}"
+            f"Docker is not running. Please start Docker to use code " f"execution with agent: {agent_role}"
         ) from e

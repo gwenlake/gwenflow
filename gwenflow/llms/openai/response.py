@@ -21,7 +21,7 @@ from gwenflow.utils import extract_json_str
 
 
 class ResponseOpenAI(ChatBase):
-    model: str = "gpt-5-mini"
+    model: str = "gpt-4o-mini"
 
     # model parameters
     background: Optional[bool] = None
@@ -31,10 +31,12 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None # TODO change "Any" later to available output type
+    text_format: Optional[Any] = None  # TODO change "Any" later to available output type
     top_logprobs: Optional[int] = None
-    reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
-    reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = (
+        None  # Use only auto to make sure it is compatible with all reasoning models for now
+    )
     show_reasoning: bool = False
 
     # clients
@@ -84,10 +86,7 @@ class ResponseOpenAI(ChatBase):
             "top_p": self.top_p,
         }
         if self.get_reasoning_model():
-            model_params["reasoning"] = {
-                "effort": self.reasoning_effort,
-                "summary": self.reasoning_summary
-            }
+            model_params["reasoning"] = {"effort": self.reasoning_effort, "summary": self.reasoning_summary}
 
         if self.tools:
             model_params["tools"] = [tool.to_openai_response() for tool in self.tools]
@@ -144,9 +143,9 @@ class ResponseOpenAI(ChatBase):
             else:
                 print("Ran out of tokens during generating response")
 
-    def _invoke(self, input: Union[str, List[Message], List[Dict[str, str]]],
-                instructions: Optional[str] = None,
-                **kwargs) -> Response:
+    def _invoke(
+        self, input: Union[str, List[Message], List[Dict[str, str]]], instructions: Optional[str] = None, **kwargs
+    ) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
@@ -158,12 +157,7 @@ class ResponseOpenAI(ChatBase):
 
                 api_input_list.pop(0)
 
-            create_params = {
-                "model": self.model,
-                "input": api_input_list,
-                **self._model_params,
-                **kwargs
-            }
+            create_params = {"model": self.model, "input": api_input_list, **self._model_params, **kwargs}
 
             if final_instructions:
                 create_params["instructions"] = final_instructions
@@ -188,9 +182,9 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    async def _ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]],
-                instructions: Optional[str] = None,
-                **kwargs) -> Response:
+    async def _ainvoke(
+        self, input: Union[str, List[Message], List[Dict[str, str]]], instructions: Optional[str] = None, **kwargs
+    ) -> Response:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
 
@@ -202,12 +196,7 @@ class ResponseOpenAI(ChatBase):
 
                 api_input_list.pop(0)
 
-            create_params = {
-                "model": self.model,
-                "input": api_input_list,
-                **self._model_params,
-                **kwargs
-            }
+            create_params = {"model": self.model, "input": api_input_list, **self._model_params, **kwargs}
 
             if final_instructions:
                 create_params["instructions"] = final_instructions
@@ -232,9 +221,9 @@ class ResponseOpenAI(ChatBase):
 
         return response
 
-    def _stream(self, input: Union[str, List[Message], List[Dict[str, str]]],
-                instructions: Optional[str] = None,
-                **kwargs) -> Iterator[ResponseEventRoot]:
+    def _stream(
+        self, input: Union[str, List[Message], List[Dict[str, str]]], instructions: Optional[str] = None, **kwargs
+    ) -> Iterator[ResponseEventRoot]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
             api_input_list = self._prepare_input_list(messages_for_model)
@@ -249,7 +238,7 @@ class ResponseOpenAI(ChatBase):
                 "input": api_input_list,
                 "stream": True,
                 **self._model_params,
-                **kwargs
+                **kwargs,
             }
 
             if final_instructions:
@@ -311,7 +300,7 @@ class ResponseOpenAI(ChatBase):
                 input=api_input_list,
                 stream=True,
                 **self._model_params,
-                ) as raw_stream:
+            ) as raw_stream:
                 async for raw_event in raw_stream:
                     event_obj = ResponseEventRoot.model_validate(raw_event.model_dump())
                     event = event_obj.root

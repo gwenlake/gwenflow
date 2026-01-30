@@ -17,5 +17,5 @@ __all__ = [
     "ResponseOutputItem",
     "ItemHelpers",
     "ToolCall",
-    "Response"
+    "Response",
 ]

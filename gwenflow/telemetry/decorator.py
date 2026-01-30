@@ -99,7 +99,9 @@ class DecoratorTracer:
             if cached is not None:
                 span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_INPUT, int(cached))
 
-        output_details = getattr(usage, "output_tokens_details", None) or getattr(usage, "completion_tokens_details", None)
+        output_details = getattr(usage, "output_tokens_details", None) or getattr(
+            usage, "completion_tokens_details", None
+        )
         if output_details:
             reasoning = getattr(output_details, "reasoning_tokens", None)
             if reasoning is not None:
@@ -127,12 +129,15 @@ class DecoratorTracer:
         if hasattr(instance, "model"):
             span.set_attribute(SpanAttributes.LLM_MODEL_NAME, instance.model)
         if hasattr(instance, "_model_params"):
-            span.set_attribute(SpanAttributes.LLM_INVOCATION_PARAMETERS, json.dumps(instance._model_params, default=str))
+            span.set_attribute(
+                SpanAttributes.LLM_INVOCATION_PARAMETERS, json.dumps(instance._model_params, default=str)
+            )
 
     def _wrap_logic(self, name_attr, kind, name_override=None):
         def decorator(func):
             # 1. ASYNC GENERATOR (Streaming Async)
             if inspect.isasyncgenfunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -155,10 +160,12 @@ class DecoratorTracer:
                             span.record_exception(e)
                             span.set_status(StatusCode.ERROR, str(e))
                             raise
+
                 return wrapper
 
             # 2. ASYNC FUNCTION (ainvoke / arun)
             elif inspect.iscoroutinefunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -171,10 +178,12 @@ class DecoratorTracer:
                         span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(result))
                         span.set_status(StatusCode.OK)
                         return result
+
                 return wrapper
 
             # 3. SYNC GENERATOR (Streaming Sync)
             elif inspect.isgeneratorfunction(func):
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -196,10 +205,12 @@ class DecoratorTracer:
                             span.record_exception(e)
                             span.set_status(StatusCode.ERROR, str(e))
                             raise
+
                 return wrapper
 
             # 4. SYNC FUNCTION (invoke / run)
             else:
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -212,7 +223,9 @@ class DecoratorTracer:
                         span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(result))
                         span.set_status(StatusCode.OK)
                         return result
+
                 return wrapper
+
         return decorator
 
     def llm(self, name=None):
@@ -226,5 +239,6 @@ class DecoratorTracer:
 
     def flow(self, name=None):
         return self._wrap_logic("name", OpenInferenceSpanKindValues.CHAIN, name)
+
 
 Tracer = DecoratorTracer()

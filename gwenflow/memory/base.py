@@ -9,6 +9,7 @@ from gwenflow.utils.tokens import num_tokens_from_string
 
 AnyMessage = Union[Message, Response, Dict[str, Any]]
 
+
 class BaseChatMemory(BaseModel):
     id: Optional[str] = Field(None, validate_default=True)
     system_prompt: Optional[str] = None
