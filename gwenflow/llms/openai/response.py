@@ -29,7 +29,7 @@ class ResponseOpenAI(ChatBase):
     top_p: Optional[float] = None
     max_output_tokens: Optional[int] = None
     max_tool_calls: Optional[int] = None
-    prompt_cache_key: Optional[bool] = None
+    parallel_tool_calls: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
     text_format: Optional[Any] = None  # TODO change "Any" later to available output type
     top_logprobs: Optional[int] = None
@@ -78,7 +78,7 @@ class ResponseOpenAI(ChatBase):
             "background": self.background,
             "max_output_tokens": self.max_output_tokens,
             "max_tool_calls": self.max_tool_calls,
-            "prompt_cache_key": self.prompt_cache_key,
+            "parallel_tool_calls": self.parallel_tool_calls,
             "prompt_cache_retention": self.prompt_cache_retention,
             "temperature": self.temperature,
             "text.format": self.text_format,
