@@ -1,167 +1,244 @@
 import functools
+import inspect
 import json
+from contextlib import contextmanager
+from typing import Any
 
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import StatusCode, Tracer
+
+
+def safe_serialize(obj: Any) -> str:
+    try:
+        if hasattr(obj, "model_dump_json"):
+            return obj.model_dump_json()
+        if hasattr(obj, "dict"):
+            return json.dumps(obj.dict(), default=str)
+        return str(obj)
+    except Exception:
+        return str(obj)
 
 
 class DecoratorTracer:
-    def __init__(self, tracer_name: str = "gwenflow"):
-        self.tracer = trace.get_tracer(tracer_name)
+    def __init__(self):
+        self.tracer = trace.get_tracer("gwenflow")
 
-    def _is_enabled(self) -> bool:
-        provider = trace.get_tracer_provider()
-        # Vérifie si un fournisseur de traces est configuré et actif
-        return hasattr(provider, "resource") and provider.resource.attributes.get("service.name") != "unknown_service"
+    def _get_input_value(self, func, args, kwargs) -> str:
+        """Fonction to capture the user's input."""
+        try:
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+            arg_dict = dict(bound_args.arguments)
 
-    def _inject_topology(self, span, self_agent):
-        if hasattr(self_agent, "parent_flow_id") and self_agent.parent_flow_id:
-            span.set_attribute("gwenflow.topology.parent_id", self_agent.parent_flow_id)
+            keys_to_remove = [k for k in arg_dict.keys() if k.startswith("self")]
+            for k in keys_to_remove:
+                del arg_dict[k]
 
-        if hasattr(self_agent, "depends_on") and self_agent.depends_on:
-            span.set_attribute("gwenflow.topology.depends_on", self_agent.depends_on)
+            if "input" in arg_dict:
+                return safe_serialize(arg_dict["input"])
+            if "query" in arg_dict:
+                return safe_serialize(arg_dict["query"])
 
-    def agent(self, name: str = None):
+            return json.dumps({k: str(v) for k, v in arg_dict.items()}, default=str)
+        except Exception:
+            return "Error capturing inputs"
+
+    @contextmanager
+    def _start_span(self, name, kind, instance, func, args, kwargs):
+        with self.tracer.start_as_current_span(name) as span:
+            span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, kind.value)
+
+            input_val = self._get_input_value(func, (instance, *args), kwargs)
+            span.set_attribute(SpanAttributes.INPUT_VALUE, str(input_val))
+
+            try:
+                yield span
+            except Exception as e:
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                raise
+
+    def _attempt_capture_usage(self, span, chunk):
+        """Helper to extract usage from LLM events specifically."""
+        try:
+            if hasattr(chunk, "root"):
+                event = chunk.root
+                event_type = getattr(event, "type", "")
+
+                if event_type in ["response.completed", "response.done"]:
+                    response = getattr(event, "response", None)
+                    if response:
+                        self._capture_usage_attributes(span, response)
+        except Exception:
+            pass
+
+    def _capture_usage_attributes(self, span, result):
+        """Extracts token counts from a result object and sets span attributes."""
+        if not hasattr(result, "usage") or not result.usage:
+            return
+
+        usage = result.usage
+
+        input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None)
+        if input_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, int(input_tokens))
+
+        output_tokens = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None)
+        if output_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, int(output_tokens))
+
+        total_tokens = getattr(usage, "total_tokens", None)
+        if total_tokens is not None:
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, int(total_tokens))
+
+        input_details = getattr(usage, "input_tokens_details", None)
+        if input_details:
+            cached = getattr(input_details, "cached_tokens", None)
+            if cached is not None:
+                span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_INPUT, int(cached))
+
+        output_details = getattr(usage, "output_tokens_details", None) or getattr(
+            usage, "completion_tokens_details", None
+        )
+        if output_details:
+            reasoning = getattr(output_details, "reasoning_tokens", None)
+            if reasoning is not None:
+                span.set_attribute(SpanAttributes.LLM_COST_COMPLETION_DETAILS_REASONING, int(reasoning))
+
+    def _finalize_stream_span(self, span, last_chunk):
+        """Sets the final output of the span based on the last chunk received."""
+        if last_chunk is None:
+            return
+
+        try:
+            obj_to_serialize = last_chunk
+
+            if hasattr(last_chunk, "root"):
+                root = last_chunk.root
+                if hasattr(root, "response") and getattr(root, "type", "") in ["response.completed", "response.done"]:
+                    obj_to_serialize = root.response
+
+            span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(obj_to_serialize))
+            span.set_status(StatusCode.OK)
+        except Exception:
+            span.set_status(StatusCode.OK)
+
+    def _prepare_llm(self, span, instance):
+        if hasattr(instance, "model"):
+            span.set_attribute(SpanAttributes.LLM_MODEL_NAME, instance.model)
+        if hasattr(instance, "_model_params"):
+            span.set_attribute(
+                SpanAttributes.LLM_INVOCATION_PARAMETERS, json.dumps(instance._model_params, default=str)
+            )
+
+    def _wrap_logic(self, name_attr, kind, name_override=None):
         def decorator(func):
-            @functools.wraps(func)
-            def wrapper(self_agent, *args, **kwargs):
-                if not self._is_enabled():
-                    return func(self_agent, *args, **kwargs)
+            # 1. ASYNC GENERATOR (Streaming Async)
+            if inspect.isasyncgenfunction(func):
 
-                session_id = kwargs.get("session_id") or getattr(self_agent, "session_id", "no_session")
-                span_name = name or f"Agent:{self_agent.name}"
+                @functools.wraps(func)
+                async def wrapper(instance, *args, **kwargs):
+                    name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
+                    with self._start_span(name, kind, instance, func, args, kwargs) as span:
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._prepare_llm(span, instance)
 
-                with self.tracer.start_as_current_span(span_name) as span:
-                    span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-                    span.set_attribute(SpanAttributes.SESSION_ID, session_id)
-                    span.set_attribute("agent.id", str(getattr(self_agent, "id", "")))
-                    span.set_attribute("agent.name", self_agent.name)
+                        last_chunk = None
+                        try:
+                            async for chunk in func(instance, *args, **kwargs):
+                                last_chunk = chunk
+                                # Try capture usage on-the-fly for LLMs
+                                if kind == OpenInferenceSpanKindValues.LLM:
+                                    self._attempt_capture_usage(span, chunk)
+                                yield chunk
 
-                    self._inject_topology(span, self_agent)
+                            self._finalize_stream_span(span, last_chunk)
 
-                    query = kwargs.get("query") or (args[0] if args else "None")
-                    span.set_attribute(SpanAttributes.INPUT_VALUE, str(query))
+                        except Exception as e:
+                            span.record_exception(e)
+                            span.set_status(StatusCode.ERROR, str(e))
+                            raise
 
-                    try:
-                        result = func(self_agent, *args, **kwargs)
+                return wrapper
 
-                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, str(result))
+            # 2. ASYNC FUNCTION (ainvoke / arun)
+            elif inspect.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def wrapper(instance, *args, **kwargs):
+                    name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
+                    with self._start_span(name, kind, instance, func, args, kwargs) as span:
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._prepare_llm(span, instance)
+                        result = await func(instance, *args, **kwargs)
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._capture_usage_attributes(span, result)
+                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(result))
                         span.set_status(StatusCode.OK)
                         return result
-                    except Exception as e:
-                        span.set_status(StatusCode.ERROR, str(e))
-                        span.record_exception(e)
-                        raise
-            return wrapper
-        return decorator
 
-    def tool(self, name: str = None):
-        def decorator(func):
-            @functools.wraps(func)
-            def wrapper(self_inst, *args, **kwargs):
-                if not self._is_enabled():
-                    return func(self_inst, *args, **kwargs)
+                return wrapper
 
-                span_name = name or f"Tool:{func.__name__}"
-                with self.tracer.start_as_current_span(span_name) as span:
-                    span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.TOOL.value)
+            # 3. SYNC GENERATOR (Streaming Sync)
+            elif inspect.isgeneratorfunction(func):
 
-                    input_data = {"args": args, "kwargs": kwargs}
-                    span.set_attribute(SpanAttributes.INPUT_VALUE, json.dumps(input_data, default=str))
+                @functools.wraps(func)
+                def wrapper(instance, *args, **kwargs):
+                    name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
+                    with self._start_span(name, kind, instance, func, args, kwargs) as span:
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._prepare_llm(span, instance)
 
-                    try:
-                        result = func(self_inst, *args, **kwargs)
-                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, str(result))
+                        last_chunk = None
+                        try:
+                            for chunk in func(instance, *args, **kwargs):
+                                last_chunk = chunk
+                                if kind == OpenInferenceSpanKindValues.LLM:
+                                    self._attempt_capture_usage(span, chunk)
+                                yield chunk
+
+                            self._finalize_stream_span(span, last_chunk)
+
+                        except Exception as e:
+                            span.record_exception(e)
+                            span.set_status(StatusCode.ERROR, str(e))
+                            raise
+
+                return wrapper
+
+            # 4. SYNC FUNCTION (invoke / run)
+            else:
+
+                @functools.wraps(func)
+                def wrapper(instance, *args, **kwargs):
+                    name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
+                    with self._start_span(name, kind, instance, func, args, kwargs) as span:
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._prepare_llm(span, instance)
+                        result = func(instance, *args, **kwargs)
+                        if kind == OpenInferenceSpanKindValues.LLM:
+                            self._capture_usage_attributes(span, result)
+                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(result))
                         span.set_status(StatusCode.OK)
                         return result
-                    except Exception as e:
-                        span.set_status(StatusCode.ERROR, str(e))
-                        span.record_exception(e)
-                        raise
-            return wrapper
+
+                return wrapper
+
         return decorator
 
-    def stream(self, name: str = None):
-        def decorator(func):
-            @functools.wraps(func)
-            def wrapper(self_agent, *args, **kwargs):
-                if not self._is_enabled():
-                    yield from func(self_agent, *args, **kwargs)
-                    return
+    def llm(self, name=None):
+        return self._wrap_logic("model", OpenInferenceSpanKindValues.LLM, name)
 
-                span_name = name or f"AgentStream:{self_agent.name}"
-                with self.tracer.start_as_current_span(span_name) as span:
-                    span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-                    self._inject_topology(span, self_agent)
+    def agent(self, name=None):
+        return self._wrap_logic("name", OpenInferenceSpanKindValues.AGENT, name)
 
-                    full_content = []
-                    try:
-                        for chunk in func(self_agent, *args, **kwargs):
-                            if hasattr(chunk, "content") and chunk.content:
-                                full_content.append(str(chunk.content))
-                            yield chunk
+    def tool(self, name=None):
+        return self._wrap_logic("name", OpenInferenceSpanKindValues.TOOL, name)
 
-                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, "".join(full_content))
-                        span.set_status(StatusCode.OK)
-                    except Exception as e:
-                        span.set_status(StatusCode.ERROR, str(e))
-                        span.record_exception(e)
-                        raise
-            return wrapper
-        return decorator
+    def flow(self, name=None):
+        return self._wrap_logic("name", OpenInferenceSpanKindValues.CHAIN, name)
 
-    def astream(self, name: str = None):
-        def decorator(func):
-            @functools.wraps(func)
-            async def wrapper(self_agent, *args, **kwargs):
-                if not self._is_enabled():
-                    async for chunk in func(self_agent, *args, **kwargs):
-                        yield chunk
-                    return
-
-                span_name = name or f"AgentStream:{self_agent.name}"
-                with self.tracer.start_as_current_span(span_name) as span:
-                    span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
-                    self._inject_topology(span, self_agent)
-
-                    full_content = []
-                    try:
-                        async for chunk in func(self_agent, *args, **kwargs):
-                            if hasattr(chunk, "content") and chunk.content:
-                                full_content.append(str(chunk.content))
-                            yield chunk
-
-                        span.set_attribute(SpanAttributes.OUTPUT_VALUE, "".join(full_content))
-                        span.set_status(StatusCode.OK)
-                    except Exception as e:
-                        span.set_status(StatusCode.ERROR, str(e))
-                        span.record_exception(e)
-                        raise
-            return wrapper
-        return decorator
-
-    def flow(self, name: str = None):
-        """Decorator to trace a full flow execution. Use it on function which orchestrates multiple agents/tools."""
-        def decorator(func):
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                if not self._is_enabled():
-                    return func(*args, **kwargs)
-
-                span_name = name or f"Flow:{func.__name__}"
-                with self.tracer.start_as_current_span(span_name) as span:
-                    span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, "CHAIN")
-
-                    try:
-                        result = func(*args, **kwargs)
-                        span.set_status(StatusCode.OK)
-                        return result
-                    except Exception as e:
-                        span.set_status(StatusCode.ERROR, str(e))
-                        span.record_exception(e)
-                        raise
-            return wrapper
-        return decorator
 
 Tracer = DecoratorTracer()

@@ -326,12 +326,7 @@ class Qdrant(VectorStoreBase):
         """
         self.client.update_collection_aliases(
             change_aliases_operations=[
-                CreateAliasOperation(
-                    create_alias=CreateAlias(
-                        collection_name=self.collection,
-                        alias_name=alias_name
-                    )
-                )
+                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name))
             ]
         )
 

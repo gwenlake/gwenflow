@@ -7,6 +7,7 @@ from gwenflow.agents import Agent
 from gwenflow.llms import ChatBase
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
+from gwenflow.telemetry import Tracer
 
 MAX_TRIALS = 5
 
@@ -88,6 +89,7 @@ class Flow(BaseModel):
                 available_tools = [tool.name for tool in step.agent.tools]
                 print("Tools  :", ",".join(available_tools))
 
+    @Tracer.flow(name="Flow")
     def run(self, query: str) -> str:
         outputs = {}
 

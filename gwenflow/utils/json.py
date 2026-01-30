@@ -39,8 +39,7 @@ def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict[s
     for key in expected_keys:
         if key not in json_obj:
             raise ValueError(
-                f"Got invalid return object. Expected key `{key}` to be present, "
-                f"but got {json_obj}"
+                f"Got invalid return object. Expected key `{key}` to be present, " f"but got {json_obj}"
             ) from None
     return json_obj
 

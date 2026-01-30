@@ -66,6 +66,7 @@ dev-dependencies = [
     "requests-mock==1.12.1",
     "ruff==0.6.9",
     "syrupy==4.7.2",
+    "arize-phoenix-otel>=0.14.0",
 ]
 
 [tool.pytest.ini_options]

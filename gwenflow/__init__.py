@@ -36,5 +36,5 @@ __all__ = [
     "FunctionTool",
     "Flow",
     "AutoFlow",
-    "TelemetryBase"
+    "TelemetryBase",
 ]

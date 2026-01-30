@@ -78,17 +78,12 @@ class YahooFinanceScreen(BaseTool):
     )
 
     def _run(
-    self,
-    operator: Annotated[
-        str,
-        Field(description="The queries support operators: GT, LT, BTWN, EQ, AND, OR.")
-    ],
-    values: Annotated[
-        list[Union[str, int]],
-        Field(description="The values to search for. Ex: ['intradaymarketcap', 1000000000]")
-    ],
+        self,
+        operator: Annotated[str, Field(description="The queries support operators: GT, LT, BTWN, EQ, AND, OR.")],
+        values: Annotated[
+            list[Union[str, int]], Field(description="The values to search for. Ex: ['intradaymarketcap', 1000000000]")
+        ],
     ):
-
         try:
             import yfinance as yf
 
