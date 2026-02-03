@@ -1,10 +1,11 @@
-from typing import Optional, Union, Any, List, Dict
+from collections.abc import AsyncIterator
+from typing import Optional, Union, Any, List, Dict, Iterator
 from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
 
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
-from gwenflow.types import Message
+from gwenflow.types import ModelResponse
 
 
 LLM_CONTEXT_WINDOW_SIZES = {
@@ -54,19 +55,19 @@ class ChatBase(BaseModel, ABC):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @abstractmethod
-    def invoke(self, *args, **kwargs) -> Any:
+    def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
 
     @abstractmethod
-    async def ainvoke(self, *args, **kwargs) -> Any:
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
         pass
 
     @abstractmethod
-    def stream(self, *args, **kwargs) -> Any:
+    def stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
         pass
  
     @abstractmethod
-    async def astream(self, *args, **kwargs) -> Any:
+    async def astream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
         pass
 
     def get_context_window_size(self) -> int:

@@ -9,14 +9,12 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall, ToolResponse
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
-
-from openai.types.chat import ChatCompletionMessageToolCall
 
 
 DEFAULT_MAX_TURNS = 10
@@ -195,38 +193,31 @@ class Agent(BaseModel):
     
     def run_tool(self, tool_call: ToolCall) -> Message:
     
+        tool_execution = ToolResponse(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.function.name,
+        )
+
         tool_map  = {tool.name: tool for tool in self.get_all_tools()}
-                    
-        if tool_call.function not in tool_map.keys():
+        
+        if tool_call.function.name not in tool_map.keys():
             logger.error(f"Tool {tool_call.function} does not exist")
-            return Message(
-                role="tool",
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.function,
-                content=f"Tool {tool_call.function} does not exist",
-            )
+            tool_execution.result = f"Tool {tool_call.function} does not exist"
+            return tool_execution.to_message()
 
         try:
-            logger.debug(f"Tool call: {tool_call.function}({tool_call.arguments})")
-            tool = tool_map[tool_call.function]
-            tool_response = tool.run(**tool_call.arguments)
-            if tool_response:
-                return Message(
-                    role="tool",
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_call.function,
-                    content=tool_response,
-                )
+            tool = tool_map[tool_call.function.name]
+            arguments = json.loads(tool_call.function.arguments)
+            logger.debug(f"Tool call: {tool_call.function}({arguments})")
+            tool_execution.result = tool.run(**arguments)
+            if tool_execution.result:
+                return tool_execution.to_message()
 
         except Exception as e:
             logger.error(f"Error executing tool '{tool_call.function}': {e}")
 
-        return Message(
-            role="tool",
-            tool_call_id=tool_call.id,
-            tool_name=tool_call.function,
-            content=f"Error executing tool '{tool_call.function}'",
-        )
+        tool_execution.result = f"Error executing tool '{tool_call.function}'"
+        return tool_execution.to_message()
     
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         tasks = []
@@ -247,20 +238,6 @@ class Agent(BaseModel):
                 results.append(result.to_dict())
             
         return results
-
-    def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
-        tool_calls = []
-        for tool_call in openai_tool_calls:
-            if isinstance(tool_call, dict):
-                tool_call = ChatCompletionMessageToolCall(**tool_call)
-            tool_calls.append(
-                ToolCall(
-                    id=tool_call.id,
-                    function=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments),
-                )
-            )
-        return tool_calls
 
     def _get_thinking(self, tool_calls) -> str:
         thinking = []
@@ -292,18 +269,9 @@ class Agent(BaseModel):
         # add reasoning
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
-            reasoning_agent_response = self.reason(messages_for_reasoning_model)
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=reasoning_agent_response.usage.input_tokens,
-                    output_tokens=reasoning_agent_response.usage.output_tokens,
-                    total_tokens=reasoning_agent_response.usage.total_tokens,
-                )
-                if reasoning_agent_response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            response = self.reason(messages_for_reasoning_model)
+            agent_response.reasoning_content = response.reasoning_content
+            agent_response.usage.add(response.usage)
     
         num_turns_available = DEFAULT_MAX_TURNS
 
@@ -318,41 +286,32 @@ class Agent(BaseModel):
             response = self.llm.invoke(input=messages_for_model)
 
             # usage
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens,
-                )
-                if response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            agent_response.usage.add(response.usage)
 
             # keep answer in memory
-            self.history.add_message(response.choices[0].message.model_dump())
+            tool_calls = [t.model_dump() for t in response.tool_calls]
+            _message = Message(role=response.role, content=response.content, tool_calls=tool_calls)
+            self.history.add_message(_message.model_dump())
 
             # stop if not tool call
-            if not response.choices[0].message.tool_calls:
-                agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
+            if not response.tool_calls:
+                agent_response.content = response.content
+                agent_response.messages.append(Message(**_message.model_dump()))
                 break
             
             # thinking
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
+            # agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
 
             # handle tool calls
-            tool_calls = self._convert_openai_tool_calls(response.choices[0].message.tool_calls)
-            if tool_calls and self.get_all_tools():
-                tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
+            if response.tool_calls and self.get_all_tools():
+                tool_messages = self.execute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
         
         # format response
         if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
+            agent_response.parsed = json.loads(agent_response.content)
         
         agent_response.finish_reason = "stop"
 

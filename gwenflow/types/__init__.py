@@ -1,15 +1,18 @@
 from gwenflow.types.message import Message
 from gwenflow.types.document import Document
 from gwenflow.types.usage import Usage
-from gwenflow.types.response import AgentResponse
+from gwenflow.types.response import ModelResponse, AgentResponse
+from gwenflow.types.tool import Function, ToolCall, ToolResponse
 from gwenflow.types.items import ItemHelpers
-from gwenflow.types.tool_call import ToolCall
 
 __all__ = [
     "Message",
     "Document",
     "Usage",
+    "Function",
+    "ToolCall",
+    "ToolResponse",
+    "ModelResponse",
     "AgentResponse",
     "ItemHelpers",
-    "ToolCall",
 ]
