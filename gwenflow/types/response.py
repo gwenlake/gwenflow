@@ -1,27 +1,53 @@
 import uuid
 from typing import Optional, Any, List, Dict
+from typing_extensions import Literal
 from pydantic import BaseModel, Field, field_validator, UUID4, ConfigDict
 from time import time
 
 from gwenflow.types import Message, Usage
 
 
+class Function(BaseModel):
+    name: str
+    arguments: str
+
+class ToolCall(BaseModel):
+    id: str
+    function: Function
+    type: Literal["function"]
+    
+class ToolResponse(BaseModel):
+    tool_call_id: str
+    tool_name: str
+    tool_args: Optional[Dict[str, Any]] = None
+    tool_call_error: Optional[bool] = None
+    result: Optional[str] = None
+    usage: Optional[Usage] = None
+    created_at: int = Field(default_factory=lambda: int(time()))
+
+    def to_message(self) -> Message:
+        return Message(
+            role="tool",
+            tool_call_id=self.tool_call_id,
+            tool_name=self.tool_name,
+            content=self.result,
+        )
+
 class ModelResponse(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     role: Optional[str] = None
+
     content: Optional[str] = None
     parsed: Optional[Any] = None
     reasoning_content: Optional[str] = None
-
-    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_calls: List[ToolCall] = Field(default_factory=list)
 
     finish_reason: Optional[str] = None
     usage: Optional[Usage] = None
 
     created_at: int = Field(default_factory=lambda: int(time()))
-
 
     def to_message(self) -> Message:
         return Message(**self.model_dump(exclude_unset=True))
