@@ -15,8 +15,8 @@ class ChatAzureOpenAI(ChatOpenAI):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        telemetry_config = TelemetryBase(service_name=self.service_name)
-        self.provider = telemetry_config.setup_telemetry()
+        # telemetry_config = TelemetryBase(service_name=self.service_name)
+        # self.provider = telemetry_config.setup_telemetry()
 
         # azure_telemetry.instrument()
 
