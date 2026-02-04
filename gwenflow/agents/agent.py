@@ -241,21 +241,6 @@ class Agent(BaseModel):
 
         return results
 
-    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
-        tasks = []
-        for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks)
-
-        final_results_as_dicts = []
-        for res in results:
-            if res:
-                final_results_as_dicts.append(res.to_dict())
-
-        return final_results_as_dicts
-
     def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
         tool_calls = []
         for tool_call in openai_tool_calls:
@@ -327,6 +312,9 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
+
+            if self.tool_choice == "required":
+                self.tool_choice = "auto"
 
         # format response
         if self.response_model:

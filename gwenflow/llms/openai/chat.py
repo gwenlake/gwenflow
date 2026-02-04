@@ -110,13 +110,12 @@ class ChatOpenAI(ChatBase):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    def _format_response(self, response: str, response_format: dict = None) -> str:
+    def _format_response(self, response: str, response_format: dict = None) -> Any:
         """Process the response."""
 
         if response_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)
-                # text_response = dirtyjson.loads(json_str)
                 text_response = json.loads(json_str)
                 return text_response
             except:
