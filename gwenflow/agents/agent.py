@@ -9,14 +9,12 @@ from pydantic import BaseModel, model_validator, field_validator, Field, ConfigD
 
 from gwenflow.logger import logger
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall
+from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall, ToolResponse
 from gwenflow.tools import BaseTool
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
 from gwenflow.tools.mcp import MCPServer, MCPUtil
-
-from openai.types.chat import ChatCompletionMessageToolCall
 
 
 DEFAULT_MAX_TURNS = 10
@@ -143,7 +141,7 @@ class Agent(BaseModel):
 
         return prompt.strip()
 
-    @Tracer.agent(name="ReasoningStep")
+    # @Tracer.agent(name="ReasoningStep")
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],

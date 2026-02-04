@@ -1,11 +1,11 @@
-from typing import Optional, Union, Any, List, Dict
+from collections.abc import AsyncIterator
+from typing import Optional, Union, Any, List, Dict, Iterator
 from pydantic import BaseModel, ConfigDict, Field
 from abc import ABC, abstractmethod
 
-
 from gwenflow.logger import logger
-from gwenflow.types import ModelResponse
 from gwenflow.tools import BaseTool
+from gwenflow.types import ModelResponse
 
 LLM_MODEL_PARAMETERS = {
     # --- OPENAI ---

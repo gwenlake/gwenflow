@@ -1,12 +1,10 @@
-import dirtyjson
 import json
 import os
 from collections.abc import AsyncIterator
 from typing import Optional, Union, Any, List, Dict, Iterator
-from pydantic import BaseModel
 
 from gwenflow.logger import logger
-from gwenflow.llms import ChatBase
+from gwenflow.llms.base import ChatBase
 from gwenflow.types import Message, ItemHelpers, ModelResponse, Usage, ToolCall
 from gwenflow.utils import extract_json_str
 

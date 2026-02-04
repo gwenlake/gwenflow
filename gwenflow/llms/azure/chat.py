@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 from openai import AsyncAzureOpenAI, AzureOpenAI
 
 from gwenflow.llms.openai import ChatOpenAI
-from gwenflow.telemetry.azure.azure_instrument import azure_telemetry
-from gwenflow.telemetry.base import TelemetryBase
+# from gwenflow.telemetry.azure.azure_instrument import azure_telemetry
+# from gwenflow.telemetry.base import TelemetryBase
 
 
 class ChatAzureOpenAI(ChatOpenAI):
@@ -18,7 +18,7 @@ class ChatAzureOpenAI(ChatOpenAI):
         telemetry_config = TelemetryBase(service_name=self.service_name)
         self.provider = telemetry_config.setup_telemetry()
 
-        azure_telemetry.instrument()
+        # azure_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
