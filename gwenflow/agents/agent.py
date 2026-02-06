@@ -341,66 +341,47 @@ class Agent(BaseModel):
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=reasoning_agent_response.usage.input_tokens,
-                    output_tokens=reasoning_agent_response.usage.output_tokens,
-                    total_tokens=reasoning_agent_response.usage.total_tokens,
-                )
-                if reasoning_agent_response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            agent_response.reasoning_content = response.reasoning_content
+            agent_response.usage.add(response.usage)
 
-        while True:
+        num_turns_available = DEFAULT_MAX_TURNS
+
+        while num_turns_available > 0:
+
+            num_turns_available -= 1
+
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             response = await self.llm.ainvoke(input=messages_for_model)
 
-            usage = (
-                Usage(
-                    requests=1,
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens,
-                )
-                if response.usage
-                else Usage()
-            )
-            agent_response.usage.add(usage)
+            # usage
+            agent_response.usage.add(response.usage)
 
-            self.history.add_message(response.choices[0].message.model_dump())
+            tool_calls = [t.model_dump() for t in response.tool_calls]
+            _message = Message(role=response.role, content=response.content, tool_calls=tool_calls)
+            self.history.add_message(_message.model_dump())
 
-            if not response.choices[0].message.tool_calls:
-                agent_response.content = response.choices[0].message.content
-                agent_response.messages.append(Message(**response.choices[0].message.model_dump()))
+            if not response.tool_calls:
+                agent_response.content = response.content
+                agent_response.messages.append(Message(**_message.model_dump()))
                 break
 
-            agent_response.thinking = self._get_thinking(response.choices[0].message.tool_calls)
-
-            tool_calls = response.choices[0].message.tool_calls
-            if tool_calls and self.get_all_tools():
-                tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
+            # handle tool calls
+            if response.tool_calls and self.get_all_tools():
+                tool_messages = await self.aexecute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(Message(**m))
 
+            if self.tool_choice == "required":
+                self.tool_choice = "auto"
+
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
 
-        for output in agent_response.messages:
-            if output.role == "tool":
-                try:
-                    agent_response.sources.append(
-                        ResponseOutputItem(
-                            id=output.tool_call_id,
-                            name=output.tool_name,
-                            data=json.loads(output.content),
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"Error casting source: {e}")
+        # format response
+        if self.response_model:
+            agent_response.parsed = json.loads(agent_response.content)
 
         agent_response.finish_reason = "stop"
 
@@ -476,6 +457,7 @@ class Agent(BaseModel):
                 if delta.content:
                     agent_response.content = delta.content
 
+                # ici pas la peine de check les index, chunks etc... l'appel fonction est déjà complet
                 for tool_call in delta.tool_calls or []:
                     index = tool_call.index
                     if index not in final_tool_calls:
