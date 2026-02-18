@@ -10,10 +10,10 @@ from gwenflow.api import Api, api
 from gwenflow.embeddings.base import Embeddings
 
 EMBEDDING_DIMS = {
-    "e5-base-v2": 768,
-    "e5-large-v2": 1024,
-    "multilingual-e5-base": 768,
-    "multilingual-e5-large": 1024,
+    "intfloat/e5-base-v2": 768,
+    "intfloat/e5-large-v2": 1024,
+    "intfloat/multilingual-e5-base": 768,
+    "intfloat/multilingual-e5-large": 1024,
 }
 
 EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
