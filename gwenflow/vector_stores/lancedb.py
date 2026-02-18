@@ -55,18 +55,14 @@ class LanceDB(VectorStoreBase):
     def create(self):
         """Create the table with the required schema if it doesn't exist."""
         if not self.exists():
+
             class Schema(LanceModel):
                 id: str
-                vector: Vector(self.embeddings.dimensions) # type: ignore
+                vector: Vector(self.embeddings.dimensions)  # type: ignore
                 payload: str
 
             logger.debug(f"Creating collection: {self.collection}")
-            self.table = self.client.create_table(
-                self.collection,
-                schema=Schema,
-                mode="overwrite",
-                exist_ok=True
-            )
+            self.table = self.client.create_table(self.collection, schema=Schema, mode="overwrite", exist_ok=True)
         else:
             self.table = self.client.open_table(self.collection)
 
