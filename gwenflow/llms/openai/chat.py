@@ -104,8 +104,8 @@ class ChatOpenAI(ChatBase):
         return self.client
 
     def get_async_client(self) -> AsyncOpenAI:
-        if self.client:
-            return self.client
+        if self.async_client:
+            return self.async_client
         client_params = self._get_client_params()
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
