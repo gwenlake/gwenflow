@@ -141,7 +141,6 @@ class Agent(BaseModel):
 
         return prompt.strip()
 
-    # @Tracer.agent(name="ReasoningStep")
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -164,8 +163,50 @@ class Agent(BaseModel):
             llm=self.reasoning_model,
             tools=self.tools,
         )
-        
+
         response = reasoning_agent.run(input)
+
+        # only keep text outside <think>
+        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = reasoning_content.strip()
+        if not reasoning_content:
+            return None
+
+        self.history.add_message(
+            Message(
+                role="assistant",
+                content=f"I have worked through this problem in-depth and my reasoning is summarized below.\n\n{reasoning_content}",
+            )
+        )
+
+        logger.debug("Thought:\n" + reasoning_content)
+
+        return response
+
+    async def areason(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+    ) -> AgentResponse:
+        if self.reasoning_model is None:
+            return None
+
+        logger.debug("Reasoning...")
+
+        reasoning_agent = Agent(
+            name="ReasoningAgent",
+            instructions=[
+                "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
+                "Carefully analyze the task by spelling it out loud.",
+                "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem."
+                "Work through your plan step-by-step, executing any tools as needed for each step.",
+                "Do not call any tool or try to solve the problem yourself.",
+                "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
+            ],
+            llm=self.reasoning_model,
+            tools=self.tools,
+        )
+
+        response = await reasoning_agent.run(input)
 
         # only keep text outside <think>
         reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
