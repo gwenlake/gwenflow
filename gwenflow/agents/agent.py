@@ -4,18 +4,16 @@ import re
 import uuid
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
-from typing import List, Union, Optional, Any, Dict, Iterator, Literal, AsyncIterator
-from pydantic import BaseModel, model_validator, field_validator, Field, ConfigDict, UUID4
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gwenflow.logger import logger
+from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.types import Usage, Message, AgentResponse, ItemHelpers, ToolCall, ToolResponse
-from gwenflow.tools import BaseTool
+from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
-from gwenflow.agents.prompts import PROMPT_JSON_SCHEMA, PROMPT_CONTEXT, PROMPT_KNOWLEDGE
+from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
-
+from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse, Usage
 
 DEFAULT_MAX_TURNS = 10
 
@@ -233,9 +231,9 @@ class Agent(BaseModel):
             # tools += MCPUtil.get_all_function_tools(self.mcp_servers)
             tools += mcp_tools
         return tools
-    
+
     def run_tool(self, tool_call: ToolCall) -> Message:
-    
+
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
             tool_name=tool_call.function.name,
