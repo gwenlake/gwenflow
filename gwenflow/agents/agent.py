@@ -261,16 +261,6 @@ class Agent(BaseModel):
 
         tool_execution.result = f"Error executing tool '{tool_call.function}'"
         return tool_execution.to_message()
-    
-    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
-        tasks = []
-        for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks)
-
-        return results
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
         # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
@@ -282,20 +272,15 @@ class Agent(BaseModel):
 
         return results
 
-    def _convert_openai_tool_calls(self, openai_tool_calls) -> list[ToolCall]:
-        tool_calls = []
-        for tool_call in openai_tool_calls:
-            if isinstance(tool_call, dict):
-                tool_call = ChatCompletionMessageToolCall(**tool_call)
-            tool_calls.append(
-                ToolCall(
-                    id=tool_call.id,
-                    function=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments),
-                )
-            )
-        return tool_calls
+    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
+        tasks = []
+        for tool_call in tool_calls:
+            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
+            tasks.append(task)
 
+        results = await asyncio.gather(*tasks)
+
+        return results
 
     def run(
             self,
