@@ -367,8 +367,8 @@ class Agent(BaseModel):
         if self.reasoning_model:
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
-            agent_response.reasoning_content = response.reasoning_content
-            agent_response.usage.add(response.usage)
+            agent_response.reasoning_content = reasoning_agent_response.reasoning_content
+            agent_response.usage.add(reasoning_agent_response.usage)
 
         num_turns_available = DEFAULT_MAX_TURNS
 
