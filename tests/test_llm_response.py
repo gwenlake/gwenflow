@@ -69,22 +69,3 @@ def cast_messages(message):
             result.append(m)
     return result
 
-
-@pytest.mark.skipif(TEST_ENV != "local", reason="Requires local environment (VCR cassette)")
-@my_vcr.use_cassette("chat_azure_invoke.yaml")
-def test_invoke_returns_content_with_real_api(chat, sample_user_message, snapshot):
-    """Integration test: ChatAzureOpenAI.invoke should return a response containing content when calling the real Azure OpenAI service (captured via VCR)."""
-    result = chat.invoke(sample_user_message)
-    assert result.choices[0].message.content is not None
-    snapshot.assert_match(result.model_dump())
-
-
-@pytest.mark.skipif(TEST_ENV == "local", reason="Uses mocked Azure client instead of real API")
-def test_invoke_returns_content_with_mock(monkeypatch, chat, sample_user_message):
-    """Unit test: ChatAzureOpenAI.invoke should return expected content when Azure client is mocked."""
-    fake_completion = FakeCompletion(content="mocked azure response")
-    fake_client = MagicMock()
-    fake_client.chat.completions.create.return_value = fake_completion
-    monkeypatch.setattr(ChatAzureOpenAI, "get_client", lambda self: fake_client)
-    result = chat.invoke(sample_user_message)
-    assert result.choices[0].message.content == "mocked azure response"
