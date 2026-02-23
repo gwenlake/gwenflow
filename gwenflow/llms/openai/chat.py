@@ -210,9 +210,6 @@ class ChatOpenAI(ChatBase):
                     if hasattr(delta, 'content') and delta.content:
                         response.content = delta.content
 
-                    if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                        response.reasoning_content = delta.reasoning_content
-
                     if hasattr(delta, 'tool_calls') and delta.tool_calls:
                         for tool_call in delta.tool_calls or []:
                             if _full_tool_calls and (not tool_call.id or tool_call.id == _full_tool_calls[-1].id):
@@ -264,9 +261,6 @@ class ChatOpenAI(ChatBase):
 
                     if hasattr(delta, 'content') and delta.content:
                         response.content = delta.content
-
-                    if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                        response.reasoning_content = delta.reasoning_content
 
                     if hasattr(delta, 'tool_calls') and delta.tool_calls:
                         for tool_call in delta.tool_calls or []:
