@@ -401,11 +401,8 @@ class Agent(BaseModel):
 
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
-
-        # format response
-        if self.response_model:
-            agent_response.parsed = json.loads(agent_response.content)
-
+            agent_response.parsed = agent_response.content
+            
         agent_response.finish_reason = "stop"
 
         return agent_response
