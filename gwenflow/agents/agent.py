@@ -260,17 +260,16 @@ class Agent(BaseModel):
         tool_execution.result = f"Error executing tool '{tool_call.function}'"
         return tool_execution.to_message()
 
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
-        # results = asyncio.run(self.aexecute_tool_calls(tool_calls))
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         results = []
         for tool_call in tool_calls:
             result = self.run_tool(tool_call)
             if result:
-                results.append(result.to_dict())
+                results.append(result)
 
         return results
 
-    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List:
+    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         tasks = []
         for tool_call in tool_calls:
             task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
@@ -327,7 +326,7 @@ class Agent(BaseModel):
             # stop if not tool call
             if not response.tool_calls:
                 agent_response.content = response.content
-                agent_response.messages.append(Message(**_message.model_dump()))
+                agent_response.messages.append(_message)
                 break
 
             # handle tool calls
@@ -335,7 +334,7 @@ class Agent(BaseModel):
                 tool_messages = self.execute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
+                    agent_response.messages.append(m)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -387,7 +386,7 @@ class Agent(BaseModel):
 
             if not response.tool_calls:
                 agent_response.content = response.content
-                agent_response.messages.append(Message(**_message.model_dump()))
+                agent_response.messages.append(_message)
                 break
 
             # handle tool calls
@@ -395,7 +394,7 @@ class Agent(BaseModel):
                 tool_messages = await self.aexecute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
+                    agent_response.messages.append(m)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -462,14 +461,14 @@ class Agent(BaseModel):
 
             if not final_tool_calls:
                 agent_response.content = full_content
-                agent_response.messages.append(Message(**_message.model_dump()))
+                agent_response.messages.append(_message)
                 break
 
             if final_tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
+                    agent_response.messages.append(m)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -536,14 +535,14 @@ class Agent(BaseModel):
 
             if not final_tool_calls:
                 agent_response.content = full_content
-                agent_response.messages.append(Message(**_message.model_dump()))
+                agent_response.messages.append(_message)
                 break
 
             if final_tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
                     self.history.add_message(m)
-                    agent_response.messages.append(Message(**m))
+                    agent_response.messages.append(m)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
