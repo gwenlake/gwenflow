@@ -11,9 +11,10 @@ from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
+from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
-from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse, Usage
+from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse
 
 DEFAULT_MAX_TURNS = 10
 
@@ -232,6 +233,7 @@ class Agent(BaseModel):
             tools += mcp_tools
         return tools
 
+    @tracer.tool(name="Tool Call")
     def run_tool(self, tool_call: ToolCall) -> Message:
 
         tool_execution = ToolResponse(
@@ -279,6 +281,7 @@ class Agent(BaseModel):
 
         return results
 
+    @tracer.agent(name="Agent Run")
     def run(
             self,
             input: Union[str, List[Message], List[Dict[str, str]]],
@@ -347,6 +350,7 @@ class Agent(BaseModel):
 
         return agent_response
 
+    @tracer.agent(name="Agent Arun")
     async def arun(
             self,
             input: Union[str, List[Message], List[Dict[str, str]]],
@@ -402,11 +406,12 @@ class Agent(BaseModel):
         if self.response_model:
             agent_response.content = json.loads(agent_response.content)
             agent_response.parsed = agent_response.content
-            
+
         agent_response.finish_reason = "stop"
 
         return agent_response
 
+    @tracer.agent(name="Agent Stream")
     def run_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -481,6 +486,7 @@ class Agent(BaseModel):
 
         yield agent_response
 
+    @tracer.agent(name="Agent Astream")
     async def arun_stream(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
