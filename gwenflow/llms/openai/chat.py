@@ -1,17 +1,17 @@
 import json
 import os
 from collections.abc import AsyncIterator
-from typing import Optional, Union, Any, List, Dict, Iterator
+from typing import Any, Dict, Iterator, List, Optional, Union
 
-from gwenflow.logger import logger
-from gwenflow.llms.base import ChatBase
-from gwenflow.types import Message, ItemHelpers, ModelResponse, Usage, ToolCall
-from gwenflow.utils import extract_json_str
-
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 
+from gwenflow.llms.base import ChatBase
+from gwenflow.logger import logger
+from gwenflow.telemetry import tracer
+from gwenflow.types import ItemHelpers, Message, ModelResponse, ToolCall, Usage
+from gwenflow.utils import extract_json_str
 
 
 class ChatOpenAI(ChatBase):
@@ -160,6 +160,7 @@ class ChatOpenAI(ChatBase):
 
         return model_response
 
+    @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
@@ -173,6 +174,7 @@ class ChatOpenAI(ChatBase):
 
         return self._parse_response(response)
 
+    @tracer.llm(name="LLM Async Invoke")
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
@@ -186,6 +188,7 @@ class ChatOpenAI(ChatBase):
 
         return self._parse_response(response)
 
+    @tracer.llm(name="LLM Stream")
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
@@ -238,6 +241,7 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}")
 
+    @tracer.llm(name="LLM Async Astream")
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
         try:
             messages_for_model = ItemHelpers.input_to_message_list(input)
