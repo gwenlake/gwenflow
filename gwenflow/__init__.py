@@ -12,7 +12,7 @@ from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.retriever import Retriever
 from gwenflow.tools import BaseTool, FunctionTool
 from gwenflow.types import Document, Message
-# from gwenflow.telemetry import TelemetryBase
+from gwenflow.telemetry import TelemetryBase
 
 __all__ = [
     "logger",
@@ -36,5 +36,5 @@ __all__ = [
     "FunctionTool",
     "Flow",
     "AutoFlow",
-    # "TelemetryBase"
+    "TelemetryBase",
 ]
