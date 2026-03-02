@@ -19,9 +19,9 @@ class TelemetryBase(BaseModel):
                 self.endpoint = env_endpoint
             else:
                 if self.protocol.upper() == "HTTP":
-                    self.endpoint = "http://localhost:6006/v1/traces"
+                    self.endpoint = "http://localhost:4318"
                 else:
-                    self.endpoint = "http://localhost:4317" # For gRPC
+                    self.endpoint = "localhost:4317" # For gRPC
         return self
 
     def initialize(self) -> None:
