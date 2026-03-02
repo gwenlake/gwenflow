@@ -23,7 +23,7 @@ async def test_telemetry():
         llm=llm,
         tools=[TavilyWebSearchTool()]
     )
-    async for i in agent.arun_stream("Whar was the last Rennes' match result ?"):
+    async for i in agent.arun_stream("What was the last Rennes' match result ?"):
         print(i.content)
 
 
