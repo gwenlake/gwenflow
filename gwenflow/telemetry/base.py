@@ -1,40 +1,59 @@
+import atexit
+import os
 from typing import Dict, Optional
 
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TelemetryBase(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    service_name: str = Field(default="gwenflow-service")
-    tags: Dict[str, str] = Field(default_factory=dict)
-    current_provider: Optional[TracerProvider] = None
-    endpoint: str = Field(default="http://localhost:6006/v1/traces")
-    enabled: bool = Field(default=True)
+    service_name: str = "gwenflow-service"
+    protocol: str = "HTTP"
+    endpoint: Optional[str] = None
+    headers: Dict[str, str] = Field(default_factory=dict)
 
-    def setup_telemetry(self) -> TracerProvider:
-        if not self.enabled:
-            return None
+    @model_validator(mode='after')
+    def set_default_endpoint(self) -> 'TelemetryBase':
+        if not self.endpoint:
+            env_endpoint = os.getenv("TELEMETRY_ENDPOINT")
+            if env_endpoint:
+                self.endpoint = env_endpoint
+            else:
+                if self.protocol.upper() == "HTTP":
+                    self.endpoint = "http://localhost:4318"
+                else:
+                    self.endpoint = "localhost:4317" # For gRPC
+        return self
 
-        resource_attributes = {"service.name": self.service_name}
-        resource_attributes.update(self.tags)
+    def initialize(self) -> None:
+        try:
+            from opentelemetry import trace
+            from opentelemetry.sdk.resources import Resource
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        except ImportError as exc:
+            raise ImportError(
+                "Opentelemetry is not installed.\n"
+                "To enable it, install the required packages: "
+                "`uv add opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp openinference-semantic-conventions`"
+            ) from exc
 
-        provider = trace.get_tracer_provider()
+        current_provider = trace.get_tracer_provider()
 
-        if not hasattr(provider, "resource") or provider.resource.attributes.get("service.name") == "unknown_service":
-            resource = Resource.create(resource_attributes)
+        if not isinstance(current_provider, TracerProvider):
+
+            resource = Resource.create({
+                "service.name": self.service_name,
+            })
             provider = TracerProvider(resource=resource)
-            trace.set_tracer_provider(provider)
 
-        self.current_provider = provider
-        return provider
+            if self.protocol.upper() == "GRPC":
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCOTLPExporter
+                exporter = GRPCOTLPExporter(endpoint=self.endpoint, headers=self.headers)
+            else:
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPOTLPExporter
+                exporter = HTTPOTLPExporter(endpoint=self.endpoint, headers=self.headers)
 
-    def add_exporter(self):
-        if self.enabled and self.current_provider:
-            exporter = OTLPSpanExporter(endpoint=self.endpoint)
             processor = BatchSpanProcessor(exporter)
-            self.current_provider.add_span_processor(processor)
+            provider.add_span_processor(processor)
+            trace.set_tracer_provider(provider)
+            atexit.register(provider.shutdown)
