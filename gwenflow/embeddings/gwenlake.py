@@ -32,7 +32,7 @@ class GwenlakeEmbeddings(Embeddings):
     @classmethod
     def validate_environment(cls, values: Dict) -> Dict:
         if "model" not in values:
-            values["model"] = "e5-base-v2"
+            values["model"] = "intfloat/e5-base-v2"
         values["dimensions"] = EMBEDDING_DIMS[values["model"]]
         return values
 
