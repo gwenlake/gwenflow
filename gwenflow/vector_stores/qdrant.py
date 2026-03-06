@@ -232,9 +232,9 @@ class Qdrant(VectorStoreBase):
             return []
 
         query_filter = self._create_filter(filters) if filters else None
-        hits = self.client.search(
+        hits = self.client.query_points(
             collection_name=self.collection,
-            query_vector=query_embedding,
+            query=query_embedding,
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
@@ -242,7 +242,7 @@ class Qdrant(VectorStoreBase):
         )
 
         documents = []
-        for d in hits:
+        for d in hits.points:
             if d.payload is None:
                 continue
 
