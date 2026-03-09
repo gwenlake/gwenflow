@@ -24,7 +24,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --all-groups --frozen
+        run: uv sync --group dev--frozen
 
       - name: Gwenflow tests
         run: uv run pytest --record-mode=none
