@@ -3,8 +3,9 @@ import logging
 from enum import Enum
 from typing import Optional
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import (
     CreateAlias,
     CreateAliasOperation,
     DatetimeRange,
@@ -19,7 +20,9 @@ from qdrant_client.models import (
     PointStruct,
     Range,
     VectorParams,
-)
+    )
+except ImportError as e:
+    raise ImportError("`qdrant-client` is not installed. Please install it with `pip install qdrant-client`.") from e
 
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.logger import logger

@@ -4,8 +4,11 @@ from typing import Dict, List, Optional
 
 import requests
 from pydantic import model_validator
-from tenacity import retry, stop_after_attempt, wait_fixed
 
+try:
+    from tenacity import retry, stop_after_attempt, wait_fixed
+except ImportError as e:
+    raise ImportError("`tenacity` is not installed. Please install it with `pip install tenacity`.") from e
 from gwenflow.api import Api, api
 from gwenflow.embeddings.base import Embeddings
 
