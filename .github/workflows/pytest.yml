@@ -20,11 +20,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "0.4.25"
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group dev--frozen
+        run: uv sync --all-groups --frozen
 
       - name: Gwenflow tests
         run: uv run pytest --record-mode=none
