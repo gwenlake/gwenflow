@@ -54,8 +54,8 @@ classifiers = [
 [tool.setuptools.packages.find]
 include = ["gwenflow*"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "duckduckgo-search==7.5.2",
     "openai-responses==0.13.1",
     "pytest-cov==5.0.0",
