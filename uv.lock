@@ -461,6 +461,7 @@ dependencies = [
     { name = "dirtyjson" },
     { name = "fsspec" },
     { name = "httpx" },
+    { name = "jinja2" },
     { name = "lancedb" },
     { name = "langchain-core" },
     { name = "markupsafe" },
@@ -474,7 +475,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jinja2" },
     { name = "openai-responses" },
     { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-api" },
@@ -499,8 +499,9 @@ requires-dist = [
     { name = "dirtyjson", specifier = "==1.0.8" },
     { name = "fsspec", specifier = "==2026.2.0" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "jinja2", specifier = "==3.1.6" },
     { name = "lancedb", specifier = "==0.29.2" },
-    { name = "langchain-core", specifier = "==1.2.15" },
+    { name = "langchain-core", specifier = "==1.2.17" },
     { name = "markupsafe", specifier = "==3.0.3" },
     { name = "mcp", specifier = "==1.25.0" },
     { name = "openai", specifier = "==2.15.0" },
@@ -512,7 +513,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jinja2", specifier = "==3.1.6" },
     { name = "openai-responses", specifier = "==0.13.1" },
     { name = "openinference-semantic-conventions", specifier = "==0.1.9" },
     { name = "opentelemetry-api", specifier = "==1.20.0" },
@@ -786,7 +786,7 @@ wheels = [
 
 [[package]]
 name = "langchain-core"
-version = "1.2.15"
+version = "1.2.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpatch" },
@@ -798,9 +798,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/db/693d81b6c229aceb7c6e6809939c6ab1b023554227a25de438f00c0389c6/langchain_core-1.2.15.tar.gz", hash = "sha256:7d5f5d2daa8ddbe4054a96101dc5d509926f831b9914808c24640987d499758c", size = 835280, upload-time = "2026-02-23T15:04:49.185Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/93/36226f593df52b871fc24d494c274f3a6b2ac76763a2806e7d35611634a1/langchain_core-1.2.17.tar.gz", hash = "sha256:54aa267f3311e347fb2e50951fe08e53761cebfb999ab80e6748d70525bbe872", size = 836130, upload-time = "2026-03-02T22:47:55.846Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/e0/a6a83dde94400b43d9b091ecbb41a50d6f86c4fecacb81b13d8452a7712b/langchain_core-1.2.15-py3-none-any.whl", hash = "sha256:8d920d8a31d8c223966a3993d8c79fd6093b9665f2222fc878812f3a52072ab7", size = 502213, upload-time = "2026-02-23T15:04:47.967Z" },
+    { url = "https://files.pythonhosted.org/packages/be/90/073f33ab383a62908eca7ea699586dfea280e77182176e33199c80ddf22a/langchain_core-1.2.17-py3-none-any.whl", hash = "sha256:bf6bd6ce503874e9c2da1669a69383e967c3de1ea808921d19a9a6bff1a9fbbe", size = 502727, upload-time = "2026-03-02T22:47:54.537Z" },
 ]
 
 [[package]]
