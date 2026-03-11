@@ -11,8 +11,8 @@ class TelemetryBase(BaseModel):
     endpoint: Optional[str] = None
     headers: Dict[str, str] = Field(default_factory=dict)
 
-    @model_validator(mode='after')
-    def set_default_endpoint(self) -> 'TelemetryBase':
+    @model_validator(mode="after")
+    def set_default_endpoint(self) -> "TelemetryBase":
         if not self.endpoint:
             env_endpoint = os.getenv("TELEMETRY_ENDPOINT")
             if env_endpoint:
@@ -21,7 +21,7 @@ class TelemetryBase(BaseModel):
                 if self.protocol.upper() == "HTTP":
                     self.endpoint = "http://localhost:4318"
                 else:
-                    self.endpoint = "localhost:4317" # For gRPC
+                    self.endpoint = "localhost:4317"  # For gRPC
         return self
 
     def initialize(self) -> None:
@@ -40,17 +40,20 @@ class TelemetryBase(BaseModel):
         current_provider = trace.get_tracer_provider()
 
         if not isinstance(current_provider, TracerProvider):
-
-            resource = Resource.create({
-                "service.name": self.service_name,
-            })
+            resource = Resource.create(
+                {
+                    "service.name": self.service_name,
+                }
+            )
             provider = TracerProvider(resource=resource)
 
             if self.protocol.upper() == "GRPC":
                 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCOTLPExporter
+
                 exporter = GRPCOTLPExporter(endpoint=self.endpoint, headers=self.headers)
             else:
                 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPOTLPExporter
+
                 exporter = HTTPOTLPExporter(endpoint=self.endpoint, headers=self.headers)
 
             processor = BatchSpanProcessor(exporter)

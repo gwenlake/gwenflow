@@ -1,8 +1,9 @@
 import uuid
-from typing import Optional, Any, List, Dict
-from typing_extensions import Literal
-from pydantic import BaseModel, Field, field_validator, UUID4, ConfigDict
 from time import time
+from typing import Any, Dict, List, Optional
+
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
+from typing_extensions import Literal
 
 from gwenflow.types import Message, Usage
 
@@ -11,10 +12,12 @@ class Function(BaseModel):
     name: str
     arguments: str
 
+
 class ToolCall(BaseModel):
     id: str
     function: Function
     type: Literal["function"]
+
 
 class ToolResponse(BaseModel):
     tool_call_id: str
@@ -33,8 +36,8 @@ class ToolResponse(BaseModel):
             content=self.result,
         )
 
-class ModelResponse(BaseModel):
 
+class ModelResponse(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     role: Optional[str] = None
@@ -54,7 +57,6 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
     """The id of the response."""
 

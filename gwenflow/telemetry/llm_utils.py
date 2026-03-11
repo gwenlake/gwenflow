@@ -9,9 +9,8 @@ def prepare_llm_attributes(span: Span, instance: Any):
     if hasattr(instance, "model"):
         span.set_attribute(SpanAttributes.LLM_MODEL_NAME, str(instance.model))
     if hasattr(instance, "_model_params"):
-        span.set_attribute(
-            SpanAttributes.LLM_INVOCATION_PARAMETERS, json.dumps(instance._model_params, default=str)
-        )
+        span.set_attribute(SpanAttributes.LLM_INVOCATION_PARAMETERS, json.dumps(instance._model_params, default=str))
+
 
 def capture_llm_usage(span: Span, result: Any):
     if not hasattr(result, "usage") or not result.usage:
@@ -27,6 +26,7 @@ def capture_llm_usage(span: Span, result: Any):
 
     if getattr(usage, "total_tokens", None) is not None:
         span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, usage.total_tokens)
+
 
 def capture_tool_calls(span: Span, tool_calls: Any):
     if not tool_calls:

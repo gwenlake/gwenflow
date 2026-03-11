@@ -1,5 +1,5 @@
-from gwenflow.llms.base import ChatBase
 from gwenflow.llms.azure import ChatAzureOpenAI
+from gwenflow.llms.base import ChatBase
 from gwenflow.llms.deepseek import ChatDeepSeek
 from gwenflow.llms.google import ChatGemini
 from gwenflow.llms.gwenlake import ChatGwenlake

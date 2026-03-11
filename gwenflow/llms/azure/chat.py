@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from openai import AsyncAzureOpenAI, AzureOpenAI
 
 from gwenflow.llms.openai import ChatOpenAI
+
 # from gwenflow.telemetry.azure.azure_instrument import azure_telemetry
 # from gwenflow.telemetry.base import TelemetryBase
 

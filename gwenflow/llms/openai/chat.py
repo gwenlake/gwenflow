@@ -15,7 +15,6 @@ from gwenflow.utils import extract_json_str
 
 
 class ChatOpenAI(ChatBase):
-
     model: str = "gpt-4o-mini"
 
     # model parameters
@@ -45,7 +44,6 @@ class ChatOpenAI(ChatBase):
     max_retries: Optional[int] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
-
         api_key = self.api_key
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
@@ -56,7 +54,7 @@ class ChatOpenAI(ChatBase):
 
         organization = self.organization
         if organization is None:
-            organization = os.environ.get('OPENAI_ORG_ID')
+            organization = os.environ.get("OPENAI_ORG_ID")
 
         client_params = {
             "api_key": api_key,
@@ -72,7 +70,6 @@ class ChatOpenAI(ChatBase):
 
     @property
     def _model_params(self) -> Dict[str, Any]:
-
         model_params = {
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -112,7 +109,6 @@ class ChatOpenAI(ChatBase):
 
     def _format_response(self, response: str, response_format: dict = None) -> Any:
         """Process the response."""
-
         if response_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)
@@ -145,7 +141,7 @@ class ChatOpenAI(ChatBase):
             usage=self._get_openai_usage(completion),
         )
 
-        if hasattr(completion.choices[0].message, 'reasoning_content'):
+        if hasattr(completion.choices[0].message, "reasoning_content"):
             model_response.reasoning_content = completion.choices[0].message.reasoning_content
 
         tool_calls = completion.choices[0].message.tool_calls
@@ -156,7 +152,9 @@ class ChatOpenAI(ChatBase):
                 logger.warning(f"Error processing tool calls: {e}")
 
         if self.response_format:
-            model_response.parsed = self._format_response(completion.choices[0].message.content, response_format=self.response_format)
+            model_response.parsed = self._format_response(
+                completion.choices[0].message.content, response_format=self.response_format
+            )
 
         return model_response
 
@@ -203,17 +201,15 @@ class ChatOpenAI(ChatBase):
             _full_tool_calls = []
 
             for chunk in completion:
-
                 response = ModelResponse(role="assistant")
 
                 if chunk.choices:
-
                     delta: ChoiceDelta = chunk.choices[0].delta
 
-                    if hasattr(delta, 'content') and delta.content:
+                    if hasattr(delta, "content") and delta.content:
                         response.content = delta.content
 
-                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tool_call in delta.tool_calls or []:
                             if _full_tool_calls and (not tool_call.id or tool_call.id == _full_tool_calls[-1].id):
                                 if tool_call.function.name:
@@ -221,20 +217,18 @@ class ChatOpenAI(ChatBase):
                                 if tool_call.function.arguments:
                                     _full_tool_calls[-1].function.arguments += tool_call.function.arguments
                             else:
-                                _full_tool_calls.append(
-                                    ToolCall(**tool_call.model_dump())
-                                )
+                                _full_tool_calls.append(ToolCall(**tool_call.model_dump()))
 
                     if _full_tool_calls:
                         response.tool_calls = _full_tool_calls
 
                     if response.content or response.reasoning_content:
                         yield response
-                    elif len(response.tool_calls)>0 and chunk.choices[0].finish_reason == "tool_calls":
+                    elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
                         yield response
 
                 else:
-                    if hasattr(response, 'usage'):
+                    if hasattr(response, "usage"):
                         response.usage = self._get_openai_usage(chunk)
                         yield response
 
@@ -256,17 +250,15 @@ class ChatOpenAI(ChatBase):
             _full_tool_calls = []
 
             async for chunk in completion:
-
                 response = ModelResponse(role="assistant")
 
                 if chunk.choices:
-
                     delta: ChoiceDelta = chunk.choices[0].delta
 
-                    if hasattr(delta, 'content') and delta.content:
+                    if hasattr(delta, "content") and delta.content:
                         response.content = delta.content
 
-                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tool_call in delta.tool_calls or []:
                             if _full_tool_calls and (not tool_call.id or tool_call.id == _full_tool_calls[-1].id):
                                 if tool_call.function.name:
@@ -274,20 +266,18 @@ class ChatOpenAI(ChatBase):
                                 if tool_call.function.arguments:
                                     _full_tool_calls[-1].function.arguments += tool_call.function.arguments
                             else:
-                                _full_tool_calls.append(
-                                    ToolCall(**tool_call.model_dump())
-                                )
+                                _full_tool_calls.append(ToolCall(**tool_call.model_dump()))
 
                     if _full_tool_calls:
                         response.tool_calls = _full_tool_calls
 
                     if response.content or response.reasoning_content:
                         yield response
-                    elif len(response.tool_calls)>0 and chunk.choices[0].finish_reason == "tool_calls":
+                    elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
                         yield response
 
                 else:
-                    if hasattr(response, 'usage'):
+                    if hasattr(response, "usage"):
                         response.usage = self._get_openai_usage(chunk)
                         yield response
 

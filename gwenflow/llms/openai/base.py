@@ -7,7 +7,7 @@ from gwenflow.types import Usage
 
 
 class ResponseContent(BaseModel):
-    type: Literal['output_text', 'summary_text']
+    type: Literal["output_text", "summary_text"]
     text: Any
     annotations: Optional[List] = Field(default_factory=list)
 
@@ -22,8 +22,8 @@ class ResponseOutputItem(BaseModel):
 
 
 class ReasoningItem(BaseModel):
-    effort: Literal['low', 'medium', 'high']
-    summary: Literal['auto', 'concise', 'detailed']
+    effort: Literal["low", "medium", "high"]
+    summary: Literal["auto", "concise", "detailed"]
 
 
 class Response(BaseModel):
@@ -39,9 +39,9 @@ class Response(BaseModel):
     reasoning: Optional[ReasoningItem] = None
     text_format: Optional[Any] = None
     tools: Optional[List[BaseTool]] = None
-    tool_choice: Optional[Literal['none', 'auto', 'required']] = None
+    tool_choice: Optional[Literal["none", "auto", "required"]] = None
     temperature: Optional[float] = None
-    top_p : Optional[float] = None
+    top_p: Optional[float] = None
 
     def get_text(self) -> str:
         for item in self.output:
@@ -61,6 +61,7 @@ class Logprob(BaseModel):
     logprob: float
     bytes: Optional[List[int]] = None
 
+
 class ResponseDeltaEventBase(BaseModel):
     item_id: str
     sequence_number: int
@@ -69,6 +70,7 @@ class ResponseDeltaEventBase(BaseModel):
 class ResponseReasoningDeltaEvent(ResponseDeltaEventBase):
     type: Literal["response.reasoning_summary_text.delta"]
     delta: str
+
 
 class ResponseTextDeltaEvent(ResponseDeltaEventBase):
     type: Literal["response.output_text.delta"]
@@ -80,14 +82,11 @@ class ResponseDoneEvent(BaseModel):
     type: Literal["response.completed"]
     response: Response
 
+
 AnyResponseEvent = Annotated[
-    Union[
-        ResponseReasoningDeltaEvent,
-        ResponseTextDeltaEvent,
-        ResponseDoneEvent
-    ],
-    Field(discriminator="type")
+    Union[ResponseReasoningDeltaEvent, ResponseTextDeltaEvent, ResponseDoneEvent], Field(discriminator="type")
 ]
+
 
 class ResponseEvent(RootModel):
     root: AnyResponseEvent
