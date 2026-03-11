@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import Literal
 
-from gwenflow.types import Message, Usage
+from gwenflow.types.message import Message
+from gwenflow.types.usage import Usage
 
 
 class Function(BaseModel):
