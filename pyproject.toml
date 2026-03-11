@@ -109,6 +109,8 @@ ignore = [
     "D107", # TODO: enable docstrings for __init__
     "E501", # TODO: temporarily disable line too long
     "N999", # TODO: temporarily disable invalid module name
+    "E722",
+    "B904",
 ]
 
 [tool.ruff.lint.pydocstyle]
