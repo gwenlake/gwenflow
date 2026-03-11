@@ -32,10 +32,12 @@ class ResponseOpenAI(ChatBase):
     max_tool_calls: Optional[int] = None
     prompt_cache_key: Optional[bool] = None
     prompt_cache_retention: Optional[bool] = None
-    text_format: Optional[Any] = None # TODO change later to available output type
+    text_format: Optional[Any] = None  # TODO change later to available output type
     top_logprobs: Optional[int] = None
-    reasoning_effort: Optional[Literal['low', 'medium', 'high']] = None
-    reasoning_summary: Optional[Literal['auto', 'concise', 'detailed']] = None #Use only auto to make sure it is compatible with all reasoning models for now
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = (
+        None  # Use only auto to make sure it is compatible with all reasoning models for now
+    )
     show_reasoning: bool = False
 
     # clients
@@ -87,7 +89,6 @@ class ResponseOpenAI(ChatBase):
 
     @property
     def _model_params(self) -> Dict[str, Any]:
-
         model_params = {
             "background": self.background,
             "max_output_tokens": self.max_output_tokens,
@@ -100,10 +101,7 @@ class ResponseOpenAI(ChatBase):
             "top_p": self.top_p,
         }
         if self.get_reasoning_model():
-            model_params["reasoning"] = {
-                "effort": self.reasoning_effort,
-                "summary": self.reasoning_summary
-            }
+            model_params["reasoning"] = {"effort": self.reasoning_effort, "summary": self.reasoning_summary}
 
         if self.tools and self.tool_type == "base":
             model_params["tools"] = [tool.to_openai_new() for tool in self.tools]
@@ -159,9 +157,7 @@ class ResponseOpenAI(ChatBase):
 
         if self.text_format:
             content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
+            content = self._parse_response(content_output, text_format=self.text_format)
             for item in response.output:
                 if item.type == "message" and item.content:
                     item.content[0].text = content
@@ -182,9 +178,7 @@ class ResponseOpenAI(ChatBase):
 
         if self.text_format:
             content_output = response.get_text()
-            content = self._parse_response(
-                content_output, text_format=self.text_format
-            )
+            content = self._parse_response(content_output, text_format=self.text_format)
             for item in response.output:
                 if item.type == "message" and item.content:
                     item.content[0].text = content
@@ -236,7 +230,7 @@ class ResponseOpenAI(ChatBase):
                 input=[self._format_message(m) for m in messages_for_model],
                 stream=True,
                 **self._model_params,
-                ) as raw_stream:
+            ) as raw_stream:
                 async for raw_event in raw_stream:
                     try:
                         event_obj = ResponseEvent.model_validate(raw_event.model_dump())

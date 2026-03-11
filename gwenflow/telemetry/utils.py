@@ -13,6 +13,7 @@ def safe_serialize(obj: Any) -> str:
     except Exception:
         return str(obj)
 
+
 def extract_user_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
     try:
         sig = inspect.signature(func)

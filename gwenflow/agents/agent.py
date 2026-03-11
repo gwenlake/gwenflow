@@ -166,7 +166,7 @@ class Agent(BaseModel):
         response = reasoning_agent.run(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL)
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
@@ -208,7 +208,7 @@ class Agent(BaseModel):
         response = await reasoning_agent.run(input)
 
         # only keep text outside <think>
-        reasoning_content = re.sub(r'<think>.*?</think>', '', response.content, flags=re.DOTALL)
+        reasoning_content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL)
         reasoning_content = reasoning_content.strip()
         if not reasoning_content:
             return None
@@ -235,13 +235,12 @@ class Agent(BaseModel):
 
     @tracer.tool(name="Tool Call")
     def run_tool(self, tool_call: ToolCall) -> Message:
-
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
             tool_name=tool_call.function.name,
         )
 
-        tool_map  = {tool.name: tool for tool in self.get_all_tools()}
+        tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
         if tool_call.function.name not in tool_map.keys():
             logger.error(f"Tool {tool_call.function} does not exist")
@@ -283,11 +282,10 @@ class Agent(BaseModel):
 
     @tracer.agent(name="Agent Run")
     def run(
-            self,
-            input: Union[str, List[Message], List[Dict[str, str]]],
-            context: Optional[Union[str, Dict[str, str]]] = None,
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         # prepare messages and task
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
@@ -309,7 +307,6 @@ class Agent(BaseModel):
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
 
             # format messages
@@ -352,11 +349,10 @@ class Agent(BaseModel):
 
     @tracer.agent(name="Agent Arun")
     async def arun(
-            self,
-            input: Union[str, List[Message], List[Dict[str, str]]],
-            context: Optional[Union[str, Dict[str, str]]] = None,
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+        context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
@@ -374,7 +370,6 @@ class Agent(BaseModel):
         num_turns_available = DEFAULT_MAX_TURNS
 
         while num_turns_available > 0:
-
             num_turns_available -= 1
 
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -417,7 +412,6 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 
@@ -492,7 +486,6 @@ class Agent(BaseModel):
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AsyncIterator[AgentResponse]:
-
         messages = ItemHelpers.input_to_message_list(input)
         task = messages[-1].content
 

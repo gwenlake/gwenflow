@@ -47,8 +47,6 @@ class MCPServer(abc.ABC):
 
 
 class _MCPServerWithClientSession(MCPServer, abc.ABC):
-
-
     def __init__(self, cache_tools_list: bool):
         """Base class for MCP servers that use a `ClientSession` to communicate with the server.
 

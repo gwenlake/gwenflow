@@ -51,6 +51,7 @@ class DecoratorTracer:
         def decorator(func):
             # 1. ASYNC GENERATOR (Streaming Async)
             if inspect.isasyncgenfunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -81,10 +82,12 @@ class DecoratorTracer:
                                 span.record_exception(e)
                                 span.set_status(StatusCode.ERROR, str(e))
                             raise
+
                 return wrapper
 
             # 2. ASYNC FUNCTION (ainvoke)
             elif inspect.iscoroutinefunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -100,10 +103,12 @@ class DecoratorTracer:
 
                         self._finalize_span_output(span, content, tc_json, result)
                         return result
+
                 return wrapper
 
             # 3. SYNC GENERATOR (Streaming Sync)
             elif inspect.isgeneratorfunction(func):
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -131,10 +136,12 @@ class DecoratorTracer:
                                 span.record_exception(e)
                                 span.set_status(StatusCode.ERROR, str(e))
                             raise
+
                 return wrapper
 
             # 4. SYNC FUNCTION (invoke)
             else:
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name = name_override or f"{kind.value}:{getattr(instance, name_attr, 'unknown')}"
@@ -150,7 +157,9 @@ class DecoratorTracer:
 
                         self._finalize_span_output(span, content, tc_json, result)
                         return result
+
                 return wrapper
+
         return decorator
 
     def llm(self, name=None):
@@ -164,5 +173,6 @@ class DecoratorTracer:
 
     def flow(self, name=None):
         return self._wrap_logic("name", OpenInferenceSpanKindValues.CHAIN, name)
+
 
 tracer = DecoratorTracer()

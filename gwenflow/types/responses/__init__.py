@@ -30,5 +30,5 @@ __all__ = [
     "ResponseReasoningDeltaEvent",
     "ResponseReasoningEvent",
     "ResponseToolCallEvent",
-    ""
+    "",
 ]

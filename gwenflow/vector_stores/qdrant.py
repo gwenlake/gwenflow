@@ -3,23 +3,26 @@ import logging
 from enum import Enum
 from typing import Optional
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    CreateAlias,
-    CreateAliasOperation,
-    DatetimeRange,
-    DeleteAlias,
-    DeleteAliasOperation,
-    Distance,
-    FieldCondition,
-    Filter,
-    MatchValue,
-    PayloadSchemaType,
-    PointIdsList,
-    PointStruct,
-    Range,
-    VectorParams,
-)
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import (
+        CreateAlias,
+        CreateAliasOperation,
+        DatetimeRange,
+        DeleteAlias,
+        DeleteAliasOperation,
+        Distance,
+        FieldCondition,
+        Filter,
+        MatchValue,
+        PayloadSchemaType,
+        PointIdsList,
+        PointStruct,
+        Range,
+        VectorParams,
+    )
+except ImportError as e:
+    raise ImportError("`qdrant-client` is not installed. Please install it with `pip install qdrant-client`.") from e
 
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.logger import logger
@@ -326,12 +329,7 @@ class Qdrant(VectorStoreBase):
         """
         self.client.update_collection_aliases(
             change_aliases_operations=[
-                CreateAliasOperation(
-                    create_alias=CreateAlias(
-                        collection_name=self.collection,
-                        alias_name=alias_name
-                    )
-                )
+                CreateAliasOperation(create_alias=CreateAlias(collection_name=self.collection, alias_name=alias_name))
             ]
         )
 

@@ -9,20 +9,18 @@ from gwenflow.tools.tavily import TavilyWebSearchTool
 
 load_dotenv()
 
-telemetry = TelemetryBase(service_name="gwenflow-dev",)
+telemetry = TelemetryBase(
+    service_name="gwenflow-dev",
+)
 telemetry.initialize()
 
-async def test_telemetry():
 
+async def test_telemetry():
     llm = ChatOpenAI(
         model="gpt-5-nano",
     )
 
-    agent = Agent(
-        name="Football expert",
-        llm=llm,
-        tools=[TavilyWebSearchTool()]
-    )
+    agent = Agent(name="Football expert", llm=llm, tools=[TavilyWebSearchTool()])
     async for i in agent.arun_stream("What was the last Rennes' match result ?"):
         print(i.content)
 
