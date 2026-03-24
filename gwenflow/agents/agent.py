@@ -2,9 +2,9 @@ import asyncio
 import json
 import re
 import uuid
-from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Type, Union
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
@@ -15,6 +15,7 @@ from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse
+from gwenflow.utils import extract_json_str
 
 DEFAULT_MAX_TURNS = 100
 
@@ -35,7 +36,7 @@ class Agent(BaseModel):
     instructions: str | List[str] | None = None
     """The instructions for the agent."""
 
-    response_model: Dict | None = None
+    response_model: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None
     """Response model."""
 
     llm: Optional[ChatBase] = Field(None, validate_default=True)
@@ -83,7 +84,7 @@ class Agent(BaseModel):
                 token_limit = self.llm.get_context_window_size()
                 self.history = ChatMemoryBuffer(token_limit=token_limit)
             if self.response_model:
-                self.llm.response_format = {"type": "json_object"}
+                self.llm.response_format = self.response_model
             if self.tools or self.mcp_servers:
                 self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
@@ -102,6 +103,26 @@ class Agent(BaseModel):
                 text += context.get(key) + "\n"
                 text += f"</{key}>\n\n"
         return text
+
+    def _validate_final_response(
+        self, content_to_parse: str | Dict[str, Any] | List[Any] | None
+    ) -> tuple[bool, Any, Optional[str]]:
+        if not (isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel)):
+            return True, content_to_parse, None
+
+        try:
+            if isinstance(content_to_parse, str):
+                content_to_parse = json.loads(extract_json_str(content_to_parse))
+
+            parsed_obj = self.response_model.model_validate(content_to_parse)
+            return True, parsed_obj, None
+        except (ValidationError, json.JSONDecodeError, TypeError, ValueError) as e:
+            error_msg = (
+                f"Your final response failed validation against the required schema. "
+                f"Error details:\n{str(e)}\n"
+                f"Please correct the errors and return ONLY the valid JSON."
+            )
+            return False, None, error_msg
 
     def get_system_prompt(
         self,
@@ -124,7 +145,12 @@ class Agent(BaseModel):
         prompt += "\n\n"
 
         if self.response_model:
-            prompt += PROMPT_JSON_SCHEMA.format(json_schema=json.dumps(self.response_model, indent=4)).strip()
+            if isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel):
+                schema_str = json.dumps(self.response_model.model_json_schema(), indent=4)
+            else:
+                schema_str = json.dumps(self.response_model, indent=4)
+
+            prompt += PROMPT_JSON_SCHEMA.format(json_schema=schema_str).strip()
             prompt += "\n\n"
 
         if self.retriever:
@@ -325,9 +351,19 @@ class Agent(BaseModel):
 
             # stop if not tool call
             if not response.tool_calls:
-                agent_response.content = response.content
-                agent_response.messages.append(_message)
-                break
+                content_to_check = response.parsed if response.parsed else response.content
+                is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
+
+                if is_valid:
+                    agent_response.content = response.content
+                    agent_response.parsed = parsed_data
+                    agent_response.messages.append(_message)
+                    break
+                else:
+                    self.history.add_message(_message.model_dump())
+                    retry_message = Message(role="user", content=error_msg)
+                    self.history.add_message(retry_message.model_dump())
+                    continue
 
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
@@ -338,10 +374,6 @@ class Agent(BaseModel):
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
-
-        # format response
-        if self.response_model:
-            agent_response.parsed = json.loads(agent_response.content)
 
         agent_response.finish_reason = "stop"
 
