@@ -17,8 +17,6 @@ from gwenflow.tools.mcp import MCPServer, MCPUtil
 from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
 
-DEFAULT_MAX_TURNS = 100
-
 
 class Agent(BaseModel):
     id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
@@ -62,6 +60,9 @@ class Agent(BaseModel):
 
     team: List["Agent"] | None = None
     """Team of agents."""
+
+    max_turns: Optional[int] = Field(100)
+    """Maximum turn (tool calls, llm calls) an agent can do."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -330,7 +331,7 @@ class Agent(BaseModel):
             agent_response.reasoning_content = response.reasoning_content
             agent_response.usage.add(response.usage)
 
-        num_turns_available = DEFAULT_MAX_TURNS
+        num_turns_available = self.max_turns
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -399,7 +400,7 @@ class Agent(BaseModel):
             agent_response.reasoning_content = reasoning_agent_response.reasoning_content
             agent_response.usage.add(reasoning_agent_response.usage)
 
-        num_turns_available = DEFAULT_MAX_TURNS
+        num_turns_available = self.max_turns
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -458,7 +459,7 @@ class Agent(BaseModel):
             agent_response.reasoning_content = reasoning_response.reasoning_content
             agent_response.usage.add(reasoning_response.usage)
 
-        num_turns_available = DEFAULT_MAX_TURNS
+        num_turns_available = self.max_turns
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -532,7 +533,7 @@ class Agent(BaseModel):
             agent_response.reasoning_content = reasoning_response.reasoning_content
             agent_response.usage.add(reasoning_response.usage)
 
-        num_turns_available = DEFAULT_MAX_TURNS
+        num_turns_available = self.max_turns
 
         while num_turns_available > 0:
             num_turns_available -= 1
