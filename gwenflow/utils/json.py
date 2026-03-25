@@ -39,8 +39,7 @@ def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict[s
     for key in expected_keys:
         if key not in json_obj:
             raise ValueError(
-                f"Got invalid return object. Expected key `{key}` to be present, "
-                f"but got {json_obj}"
+                f"Got invalid return object. Expected key `{key}` to be present, but got {json_obj}"
             ) from None
     return json_obj
 
@@ -65,3 +64,15 @@ def extract_json_str(text: str) -> str:
         if not match:
             raise ValueError(f"Could not extract json string from output: {text}")
     return match.group()
+
+
+def make_pydantic_schema_strict_json(schema: Any) -> Any:
+    """Used to verifiy if a pydantic class host others pydantic class."""
+    if isinstance(schema, dict):
+        if schema.get("type") == "object" or "properties" in schema or "anyOf" in schema:
+            schema["additionalProperties"] = False
+        for key, value in schema.items():
+            schema[key] = make_pydantic_schema_strict_json(value)
+    elif isinstance(schema, list):
+        return [make_pydantic_schema_strict_json(item) for item in schema]
+    return schema

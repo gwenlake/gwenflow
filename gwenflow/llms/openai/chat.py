@@ -12,7 +12,7 @@ from gwenflow.llms.base import ChatBase
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.types import ItemHelpers, Message, ModelResponse, ToolCall, Usage
-from gwenflow.utils import extract_json_str
+from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
 class ChatOpenAI(ChatBase):
@@ -91,11 +91,12 @@ class ChatOpenAI(ChatBase):
 
         if self.response_format:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                schema = self.response_format.model_json_schema()
-                schema["additionalProperties"] = False
+                raw_schema = self.response_format.model_json_schema()
+                strict_schema = make_pydantic_schema_strict_json(raw_schema)
+
                 model_params["response_format"] = {
                     "type": "json_schema",
-                    "json_schema": {"name": self.response_format.__name__, "strict": True, "schema": schema},
+                    "json_schema": {"name": self.response_format.__name__, "strict": True, "schema": strict_schema},
                 }
             else:
                 model_params["response_format"] = self.response_format
