@@ -120,6 +120,8 @@ class ChatOpenAI(ChatBase):
         return self.async_client
 
     def _format_response(self, response: str, response_format: Any = None) -> Any:
+        if response is None:
+            return None
         json_dict = isinstance(response_format, dict) and response_format.get("type") == "json_object"
         pydantic = isinstance(response_format, type) and issubclass(response_format, BaseModel)
         if json_dict or pydantic:
