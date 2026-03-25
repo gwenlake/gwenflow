@@ -71,6 +71,8 @@ def make_pydantic_schema_strict_json(schema: Any) -> Any:
     if isinstance(schema, dict):
         if schema.get("type") == "object" or "properties" in schema or "anyOf" in schema:
             schema["additionalProperties"] = False
+        if "properties" in schema:
+            schema["required"] = list(schema["properties"].keys())
         for key, value in schema.items():
             schema[key] = make_pydantic_schema_strict_json(value)
     elif isinstance(schema, list):
