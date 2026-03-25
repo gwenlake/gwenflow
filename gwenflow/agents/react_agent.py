@@ -5,9 +5,11 @@ from typing import Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel
 
-from gwenflow.agents.agent import DEFAULT_MAX_TURNS, Agent
+from gwenflow.agents.agent import Agent
 from gwenflow.logger import logger
 from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, Usage
+
+DEFAULT_MAX_TURNS = 100
 
 PROMPT_TOOLS = """\
 You have access to the following tools. Only use these tools.

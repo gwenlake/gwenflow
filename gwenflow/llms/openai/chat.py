@@ -1,17 +1,18 @@
 import json
 import os
 from collections.abc import AsyncIterator
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
+from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.types import ItemHelpers, Message, ModelResponse, ToolCall, Usage
-from gwenflow.utils import extract_json_str
+from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
 class ChatOpenAI(ChatBase):
@@ -27,7 +28,7 @@ class ChatOpenAI(ChatBase):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Dict[int, float]] = None
-    response_format: Optional[Dict[str, Any]] = None
+    response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
@@ -79,7 +80,6 @@ class ChatOpenAI(ChatBase):
             "presence_penalty": self.presence_penalty,
             "frequency_penalty": self.frequency_penalty,
             "logit_bias": self.logit_bias,
-            "response_format": self.response_format,
             "seed": self.seed,
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
@@ -88,6 +88,18 @@ class ChatOpenAI(ChatBase):
         if self.tools and self.tool_type == "fncall":
             model_params["tools"] = [tool.to_openai() for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
+
+        if self.response_format:
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                raw_schema = self.response_format.model_json_schema()
+                strict_schema = make_pydantic_schema_strict_json(raw_schema)
+
+                model_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": self.response_format.__name__, "strict": True, "schema": strict_schema},
+                }
+            else:
+                model_params["response_format"] = self.response_format
 
         model_params = {k: v for k, v in model_params.items() if v is not None}
 
@@ -107,16 +119,16 @@ class ChatOpenAI(ChatBase):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    def _format_response(self, response: str, response_format: dict = None) -> Any:
-        """Process the response."""
-        if response_format.get("type") == "json_object":
+    def _format_response(self, response: str, response_format: Any = None) -> Any:
+        if response is None:
+            return None
+        json_dict = isinstance(response_format, dict) and response_format.get("type") == "json_object"
+        pydantic = isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        if json_dict or pydantic:
             try:
-                json_str = extract_json_str(response)
-                text_response = json.loads(json_str)
-                return text_response
-            except:
-                pass
-
+                return json.loads(extract_json_str(response))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return response
         return response
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
@@ -168,7 +180,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         return self._parse_response(response)
 
@@ -182,7 +194,7 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
         return self._parse_response(response)
 
@@ -233,7 +245,7 @@ class ChatOpenAI(ChatBase):
                         yield response
 
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e
 
     @tracer.llm(name="LLM Async Astream")
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
@@ -282,4 +294,4 @@ class ChatOpenAI(ChatBase):
                         yield response
 
         except Exception as e:
-            raise RuntimeError(f"Error in calling openai API: {e}")
+            raise RuntimeError(f"Error in calling openai API: {e}") from e

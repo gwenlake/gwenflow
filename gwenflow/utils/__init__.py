@@ -1,5 +1,5 @@
 from gwenflow.utils.bytes import bytes_to_b64_str
-from gwenflow.utils.json import extract_json_str, to_json
+from gwenflow.utils.json import extract_json_str, make_pydantic_schema_strict_json, to_json
 from gwenflow.utils.tokens import (
     num_tokens_from_messages,
     num_tokens_from_string,
@@ -11,4 +11,5 @@ __all__ = [
     "num_tokens_from_messages",
     "to_json",
     "extract_json_str",
+    "make_pydantic_schema_strict_json",
 ]
