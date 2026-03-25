@@ -9,6 +9,7 @@ class UsageDetails(BaseModel):
         self.cached_tokens += other.cached_tokens
         self.reasoning_tokens += other.reasoning_tokens
 
+
 class Usage(BaseModel):
     requests: int = 0
     input_tokens: int = 0

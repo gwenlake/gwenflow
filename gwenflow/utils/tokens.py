@@ -1,5 +1,7 @@
-import tiktoken
-
+try:
+    import tiktoken
+except ImportError as e:
+    raise ImportError("`tiktoken` is not installed. Please install it with `pip install tiktoken`.") from e
 # o200k_base for gpt-4o, cl100k_base for others
 
 

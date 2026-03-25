@@ -181,3 +181,13 @@ Click [here](https://github.com/gwenlake/gwenflow/tree/dev_Thomas/examples) to d
 
 We are very open to the community's contributions - be it a quick fix of a typo, or a completely new feature! You don't
 need to be a Gwenflow expert to provide meaningful improvements.
+
+## Compliance & Licensing
+
+To ensure **gwenflow** remains commercially friendly and safe for enterprise exploitation, we strictly monitor our dependency tree. We primarily allow permissive licenses (MIT, Apache-2.0, BSD) and systematically avoid "Strong Copyleft" licenses (such as AGPL or GPL) that could impact your source code.
+
+### License Audit
+We use `licensepy` to automate this verification. You can audit the current dependencies locally by running:
+
+```bash
+uvx licensepy check --recursive

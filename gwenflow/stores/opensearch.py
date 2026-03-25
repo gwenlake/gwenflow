@@ -9,7 +9,6 @@ from gwenflow.logger import logger
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-
 class OpenSearchDocumentStore:
     def __init__(self, uri, index, use_ssl=True, verify_certs=False, ca_certs=None, timeout=30, aws=False):
         if aws:

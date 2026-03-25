@@ -9,89 +9,28 @@ from gwenflow.types import ModelResponse
 
 LLM_MODEL_PARAMETERS = {
     # --- OPENAI ---
-    "gpt-5.2": {
-        "context_token": 400000,
-        "reasoning": True
-    },
-    "gpt-5.2-pro": {
-        "context_token": 400000,
-        "reasoning": True
-    },
-    "gpt-5": {
-        "context_token": 400000,
-        "reasoning": True
-    },
-    "gpt-5-mini": {
-        "context_token": 400000,
-        "reasoning": True
-    },
-    "gpt-5-nano": {
-        "context_token": 400000,
-        "reasoning": True
-    },
-    "gpt-4.5": {
-        "context_token": 128000,
-        "reasoning": False
-    },
-    "gpt-4.1": {
-        "context_token": 1047576,
-        "reasoning": False
-    },
-    "o3-pro": {
-        "context_token": 200000,
-        "reasoning": True
-    },
-    "o3-mini-high": {
-        "context_token": 128000,
-        "reasoning": True
-    },
-    "o4-mini": {
-        "context_token": 128000,
-        "reasoning": True
-    },
-    "gpt-4o": {
-        "context_token": 128000,
-        "reasoning": False
-    },
-    "gpt-4o-mini": {
-        "context_token": 128000,
-        "reasoning": False
-    },
-    "o1-preview": {
-        "context_token": 128000,
-        "reasoning": True
-    },
-    "o1-mini": {
-        "context_token": 128000,
-        "reasoning": True
-    },
-
-
+    "gpt-5.2": {"context_token": 400000, "reasoning": True},
+    "gpt-5.2-pro": {"context_token": 400000, "reasoning": True},
+    "gpt-5": {"context_token": 400000, "reasoning": True},
+    "gpt-5-mini": {"context_token": 400000, "reasoning": True},
+    "gpt-5-nano": {"context_token": 400000, "reasoning": True},
+    "gpt-4.5": {"context_token": 128000, "reasoning": False},
+    "gpt-4.1": {"context_token": 1047576, "reasoning": False},
+    "o3-pro": {"context_token": 200000, "reasoning": True},
+    "o3-mini-high": {"context_token": 128000, "reasoning": True},
+    "o4-mini": {"context_token": 128000, "reasoning": True},
+    "gpt-4o": {"context_token": 128000, "reasoning": False},
+    "gpt-4o-mini": {"context_token": 128000, "reasoning": False},
+    "o1-preview": {"context_token": 128000, "reasoning": True},
+    "o1-mini": {"context_token": 128000, "reasoning": True},
     # --- DEEPSEEK ---
-    "deepseek-chat": {
-        "context_token": 128000,
-        "reasoning": False
-    },
-    "deepseek-r1": {
-        "context_token": 128000,
-        "reasoning": True
-    },
-
+    "deepseek-chat": {"context_token": 128000, "reasoning": False},
+    "deepseek-r1": {"context_token": 128000, "reasoning": True},
     # --- META ---
-    "llama-3.1-70b-versatile": {
-        "context_token": 131072,
-        "reasoning": False
-    },
-    "llama-3.1-8b-instant": {
-        "context_token": 131072,
-        "reasoning": False
-    },
-
+    "llama-3.1-70b-versatile": {"context_token": 131072, "reasoning": False},
+    "llama-3.1-8b-instant": {"context_token": 131072, "reasoning": False},
     # --- MISTRAL ---
-    "mixtral-8x7b-32768": {
-        "context_token": 32768,
-        "reasoning": False
-    },
+    "mixtral-8x7b-32768": {"context_token": 32768, "reasoning": False},
 }
 
 
