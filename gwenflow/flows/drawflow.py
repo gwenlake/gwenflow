@@ -1,9 +1,8 @@
 import json
 from collections import defaultdict, deque
+from typing import Any
 
-from jinja2 import Environment, FileSystemLoader
-from markupsafe import Markup
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gwenflow.flows import Flow
 
@@ -17,21 +16,6 @@ HTML_TEMPLATE = """
   </div>
 </div>
 """
-
-
-def escapejs(value):
-    """Escapes special characters for JavaScript."""
-    if value is None:
-        return ""
-    escaped = (
-        value.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return Markup(escaped)
 
 
 class Node(BaseModel):
@@ -70,6 +54,19 @@ class Node(BaseModel):
 class DrawFlow(BaseModel):
     flow: Flow
     nodes: dict[str, Node] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        try:
+            from jinja2 import Environment, FileSystemLoader  # noqa: F401
+            from markupsafe import Markup  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                "`jinja2` is not installed. Please install it with `uv add jinja2`."
+                "`markupsafe` is not installed. Please install it with `uv add markupsafe`."
+            ) from e
+        return values
 
     def _initialize_nodes(self):
         """Creates Node objects from the flow agents."""
@@ -168,15 +165,34 @@ class DrawFlow(BaseModel):
         with open(json_path, "w", encoding="utf-8") as json_file:
             json.dump(drawflow_json, json_file, indent=4, ensure_ascii=False)
 
-    def generate_html(self, output_file):
-        """Generates an HTML file using a Jinja2 template."""
+    @classmethod
+    def generate_html(cls, flow: Flow, output_file: str):
+        """Generates an HTML file using a Jinja2 template directly from a Flow object."""
+        from jinja2 import Environment, FileSystemLoader
+        from markupsafe import Markup
+
+        def escapejs(value):
+            """Escapes special characters for JavaScript."""
+            if value is None:
+                return ""
+            escaped = (
+                value.replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+            )
+            return Markup(escaped)
+
+        instance = cls.from_flow(flow=flow)
+        drawflow_json = instance.generate_drawflow()
+
         template_file = "index.html"
-        drawflow_json = self.generate_drawflow()
         env = Environment(loader=FileSystemLoader(""))
         env.filters["escapejs"] = escapejs
 
         template = env.get_template(template_file)
-
         rendered_html = template.render({"drawflow_json": json.dumps(drawflow_json)})
 
         with open(output_file, "w", encoding="utf-8") as f:
