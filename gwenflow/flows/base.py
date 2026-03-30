@@ -1,6 +1,5 @@
 from typing import Any, List, Optional
 
-import yaml
 from pydantic import BaseModel, model_validator
 
 from gwenflow.agents import Agent
@@ -26,6 +25,15 @@ class Flow(BaseModel):
 
     flow_type: str = "sequence"
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            raise ImportError("`pyyaml` is not installed. Please install it with `uv add pyyaml`.")
+        return values
+
     @model_validator(mode="after")
     def model_valid(self) -> Any:
         if self.manager is None:
@@ -44,6 +52,8 @@ class Flow(BaseModel):
 
     @classmethod
     def from_yaml(cls, file: str, tools: List[BaseTool], llm: Optional[Any] = None) -> "Flow":
+        import yaml
+
         if cls == Flow:
             with open(file) as stream:
                 try:

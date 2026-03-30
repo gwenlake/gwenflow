@@ -1,6 +1,4 @@
 import os
-
-# import dirtyjson
 from typing import Any, Optional
 
 from pydantic import Field, model_validator
@@ -17,7 +15,6 @@ class TavilyBaseTool(BaseTool):
 
     @model_validator(mode="after")
     def validate_environment(self) -> "TavilyBaseTool":
-        """Validate that the python package exists in environment."""
         try:
             from tavily import TavilyClient
 
@@ -28,9 +25,7 @@ class TavilyBaseTool(BaseTool):
                     logger.error("TAVILY_API_KEY not provided")
                 self.client = TavilyClient(api_key=self.api_key)
         except ImportError as e:
-            raise ImportError(
-                "`tavily-python` is not installed. Please install it with `pip install tavily-python`"
-            ) from e
+            raise ImportError("`tavily-python` is not installed. Please install it with `uv add tavily-python`") from e
         return self
 
 

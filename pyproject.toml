@@ -12,19 +12,16 @@ dependencies = [
     "httpx==0.28.1",
     "pydantic==2.12.5",
     "tqdm==4.67.3",
-    "pyyaml==6.0.3",
     "fsspec==2026.2.0",
     "rich==14.3.3",
     "openai==2.15.0",
     "langchain-core==1.2.17",
     "boto3==1.42.56",
     "lancedb==0.29.2",
-    "jinja2==3.1.6",
-    "markupsafe==3.0.3",
-    "dirtyjson==1.0.8",
     "mcp==1.25.0",
     "beautifulsoup4==4.14.3",
     "asyncio==3.4.3",
+    "tiktoken==0.12.0",
 ]
 
 classifiers = [
@@ -57,7 +54,6 @@ dev = [
     "requests-mock==1.12.1",
     "ruff==0.6.9",
     "syrupy==4.7.2",
-    "opentelemetry-api==1.20.0",
     "opentelemetry-sdk==1.20.0",
     "opentelemetry-exporter-otlp==1.20.0",
     "openinference-semantic-conventions==0.1.9",

@@ -6,8 +6,6 @@ from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.telemetry.openai.openai_instrument import openai_telemetry
 from gwenflow.types import ItemHelpers, Message
 from gwenflow.types.responses import (
     Response,
@@ -21,6 +19,7 @@ from gwenflow.types.responses import (
 from gwenflow.utils import extract_json_str
 
 
+# ! Deprectaed, to not use
 class ResponseOpenAI(ChatBase):
     model: str = "gpt-5-mini"
 
@@ -54,13 +53,6 @@ class ResponseOpenAI(ChatBase):
     # telemetry #TODO move this elsewhere
     service_name: str = Field(default="gwenflow-service")
     provider: Optional[str] = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        telemetry_config = TelemetryBase(service_name=self.service_name)
-        self.provider = telemetry_config.setup_telemetry()
-
-        openai_telemetry.instrument()
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
@@ -130,7 +122,6 @@ class ResponseOpenAI(ChatBase):
         if text_format.get("type") == "json_object":
             try:
                 json_str = extract_json_str(response)
-                # text_response = dirtyjson.loads(json_str)
                 text_response = json.loads(json_str)
                 return text_response
             except Exception:
