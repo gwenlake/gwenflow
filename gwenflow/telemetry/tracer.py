@@ -3,6 +3,8 @@ import inspect
 from contextlib import contextmanager
 from typing import Any
 
+from opentelemetry import baggage
+
 
 def _get_span_kind_values():
     try:
@@ -82,6 +84,9 @@ class DecoratorTracer:
             return
 
         with otel_tracer.start_as_current_span(name) as span:
+            session_id = baggage.get_baggage("gwenflow.session_id")
+            if session_id and span.is_recording():
+                span.set_attribute("gwenflow.session_id", session_id)
             if span.is_recording() and SpanAttributes and kind:
                 span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, kind.value)
                 input_val = extract_user_inputs(func, (instance, *args), kwargs)

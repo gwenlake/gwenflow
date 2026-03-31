@@ -1,6 +1,10 @@
 import inspect
 import json
+from contextlib import contextmanager
 from typing import Any, Callable
+
+from opentelemetry import baggage
+from opentelemetry.context import attach, detach
 
 
 def safe_serialize(obj: Any) -> str:
@@ -36,3 +40,16 @@ def extract_user_inputs(func: Callable, args: tuple, kwargs: dict) -> str:
         return json.dumps({k: str(v) for k, v in arg_dict.items()}, default=str)
     except Exception:
         return "Error capturing inputs"
+
+
+@contextmanager
+def trace_thread(session_id: str):
+    if not session_id:
+        yield
+        return
+
+    token = attach(baggage.set_baggage("gwenflow.session_id", str(session_id)))
+    try:
+        yield
+    finally:
+        detach(token)
