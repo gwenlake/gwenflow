@@ -7,5 +7,17 @@ from gwenflow.readers.pdf import PDFReader
 from gwenflow.readers.pptx import PptxReader
 from gwenflow.readers.text import TextReader
 from gwenflow.readers.website import WebsiteReader
+from gwenflow.readers.xml import XmlReader
 
-__all__ = ["SimpleDirectoryReader", "TextReader", "JSONReader", "PDFReader", "WebsiteReader", "DocxReader", "ExcelReader", "CSVReader", "PptxReader"]
+__all__ = [
+    "SimpleDirectoryReader",
+    "TextReader",
+    "JSONReader",
+    "PDFReader",
+    "WebsiteReader",
+    "DocxReader",
+    "ExcelReader",
+    "CSVReader",
+    "PptxReader",
+    "XmlReader",
+]
