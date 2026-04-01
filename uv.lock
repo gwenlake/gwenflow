@@ -499,6 +499,7 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "rich" },
+    { name = "tenacity" },
     { name = "tiktoken" },
     { name = "tqdm" },
 ]
@@ -533,6 +534,7 @@ requires-dist = [
     { name = "openai", specifier = "==2.15.0" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "rich", specifier = "==14.3.3" },
+    { name = "tenacity", specifier = "==9.1.4" },
     { name = "tiktoken", specifier = "==0.12.0" },
     { name = "tqdm", specifier = "==4.67.3" },
 ]
@@ -1829,6 +1831,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6e/87/995a176c81887000a14556b810be986530d723224a71e10ccb312b480637/tavily_python-0.7.22.tar.gz", hash = "sha256:050c0113309b516f58fbdc484d6091efa7ce6c016c2a2cd9f111581269f00dfe", size = 22393, upload-time = "2026-02-26T15:05:00.794Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/43/9f977f236c641c7903939788b088c3575e9a5dba0b9ca9a5586a1f02bb9e/tavily_python-0.7.22-py3-none-any.whl", hash = "sha256:25d05f02be3fa2508ff1c114196b714e069d75312c26ddf747c9f5bdc617bbb3", size = 18136, upload-time = "2026-02-26T15:04:59.608Z" },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
 ]
 
 [[package]]
