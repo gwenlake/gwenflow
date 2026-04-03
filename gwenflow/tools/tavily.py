@@ -10,7 +10,7 @@ from gwenflow.tools import BaseTool
 class TavilyBaseTool(BaseTool):
     client: Optional[Any] = None
     api_key: Optional[str] = None
-    max_tokens: int = 20000
+    max_results: int = 5
     search_depth: str = "advanced"
 
     @model_validator(mode="after")
