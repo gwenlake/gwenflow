@@ -175,7 +175,7 @@ print(response.content)
 
 ## More Examples
 
-Click [here](https://github.com/gwenlake/gwenflow/tree/dev_Thomas/examples) to dive deeper into practical implementations and advanced scenarios for agents.
+Click [here](https://github.com/gwenlake/gwenflow/tree/main/examples) to dive deeper into practical implementations and advanced scenarios for agents.
 
 ## Contributing to Gwenflow
 

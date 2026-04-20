@@ -269,6 +269,23 @@ class Agent(BaseModel):
 
         return response
 
+    def _refresh_system_prompt_for_skill(self, task: str, tool_calls: List[ToolCall]) -> None:
+        """Refresh the system prompt when a load_skill tool call was made."""
+        if not self.skills:
+            self.history.system_prompt = self.get_system_prompt(task=task)
+            return
+        for tool_call in tool_calls:
+            if tool_call.function.name == "load_skill":
+                try:
+                    args = json.loads(tool_call.function.arguments)
+                    skill_name = args.get("skill_name")
+                    skill = next((s for s in self.skills if s.name == skill_name), None)
+                    if skill:
+                        self.history.system_prompt = self.get_system_prompt(task=task, skill=skill)
+                        return
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
     def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
         tools = self.tools
@@ -390,6 +407,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                self._refresh_system_prompt_for_skill(task=task, context=context, tool_calls=response.tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -445,6 +463,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                self._refresh_system_prompt_for_skill(task=task, context=context, tool_calls=response.tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -516,6 +535,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                self._refresh_system_prompt_for_skill(task=task, context=context, tool_calls=final_tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -590,6 +610,7 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                self._refresh_system_prompt_for_skill(task=task, context=context, tool_calls=final_tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
