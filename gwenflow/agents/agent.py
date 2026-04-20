@@ -135,29 +135,25 @@ class Agent(BaseModel):
         self,
         task: str,
         context: Optional[Union[str, Dict[str, str]]] = None,
-        tool_calls: List[ToolCall] = [],
     ) -> str:
         """Get the system prompt for the agent."""
         if self.system_prompt:
             return self.system_prompt
 
-        prompt = "Your name is {name}.".format(name=self.name)
+        prompt = ""
+        # prompt = "Your name is {name}.".format(name=self.name)
 
         if self.instructions:
             if isinstance(self.instructions, str):
                 prompt += " {instructions}".format(instructions=self.instructions)
             elif isinstance(self.instructions, list):
                 instructions = "\n".join([f"- {i}" for i in self.instructions])
-                prompt += "\n\n## Instructions:\n{instructions}".format(instructions=instructions)
+                prompt += "\n\n## Instructions:\n\n{instructions}".format(instructions=instructions)
+            prompt += "\n\n"
 
-        prompt += "\n\n"
-
-        # skills — compact listing; full instructions loaded on demand via load_skill tool
         if self.skills:
             instructions = SkillsToolset(self.skills).get_instructions()
-            if instructions:
-                prompt += instructions
-                prompt += "\n\n"
+            prompt += "\n\n## Skills:\n\n{instructions}\n\n".format(instructions=instructions)
 
         if self.response_model:
             if isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel):
@@ -178,19 +174,6 @@ class Agent(BaseModel):
         if context is not None:
             prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
             prompt += "\n\n"
-
-        if self.skills:
-            for tool_call in tool_calls:
-                if tool_call.function.name == "load_skill":
-                    try:
-                        args = json.loads(tool_call.function.arguments)
-                        skill_name = args.get("skill_name")
-                        skill = next((s for s in self.skills if s.name == skill_name), None)
-                        if skill:
-                            prompt += skill.to_prompt()
-                            prompt += "\n\n"
-                    except (json.JSONDecodeError, KeyError):
-                        pass
 
         return prompt.strip()
 
@@ -301,6 +284,17 @@ class Agent(BaseModel):
             tool_execution.result = f"Tool {tool_call.function} does not exist"
             return tool_execution.to_message()
 
+        if self.skills and tool_call.function.name == "load_skill":
+            try:
+                args = json.loads(tool_call.function.arguments)
+                skill_name = args.get("skill_name")
+                skill = next((s for s in self.skills if s.name == skill_name), None)
+                if skill:
+                    tool_execution.result = skill.to_prompt()
+                    return tool_execution.to_message()
+            except Exception as e:
+                logger.error(f"Error loading skill '{tool_call.function}': {e}")
+
         try:
             tool = tool_map[tool_call.function.name]
             arguments = json.loads(tool_call.function.arguments)
@@ -399,7 +393,6 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
-                self.history.system_prompt = self.get_system_prompt(task=task, context=context, tool_calls=response.tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -455,7 +448,6 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
-                self.history.system_prompt = self.get_system_prompt(task=task, context=context, tool_calls=response.tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -527,7 +519,6 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
-                self.history.system_prompt = self.get_system_prompt(task=task, context=context, tool_calls=final_tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -602,7 +593,6 @@ class Agent(BaseModel):
                 for m in tool_messages:
                     self.history.add_message(m)
                     agent_response.messages.append(m)
-                self.history.system_prompt = self.get_system_prompt(task=task, context=context, tool_calls=final_tool_calls)
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
