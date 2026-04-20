@@ -1,3 +1,4 @@
+from gwenflow.llms.anthropic import ChatAnthropic
 from gwenflow.llms.azure import ChatAzureOpenAI
 from gwenflow.llms.base import ChatBase
 from gwenflow.llms.deepseek import ChatDeepSeek
@@ -9,6 +10,7 @@ from gwenflow.llms.openai import ChatOpenAI
 
 __all__ = [
     "ChatBase",
+    "ChatAnthropic",
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatGemini",

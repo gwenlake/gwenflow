@@ -16,6 +16,7 @@ from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
+from gwenflow.skills import Skill, SkillsToolset
 
 
 class Agent(BaseModel):
@@ -64,6 +65,9 @@ class Agent(BaseModel):
     max_turns: Optional[int] = Field(100)
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
+    skills: List[Skill] = Field(default_factory=list)
+    """Skills that extend the agent's instructions."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("id", mode="before")
@@ -86,6 +90,8 @@ class Agent(BaseModel):
                 self.history = ChatMemoryBuffer(token_limit=token_limit)
             if self.response_model:
                 self.llm.response_format = self.response_model
+            if self.skills:
+                self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
             if self.tools or self.mcp_servers:
                 self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
@@ -129,6 +135,7 @@ class Agent(BaseModel):
         self,
         task: str,
         context: Optional[Union[str, Dict[str, str]]] = None,
+        skill: Optional[Skill] = None
     ) -> str:
         """Get the system prompt for the agent."""
         if self.system_prompt:
@@ -144,6 +151,13 @@ class Agent(BaseModel):
                 prompt += "\n\n## Instructions:\n{instructions}".format(instructions=instructions)
 
         prompt += "\n\n"
+
+        # skills — compact listing; full instructions loaded on demand via load_skill tool
+        if self.skills:
+            instructions = SkillsToolset(self.skills).get_instructions()
+            if instructions:
+                prompt += instructions
+                prompt += "\n\n"
 
         if self.response_model:
             if isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel):
@@ -163,6 +177,10 @@ class Agent(BaseModel):
 
         if context is not None:
             prompt += PROMPT_CONTEXT.format(context=self._format_context(context)).strip()
+            prompt += "\n\n"
+
+        if skill:
+            prompt += skill.to_prompt()
             prompt += "\n\n"
 
         return prompt.strip()
