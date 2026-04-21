@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -61,9 +62,12 @@ def test_format_messages_extracts_system_prompt():
         Message(role="system", content="You are helpful."),
         Message(role="user", content="Hi"),
     ]
-    system_prompt, formatted = llm._format_messages(messages)
 
-    assert system_prompt == "You are helpful."
+    # Correction : on récupère juste la liste retournée
+    formatted = llm._format_messages(messages)
+
+    # Correction : on lit la propriété de l'instance
+    assert llm.system_prompt == "You are helpful."
     assert len(formatted) == 1
     assert formatted[0]["role"] == "user"
 
@@ -73,7 +77,9 @@ def test_format_messages_tool_role():
     messages = [
         Message(role="tool", content="result", tool_call_id="call_123"),
     ]
-    _, formatted = llm._format_messages(messages)
+
+    # Correction : on récupère juste la liste retournée
+    formatted = llm._format_messages(messages)
 
     assert formatted[0]["role"] == "user"
     assert formatted[0]["content"][0]["type"] == "tool_result"
@@ -86,6 +92,7 @@ def test_format_messages_tool_role():
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY missing")
 def test_invoke_real_api():
     llm = ChatAnthropic()
     result = llm.invoke("Reply with exactly one word: hello")
