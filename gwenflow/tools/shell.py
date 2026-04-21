@@ -26,9 +26,9 @@ class ShellTool(BaseTool):
 
         try:
             logger.info(f"Running shell command: {cmd}")
-            command_list = shlex.split(cmd) if isinstance(cmd, str) else cmd
             result = subprocess.run(
-                command_list,
+                cmd,
+                shell=True,
                 capture_output=True,
                 text=True,
                 cwd=str(self.base_dir) if self.base_dir else None,
