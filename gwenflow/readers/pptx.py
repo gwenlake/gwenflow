@@ -10,17 +10,13 @@ from gwenflow.types import Document
 
 
 class PptxReader(Reader):
-
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Any) -> Any:
         try:
             __import__("pptx")
         except ImportError:
-            raise ImportError(
-                "Missing required package: python-pptx. "
-                "Install with: `uv add python-pptx`"
-            )
+            raise ImportError("Missing required package: python-pptx. Install with: `uv add python-pptx`")
         return values
 
     def read(

@@ -11,6 +11,7 @@ from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
+from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
@@ -64,6 +65,9 @@ class Agent(BaseModel):
     max_turns: Optional[int] = Field(100)
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
+    skills: List[Skill] = Field(default_factory=list)
+    """Skills that extend the agent's instructions."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("id", mode="before")
@@ -86,6 +90,8 @@ class Agent(BaseModel):
                 self.history = ChatMemoryBuffer(token_limit=token_limit)
             if self.response_model:
                 self.llm.response_format = self.response_model
+            if self.skills:
+                self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
             if self.tools or self.mcp_servers:
                 self.llm.tools = self.get_all_tools()
                 self.llm.tool_choice = self.tool_choice
@@ -134,16 +140,20 @@ class Agent(BaseModel):
         if self.system_prompt:
             return self.system_prompt
 
-        prompt = "Your name is {name}.".format(name=self.name)
+        prompt = ""
+        # prompt = "Your name is {name}.".format(name=self.name)
 
         if self.instructions:
             if isinstance(self.instructions, str):
                 prompt += " {instructions}".format(instructions=self.instructions)
             elif isinstance(self.instructions, list):
                 instructions = "\n".join([f"- {i}" for i in self.instructions])
-                prompt += "\n\n## Instructions:\n{instructions}".format(instructions=instructions)
+                prompt += "\n\n## Instructions:\n\n{instructions}".format(instructions=instructions)
+            prompt += "\n\n"
 
-        prompt += "\n\n"
+        if self.skills:
+            instructions = SkillsToolset(self.skills).get_instructions()
+            prompt += "\n\n## Skills:\n\n{instructions}\n\n".format(instructions=instructions)
 
         if self.response_model:
             if isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel):
@@ -273,6 +283,17 @@ class Agent(BaseModel):
             logger.error(f"Tool {tool_call.function} does not exist")
             tool_execution.result = f"Tool {tool_call.function} does not exist"
             return tool_execution.to_message()
+
+        if self.skills and tool_call.function.name == "load_skill":
+            try:
+                args = json.loads(tool_call.function.arguments)
+                skill_name = args.get("skill_name")
+                skill = next((s for s in self.skills if s.name == skill_name), None)
+                if skill:
+                    tool_execution.result = skill.to_prompt()
+                    return tool_execution.to_message()
+            except Exception as e:
+                logger.error(f"Error loading skill '{tool_call.function}': {e}")
 
         try:
             tool = tool_map[tool_call.function.name]
