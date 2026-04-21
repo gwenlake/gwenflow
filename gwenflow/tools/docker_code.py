@@ -1,5 +1,6 @@
-import docker
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, model_validator
 
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
@@ -16,11 +17,22 @@ class DockerCodeTool(BaseTool):
     name: str = "DockerCodeTool"
     description: str = DESCRIPTION
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        try:
+            import docker  # noqa: F401
+        except ImportError as e:
+            raise ImportError("`docker` is not installed. Please install it with `uv add docker`.") from e
+        return values
+
     def _run(
         self,
         code: str = Field(description="The code to run."),
         language: str = Field(description="Language (sh or python).", default=None),
     ):
+        import docker
+
         if language == "python":
             image = "python:3.12-alpine"
             command = ["python", "-c", code]
