@@ -104,6 +104,7 @@ def test_invoke_real_api():
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY missing")
 def test_stream_real_api():
     llm = ChatAnthropic()
     chunks = list(llm.stream("Reply with exactly one word: hello"))
