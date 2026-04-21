@@ -1,15 +1,15 @@
 import json
 import os
 from collections.abc import AsyncIterator
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import anthropic
+from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.types import Function, ItemHelpers, Message, ModelResponse, ToolCall, Usage
-from gwenflow.utils import extract_json_str
+from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
 class ChatAnthropic(ChatBase):
@@ -21,7 +21,7 @@ class ChatAnthropic(ChatBase):
     top_k: Optional[int] = None
     stop_sequences: Optional[List[str]] = None
     max_tokens: Optional[int] = 4096
-    response_format: Optional[Any] = None
+    response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None
 
     # clients
     client: Optional[anthropic.Anthropic] = None
@@ -71,6 +71,14 @@ class ChatAnthropic(ChatBase):
             else:
                 model_params["tool_choice"] = {"type": "auto"}
 
+        if self.response_format:
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                raw_schema = self.response_format.model_json_schema()
+                strict_schema = make_pydantic_schema_strict_json(raw_schema)
+
+                model_params["output_config"] = {"format": {"type": "json_schema", "schema": strict_schema}}
+            else:
+                model_params["output_config"] = self.response_format
         return {k: v for k, v in model_params.items() if v is not None}
 
     def _tool_to_anthropic(self, tool) -> Dict[str, Any]:
@@ -92,24 +100,40 @@ class ChatAnthropic(ChatBase):
         self.async_client = anthropic.AsyncAnthropic(**self._get_client_params())
         return self.async_client
 
+    def _format_response(self, response: str, response_format: Any = None) -> Any:
+        if response is None:
+            return None
+        json_dict = isinstance(response_format, dict) and response_format.get("type") == "json_object"
+        pydantic = isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        if json_dict or pydantic:
+            try:
+                return json.loads(extract_json_str(response))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return response
+        return response
+
     def _format_messages(self, messages: List[Message]) -> tuple:
         self.system_prompt = None
         formatted = []
-        
+
         for message in messages:
             if message.role == "system":
                 self.system_prompt = message.content
                 continue
 
             if message.role == "tool":
-                formatted.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": message.tool_call_id,
-                        "content": message.content or "",
-                    }],
-                })
+                formatted.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": message.tool_call_id,
+                                "content": message.content or "",
+                            }
+                        ],
+                    }
+                )
             elif message.role == "assistant" and message.tool_calls:
                 content = []
                 if message.content:
@@ -166,20 +190,19 @@ class ChatAnthropic(ChatBase):
             elif block.type == "thinking":
                 model_response.reasoning_content = block.thinking
             elif block.type == "tool_use":
-                model_response.tool_calls.append(ToolCall(
-                    id=block.id,
-                    type="function",
-                    function=Function(name=block.name, arguments=json.dumps(block.input)),
-                ))
+                model_response.tool_calls.append(
+                    ToolCall(
+                        id=block.id,
+                        type="function",
+                        function=Function(name=block.name, arguments=json.dumps(block.input)),
+                    )
+                )
 
         if response.stop_reason == "tool_use":
             model_response.finish_reason = "tool_calls"
 
         if self.response_format:
-            try:
-                model_response.parsed = json.loads(extract_json_str(model_response.content))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
+            model_response.parsed = self._format_response(model_response.content, response_format=self.response_format)
 
         return model_response
 
