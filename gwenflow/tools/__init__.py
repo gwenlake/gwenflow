@@ -1,6 +1,8 @@
 from gwenflow.tools.base import BaseTool
 from gwenflow.tools.duckduckgo import DuckDuckGoNewsTool, DuckDuckGoSearchTool
 from gwenflow.tools.function import FunctionTool
+from gwenflow.tools.shell import ShellTool
+from gwenflow.tools.python import PythonCodeTool
 from gwenflow.tools.mcp.tool import MCPTool
 from gwenflow.tools.pdf import PDFReaderTool
 from gwenflow.tools.retriever import RetrieverTool
@@ -16,6 +18,8 @@ from gwenflow.tools.yahoofinance import (
 __all__ = [
     "BaseTool",
     "FunctionTool",
+    "ShellTool",
+    "PythonCodeTool",
     "RetrieverTool",
     "WikipediaTool",
     "WebsiteReaderTool",
