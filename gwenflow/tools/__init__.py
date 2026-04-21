@@ -3,6 +3,7 @@ from gwenflow.tools.duckduckgo import DuckDuckGoNewsTool, DuckDuckGoSearchTool
 from gwenflow.tools.function import FunctionTool
 from gwenflow.tools.shell import ShellTool
 from gwenflow.tools.python import PythonCodeTool
+from gwenflow.tools.docker_code import DockerCodeTool
 from gwenflow.tools.mcp.tool import MCPTool
 from gwenflow.tools.pdf import PDFReaderTool
 from gwenflow.tools.retriever import RetrieverTool
@@ -20,6 +21,7 @@ __all__ = [
     "FunctionTool",
     "ShellTool",
     "PythonCodeTool",
+    "DockerCodeTool",
     "RetrieverTool",
     "WikipediaTool",
     "WebsiteReaderTool",
