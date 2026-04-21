@@ -1,15 +1,15 @@
-from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from gwenflow.llms.anthropic.chat import ChatAnthropic
 from gwenflow.types import Message
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_anthropic_response(text="hello from claude", stop_reason="end_turn"):
     """Build a minimal object that looks like anthropic.types.Message."""
@@ -21,6 +21,7 @@ def _make_anthropic_response(text="hello from claude", stop_reason="end_turn"):
 # ---------------------------------------------------------------------------
 # Unit tests (mocked client)
 # ---------------------------------------------------------------------------
+
 
 def test_invoke_returns_content_with_mock(monkeypatch):
     fake_response = _make_anthropic_response("mocked claude response")
@@ -82,6 +83,7 @@ def test_format_messages_tool_role():
 # ---------------------------------------------------------------------------
 # Integration test (real API)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_invoke_real_api():

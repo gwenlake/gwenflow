@@ -10,7 +10,6 @@ from gwenflow.types import Document
 
 
 class ExcelReader(Reader):
-
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Any) -> Any:
@@ -22,8 +21,7 @@ class ExcelReader(Reader):
                 missing.append(package)
         if missing:
             raise ImportError(
-                f"Missing required packages: {', '.join(missing)}. "
-                f"Install with: `uv add {' '.join(missing)}`"
+                f"Missing required packages: {', '.join(missing)}. Install with: `uv add {' '.join(missing)}`"
             )
         return values
 
@@ -42,14 +40,21 @@ class ExcelReader(Reader):
             sheet_names = [sheet_name] if sheet_name is not None else xls.sheet_names
             documents = []
             for page_num, sheet in enumerate(sheet_names, start=1):
-                df = pd.read_excel(xls, sheet_name=sheet)
-                truncated = max_rows is not None and len(df) > max_rows
-                display_df = df.head(max_rows) if truncated else df
+                dataframe = pd.read_excel(xls, sheet_name=sheet)
+                truncated = max_rows is not None and len(dataframe) > max_rows
+                display_df = dataframe.head(max_rows) if truncated else dataframe
                 documents.append(
                     Document(
                         id=self.key(f"{filename}_{sheet}"),
                         content=display_df.to_markdown(index=False),
-                        metadata={"filename": filename, "sheet": sheet, "page": page_num, "rows": len(df), "columns": list(df.columns), "truncated": truncated},
+                        metadata={
+                            "filename": filename,
+                            "sheet": sheet,
+                            "page": page_num,
+                            "rows": len(dataframe),
+                            "columns": list(dataframe.columns),
+                            "truncated": truncated,
+                        },
                     )
                 )
             return documents

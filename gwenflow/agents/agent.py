@@ -11,12 +11,12 @@ from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
+from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import MCPServer, MCPUtil
 from gwenflow.types import AgentResponse, ItemHelpers, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
-from gwenflow.skills import Skill, SkillsToolset
 
 
 class Agent(BaseModel):

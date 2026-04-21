@@ -1,6 +1,5 @@
 import os
-
-from typing import List, TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from gwenflow.skills.base import Skill
 
@@ -40,7 +39,7 @@ class SkillsToolset:
         toolset = SkillsToolset(skills)
         agent = Agent(
             name="MyAgent",
-            skills=skills,           # compact listing + management tools added automatically
+            skills=skills,  # compact listing + management tools added automatically
             tools=toolset.get_tools(),  # or pass explicitly
         )
     """

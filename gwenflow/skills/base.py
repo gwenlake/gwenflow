@@ -1,9 +1,8 @@
 import importlib.util
 import inspect
 import os
-
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, List
+from typing import TYPE_CHECKING, List, Optional
 
 import yaml
 
@@ -95,6 +94,7 @@ class Skill:
                 spec.loader.exec_module(module)
             except Exception as e:
                 from gwenflow.logger import logger
+
                 logger.warning(f"Failed to load skill script '{script_path}': {e}")
                 continue
 

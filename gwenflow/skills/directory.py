@@ -1,9 +1,9 @@
 import os
-
 from typing import Iterator, List
 
 from gwenflow.logger import logger
 from gwenflow.skills.base import Skill
+from gwenflow.skills.toolset import SkillsToolset
 
 
 class SkillsDirectory:
@@ -60,6 +60,7 @@ class SkillsDirectory:
     def to_toolset(self) -> "SkillsToolset":
         """Return a SkillsToolset wrapping all skills in this directory."""
         from gwenflow.skills.toolset import SkillsToolset
+
         return SkillsToolset(self.skills)
 
     def __iter__(self) -> Iterator[Skill]:
