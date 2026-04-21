@@ -33,6 +33,9 @@ class ChatAnthropic(ChatBase):
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
 
+    # client parameters
+    system_prompt: Optional[str] = None
+
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
         if api_key is None:
@@ -90,13 +93,12 @@ class ChatAnthropic(ChatBase):
         return self.async_client
 
     def _format_messages(self, messages: List[Message]) -> tuple:
-        """Extract system prompt and reformat messages for Anthropic API."""
-        system_prompt = self.system_prompt
+        self.system_prompt = None
         formatted = []
-
+        
         for message in messages:
             if message.role == "system":
-                system_prompt = message.content
+                self.system_prompt = message.content
                 continue
 
             if message.role == "tool":
@@ -137,7 +139,7 @@ class ChatAnthropic(ChatBase):
                 else:
                     formatted.append({"role": message.role, "content": message.content or ""})
 
-        return system_prompt, formatted
+        return formatted
 
     def _get_usage(self, usage) -> Optional[Usage]:
         if usage is None:
@@ -182,11 +184,11 @@ class ChatAnthropic(ChatBase):
         return model_response
 
     def _build_request(self, messages: List[Message]) -> Dict[str, Any]:
-        system_prompt, formatted_messages = self._format_messages(messages)
-        kwargs = {"model": self.model, "messages": formatted_messages, **self._model_params}
-        if system_prompt:
-            kwargs["system"] = system_prompt
-        return kwargs
+        formatted_messages = self._format_messages(messages)
+        payload = {"model": self.model, "messages": formatted_messages, **self._model_params}
+        if self.system_prompt:
+            payload["system"] = self.system_prompt
+        return payload
 
     @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
