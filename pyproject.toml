@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "0.9.2"
+version = "0.9.3"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -23,6 +23,7 @@ dependencies = [
     "asyncio==3.4.3",
     "tiktoken==0.12.0",
     "tenacity==9.1.4",
+    "pyyaml>=6.0.3",
 ]
 
 classifiers = [

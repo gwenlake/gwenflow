@@ -1,5 +1,6 @@
-from typing import Any
-
+import os
+from pathlib import Path
+from typing import Any, Optional, Union
 from pydantic import Field, model_validator
 
 from gwenflow.logger import logger
@@ -17,6 +18,8 @@ class DockerCodeTool(BaseTool):
     name: str = "DockerCodeTool"
     description: str = DESCRIPTION
 
+    base_dir: Optional[Union[Path, str]] = None
+
     @model_validator(mode="before")
     @classmethod
     def validate_environment(cls, values: Any) -> Any:
@@ -33,37 +36,45 @@ class DockerCodeTool(BaseTool):
     ):
         import docker
 
-        if language == "python":
-            image = "python:3.12-alpine"
-            command = ["python", "-c", code]
-
-        elif language == "sh":
-            image = "curlimages/curl"
-            command = ["sh", "-c", code]
-
-        else:
-            return "Unsupported language."
-
         try:
             logger.debug(f"Running {language} code:\n\n{code}\n\n")
 
+            run_kwargs = {
+                "image": None,
+                "command": None,
+                "remove": True,
+                "network_disabled": False,
+                "mem_limit": "128m",
+                "nano_cpus": 500000000,
+                "security_opt": ["no-new-privileges:true"],
+                "tmpfs": {"/tmp": "size=50m"},
+                "user": "nobody"
+            }
+
+            if language == "python":
+                run_kwargs["image"] = "python:3.12-alpine"
+                run_kwargs["command"] = ["python", "-c", code]
+            elif language == "sh":
+                run_kwargs["image"] = "alpine:latest"
+                run_kwargs["command"] = ["sh", "-c", code]
+            else:
+                return "Unsupported language."
+
+            if self.base_dir:
+                abs_path = os.path.abspath(self.base_dir)
+                os.makedirs(abs_path, exist_ok=True)                
+                run_kwargs["volumes"] = {abs_path: {"bind": "/mnt/workspace", "mode": "rw"}}
+                run_kwargs["working_dir"] = "/mnt/workspace"
+                if os.name != 'nt':
+                    run_kwargs["user"] = os.getuid()
+
             client = docker.from_env()
-            result = client.containers.run(
-                image=image,
-                command=command,
-                remove=True,
-                network_disabled=False,
-                mem_limit="128m",
-                nano_cpus=500000000,
-                read_only=False,
-                user="nobody",
-                security_opt=["no-new-privileges:true"],
-                tmpfs={"/tmp": "size=50m"},
-            )
+            result = client.containers.run(**run_kwargs)
+            output = result.decode("utf-8").strip()
 
-            logger.debug(f"Command result: {result.decode('utf-8').strip()}")
+            logger.debug(f"Command result: {output}")
 
-            return result.decode("utf-8").strip()
+            return output
 
         except docker.errors.ContainerError as e:
             return f"Docker error:\n{e.stderr.decode('utf-8')}"
