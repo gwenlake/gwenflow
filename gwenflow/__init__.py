@@ -9,7 +9,6 @@ from gwenflow.flows import AutoFlow, Flow
 from gwenflow.llms import ChatAnthropic, ChatAzureOpenAI, ChatGwenlake, ChatOllama, ChatOpenAI
 from gwenflow.logger import logger, set_log_level_to_debug
 from gwenflow.readers import SimpleDirectoryReader
-from gwenflow.retriever import Retriever
 from gwenflow.telemetry import TelemetryBase
 from gwenflow.tools import BaseTool, FunctionTool
 from gwenflow.types import Document, Message
@@ -29,7 +28,6 @@ __all__ = [
     "Document",
     "Message",
     "SimpleDirectoryReader",
-    "Retriever",
     "Agent",
     "ReactAgent",
     "ChatAgent",
