@@ -9,7 +9,6 @@ from gwenflow.parsers.text_splitters import TokenTextSplitter
 from gwenflow.reranker import GwenlakeReranker
 from gwenflow.types.document import Document
 from gwenflow.vector_stores.base import VectorStoreBase
-from gwenflow.vector_stores.lancedb import LanceDB
 
 MIN_CONTENT_LENGTH = 20
 
@@ -28,6 +27,10 @@ class Retriever(BaseModel):
     @model_validator(mode="after")
     def model_valid(self) -> Any:
         if not self.vector_db:
+            try:
+                from gwenflow.vector_stores.lancedb import LanceDB
+            except ImportError as e:
+                raise ImportError("LanceDB is not installed. Please install it to use the default vector store.") from e
             try:
                 uri = self.pathname or f"./{self.name}"
                 self.vector_db = LanceDB(
