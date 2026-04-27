@@ -9,6 +9,10 @@ from gwenflow.types import ModelResponse
 
 LLM_MODEL_PARAMETERS = {
     # --- OPENAI ---
+    "gpt-5.4-pro": {"context_token": 1050000, "reasoning": True},
+    "gpt-5.4": {"context_token": 1050000, "reasoning": True},
+    "gpt-5.4-mini": {"context_token": 400000, "reasoning": True},
+    "gpt-5.4-nano": {"context_token": 400000, "reasoning": True},
     "gpt-5.2": {"context_token": 400000, "reasoning": True},
     "gpt-5.2-pro": {"context_token": 400000, "reasoning": True},
     "gpt-5": {"context_token": 400000, "reasoning": True},
@@ -23,6 +27,26 @@ LLM_MODEL_PARAMETERS = {
     "gpt-4o-mini": {"context_token": 128000, "reasoning": False},
     "o1-preview": {"context_token": 128000, "reasoning": True},
     "o1-mini": {"context_token": 128000, "reasoning": True},
+    # --- ANTHROPIC ---
+    "claude-opus-4-7": {"context_token": 1000000, "reasoning": True},
+    "claude-opus-4-6": {"context_token": 1000000, "reasoning": True},
+    "claude-opus-4-5": {"context_token": 200000, "reasoning": True},
+    "claude-opus-4-1": {"context_token": 200000, "reasoning": True},
+    "claude-sonnet-4-6": {"context_token": 1000000, "reasoning": False},
+    "claude-sonnet-4-5": {"context_token": 200000, "reasoning": False},
+    "claude-haiku-4-5": {"context_token": 200000, "reasoning": False},
+    # --- GOOGLE ---
+    "gemini-3.1-pro-preview": {"context_token": 1048576, "reasoning": True},
+    "gemini-3.1-flash-lite-preview": {"context_token": 1048576, "reasoning": True},
+    "gemini-3-flash-preview": {"context_token": 1048576, "reasoning": True},
+    "gemini-2.5-pro": {"context_token": 1048576, "reasoning": True},
+    "gemini-2.5-flash": {"context_token": 1048576, "reasoning": True},
+    "gemini-2.5-flash-lite": {"context_token": 1048576, "reasoning": True},
+    "gemini-2.0-pro": {"context_token": 2097152, "reasoning": False},
+    "gemini-2.0-flash": {"context_token": 1048576, "reasoning": False},
+    "gemini-2.0-flash-thinking": {"context_token": 1048576, "reasoning": True},
+    "gemini-1.5-pro": {"context_token": 2097152, "reasoning": False},
+    "gemini-1.5-flash": {"context_token": 1048576, "reasoning": False},
     # --- DEEPSEEK ---
     "deepseek-chat": {"context_token": 128000, "reasoning": False},
     "deepseek-r1": {"context_token": 128000, "reasoning": True},
@@ -30,6 +54,12 @@ LLM_MODEL_PARAMETERS = {
     "llama-3.1-70b-versatile": {"context_token": 131072, "reasoning": False},
     "llama-3.1-8b-instant": {"context_token": 131072, "reasoning": False},
     # --- MISTRAL ---
+    "mistral-large-2512": {"context_token": 256000, "reasoning": False},
+    "mistral-small-2603": {"context_token": 256000, "reasoning": False},
+    "mistral-small-2506": {"context_token": 128000, "reasoning": False},
+    "ministral-14b-2512": {"context_token": 256000, "reasoning": False},
+    "ministral-8b-2512": {"context_token": 256000, "reasoning": False},
+    "ministral-3b-2512": {"context_token": 256000, "reasoning": False},
     "mixtral-8x7b-32768": {"context_token": 32768, "reasoning": False},
 }
 

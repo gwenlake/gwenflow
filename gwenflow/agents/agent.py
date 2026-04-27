@@ -288,6 +288,7 @@ class Agent(BaseModel):
             try:
                 args = json.loads(tool_call.function.arguments)
                 skill_name = args.get("skill_name")
+                logger.debug(f"[SKILL CALL] Loading skill '{skill_name}'")
                 skill = next((s for s in self.skills if s.name == skill_name), None)
                 if skill:
                     tool_execution.result = skill.to_prompt()
@@ -298,7 +299,7 @@ class Agent(BaseModel):
         try:
             tool = tool_map[tool_call.function.name]
             arguments = json.loads(tool_call.function.arguments)
-            logger.debug(f"Tool call: {tool_call.function}({arguments})")
+            logger.debug(f"[TOOL CALL] Loading tool: '{tool_call.function}'({arguments})")
             tool_execution.result = tool.run(**arguments)
             if tool_execution.result:
                 return tool_execution.to_message()
