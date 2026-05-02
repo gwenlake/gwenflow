@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List
 from gwenflow.skills.base import Skill
 
 if TYPE_CHECKING:
-    from gwenflow.tools import BaseTool
+    from gwenflow.tools import Tool
 
 
 _INSTRUCTIONS_HEADER = """\
@@ -61,7 +61,7 @@ class SkillsToolset:
             lines.append("</skill>")
         return _INSTRUCTIONS_HEADER.format(skills_list="\n".join(lines))
 
-    def get_tools(self) -> List["BaseTool"]:
+    def get_tools(self) -> List["Tool"]:
         """Return the three skill management tools to register on the agent."""
         from gwenflow.tools import FunctionTool
 

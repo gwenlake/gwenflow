@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
@@ -5,7 +6,7 @@ from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from gwenflow.logger import logger
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import Tool
 
 DESCRIPTION = """\
 This function to runs Python code in the current environment.
@@ -15,10 +16,10 @@ Returns the value of `variable_to_return` if successful, otherwise returns an er
 """
 
 
-class PythonCodeTool(BaseTool):
+@dataclass(kw_only=True)
+class PythonCodeTool(Tool):
     name: str = "PythonCodeTool"
     description: str = DESCRIPTION
-
     base_dir: Optional[Union[Path, str]] = None
     safe_locals: Optional[dict] = None
     safe_globals: Optional[dict] = None

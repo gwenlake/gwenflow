@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
@@ -7,17 +8,15 @@ from gwenflow.readers.base import Reader
 from gwenflow.types import Document
 
 
+@dataclass
 class JSONReader(Reader):
     def read(self, file: Path) -> List[Document]:
         try:
             filename = self.get_file_name(file)
             content = self.get_file_content(file, text_mode=True)
-
             json_data = json.loads(content)
-
             if isinstance(json_data, dict):
                 json_data = [json_data]
-
             documents = []
             for page_num, page_data in enumerate(json_data, start=1):
                 content = page_data.pop("content")
@@ -30,9 +29,7 @@ class JSONReader(Reader):
                         metadata=metadata,
                     )
                 )
-
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return []
-
         return documents

@@ -1,53 +1,52 @@
+from dataclasses import dataclass
 from typing import Annotated, Union
 
 from pydantic import Field
 
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import Tool
 
 
-class YahooFinanceSearch(BaseTool):
+@dataclass(kw_only=True)
+class YahooFinanceSearch(Tool):
     name: str = "YahooFinanceSearch"
     description: str = "Search for a stock on Yahoo Finance."
 
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
-
-            stocks = yf.Search(query)
-            return stocks.quotes
+            return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
-class YahooFinancePick(BaseTool):
+@dataclass(kw_only=True)
+class YahooFinancePick(Tool):
     name: str = "YahooFinancePick"
     description: str = "Search for a stock on Yahoo Finance."
 
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
-
-            stocks = yf.Search(query)
-            return stocks.quotes
+            return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
-class YahooFinanceStock(BaseTool):
+@dataclass(kw_only=True)
+class YahooFinanceStock(Tool):
     name: str = "YahooFinanceStock"
     description: str = "Retrieve stock data from Yahoo Finance."
 
     def _run(self, ticker: str = Field(description="The ticker stock to search for.")):
         try:
             import yfinance as yf
-
-            stock = yf.Ticker(ticker)
-            return stock.info
+            return yf.Ticker(ticker).info
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
-class YahooFinanceNews(BaseTool):
+@dataclass(kw_only=True)
+class YahooFinanceNews(Tool):
     name: str = "YahooFinanceNews"
     description: str = (
         "Search for news on company on Yahoo Finance."
@@ -59,19 +58,14 @@ class YahooFinanceNews(BaseTool):
     def _run(self, query: str = Field(description="The query to search for.")):
         try:
             import yfinance as yf
-
             stocks = yf.Search(query, enable_fuzzy_query=True, news_count=15, max_results=0)
-            # create a dict of news with title and link
-            news_dict = {}
-            for news in stocks.news:
-                news_dict[news["title"]] = news["link"]
-
-            return news_dict
+            return {news["title"]: news["link"] for news in stocks.news}
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
-class YahooFinanceScreen(BaseTool):
+@dataclass(kw_only=True)
+class YahooFinanceScreen(Tool):
     name: str = "YahooFinanceScreen"
     description: str = (
         "Screen for stocks on Yahoo Finance.This tool will return a list of stocks that meet the criteria."
@@ -90,7 +84,6 @@ class YahooFinanceScreen(BaseTool):
             screener = yf.Screener()
             try:
                 query = yf.EquityQuery(operator, eval(values))
-
             except Exception:
                 return "Query not valid. Please check the Yahoo Finance screener documentation."
 
@@ -107,11 +100,7 @@ class YahooFinanceScreen(BaseTool):
                         "userIdType": "guid",
                     }
                 )
-
-                result = screener.response
-                symbols = [quote["symbol"] for quote in result["quotes"]]
-
-                return symbols
+                return [quote["symbol"] for quote in screener.response["quotes"]]
             except Exception:
                 return "Query not valid. Please check the Yahoo Finance screener documentation."
 

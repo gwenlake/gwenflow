@@ -1,29 +1,21 @@
 import io
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Union
-
-from pydantic import model_validator
+from typing import List, Optional, Union
 
 from gwenflow.logger import logger
 from gwenflow.readers.base import Reader
 from gwenflow.types import Document
 
 
+@dataclass
 class CSVReader(Reader):
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
-        missing = []
-        for package in ("pandas", "tabulate"):
-            try:
-                __import__(package)
-            except ImportError:
-                missing.append(package)
+    def __post_init__(self) -> None:
+        missing = [p for p in ("pandas", "tabulate") if not __import__("importlib").util.find_spec(p)]
         if missing:
             raise ImportError(
                 f"Missing required packages: {', '.join(missing)}. Install with: `uv add {' '.join(missing)}`"
             )
-        return values
 
     def read(
         self,

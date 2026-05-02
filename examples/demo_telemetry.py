@@ -1,28 +1,23 @@
 import asyncio
 
-from dotenv import load_dotenv
+import dotenv
 
-from gwenflow.agents.agent import Agent
-from gwenflow.llms.openai.chat import ChatOpenAI
-from gwenflow.telemetry.base import TelemetryBase
-from gwenflow.tools.tavily import TavilyWebSearchTool
+from gwenflow import Agent, ChatOpenAI, Telemetry
+from gwenflow.tools import TavilyWebSearchTool
 
-load_dotenv()
+dotenv.load_dotenv(override=True)
 
-telemetry = TelemetryBase(
-    service_name="gwenflow-dev",
-)
-telemetry.initialize()
+Telemetry(service_name="gwenflow-dev")
 
 
-async def test_telemetry():
-    llm = ChatOpenAI(
-        model="gpt-5-nano",
-    )
-
+async def main():
+    llm = ChatOpenAI(model="gpt-4o-mini")
     agent = Agent(name="Football expert", llm=llm, tools=[TavilyWebSearchTool()])
-    async for i in agent.arun_stream("What was the last Rennes' match result ?"):
-        print(i.content)
+
+    async for chunk in agent.arun_stream("What was the last Rennes match result?"):
+        if chunk.content:
+            print(chunk.content, end="", flush=True)
+    print()
 
 
-asyncio.run(test_telemetry())
+asyncio.run(main())

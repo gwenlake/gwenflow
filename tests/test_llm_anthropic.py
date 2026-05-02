@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gwenflow.llms.anthropic.chat import ChatAnthropic
+from gwenflow.llms.anthropic.anthropic import ChatAnthropic
 from gwenflow.types import Message
 
 # ---------------------------------------------------------------------------

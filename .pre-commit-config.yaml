@@ -25,3 +25,11 @@ repos:
         pass_filenames: false
         always_run: true
         verbose: false
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest --record-mode=none -m "not integration" -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

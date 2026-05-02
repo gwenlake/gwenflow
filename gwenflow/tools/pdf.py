@@ -1,10 +1,13 @@
+from dataclasses import dataclass
+
 from pydantic import Field
 
 from gwenflow.readers.pdf import PDFReader
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import Tool
 
 
-class PDFReaderTool(BaseTool):
+@dataclass(kw_only=True)
+class PDFReaderTool(Tool):
     name: str = "PDFReaderTool"
     description: str = "This function reads a PDF from a file or an url and returns its content."
 

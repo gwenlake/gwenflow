@@ -1,37 +1,23 @@
 import uuid
-from typing import Any, Callable, List, Optional
-
-from pydantic import BaseModel, Field, field_validator
+from dataclasses import dataclass, field
+from typing import Callable, List, Optional
 
 from gwenflow.types import Message
 from gwenflow.utils.tokens import num_tokens_from_string
 
 
-class BaseChatMemory(BaseModel):
-    id: Optional[str] = Field(None, validate_default=True)
-    system_prompt: Optional[str] = None
-    messages: list[Message] = []
-    tokenizer_fn: Optional[Callable] = Field(None, validate_default=True)
+@dataclass
+class BaseChatMemory:
+    id: str | None = None
+    system_prompt: str | None = None
+    messages: List[Message] = field(default_factory=list)
+    tokenizer_fn: Optional[Callable] = None
 
-    @field_validator("id", mode="before")
-    @classmethod
-    def set_id(cls, v: Optional[str]) -> str:
-        id = v or str(uuid.uuid4())
-        return id
-
-    @field_validator("tokenizer_fn", mode="before")
-    @classmethod
-    def set_tokenizer_fn(cls, v: Optional[Callable]) -> Callable:
-        fn = v or num_tokens_from_string
-        return fn
-
-    def to_string(self) -> str:
-        """Convert memory to string."""
-        return self.json()
-
-    def to_dict(self, **kwargs: Any) -> dict:
-        """Convert memory to dict."""
-        return self.dict()
+    def __post_init__(self) -> None:
+        if self.id is None:
+            self.id = str(uuid.uuid4())
+        if self.tokenizer_fn is None:
+            self.tokenizer_fn = num_tokens_from_string
 
     def reset(self):
         self.messages = []
@@ -43,7 +29,7 @@ class BaseChatMemory(BaseModel):
         messages.extend(self.messages)
         return messages
 
-    def add_message(self, message: Message):
+    def add_message(self, message):
         if isinstance(message, Message):
             self.messages.append(message)
         elif isinstance(message, dict):
@@ -51,12 +37,12 @@ class BaseChatMemory(BaseModel):
         else:
             self.messages.append(Message(**message.__dict__))
 
-    def add_messages(self, messages: list[Message]):
+    def add_messages(self, messages: List[Message]):
         for message in messages:
             self.add_message(message)
 
     def _token_count_for_messages(self, messages: List[Message]) -> int:
-        if len(messages) <= 0:
+        if not messages:
             return 0
         text = " ".join(str(m.content) for m in messages)
         return self.tokenizer_fn(text)

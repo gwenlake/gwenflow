@@ -1,86 +1,125 @@
 import uuid
-from time import time
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, List, Optional, Annotated, Dict
+from collections.abc import Sequence
+from dataclasses import dataclass, field, asdict
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
+from pydantic import Discriminator
 from typing_extensions import Literal
 
 from gwenflow.types.message import Message
 from gwenflow.types.usage import Usage
+from gwenflow.utils.utils import now_utc
 
 
-class Function(BaseModel):
-    name: str
-    arguments: str
+@dataclass(kw_only=True)
+class TextPart:
+    id: str | None = None
+    content: str
+    part_kind: Literal['text'] = 'text'
 
+@dataclass(kw_only=True)
+class ThinkingPart:
+    id: str | None = None
+    content: str
+    part_kind: Literal['thinking'] = 'thinking'
 
-class ToolCall(BaseModel):
-    id: str
-    function: Function
-    type: Literal["function"]
+@dataclass(kw_only=True)
+class ToolCallPart:
+    id: str | None = None
+    function: str | None = None
+    arguments: str | dict[str, Any] | None = None
+    part_kind: Literal['tool-call'] = 'tool-call'
 
+    def to_openai(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.function,
+                "arguments": self.arguments,
+            }
+        }
 
-class ToolResponse(BaseModel):
+ModelResponsePart = Annotated[TextPart | ToolCallPart | ThinkingPart, Discriminator('part_kind')]
+
+@dataclass
+class ModelResponse:
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    parts: Sequence[ModelResponsePart] = field(default_factory=list)
+    parsed: Any | None = None
+    finish_reason: str | None = None
+    usage: Optional[Usage] = None
+    created_at: datetime = field(default_factory=now_utc)
+
+    def to_message(self) -> Message:
+        return Message(**self.model_dump(exclude_unset=True))
+
+    @property
+    def text(self) -> str | None:
+        """Get the text in the response."""
+        texts: list[str] = []
+        last_part: ModelResponsePart | None = None
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                if isinstance(last_part, TextPart):
+                    texts[-1] += part.content
+                else:
+                    texts.append(part.content)
+            last_part = part
+        if not texts:
+            return None
+
+        return '\n\n'.join(texts)
+
+    @property
+    def content(self) -> str | None:
+        """Get the text in the response."""
+        return self.text
+
+    @property
+    def thinking(self) -> str | None:
+        """Get the thinking in the response."""
+        thinking_parts = [part.content for part in self.parts if isinstance(part, ThinkingPart)]
+        if not thinking_parts:
+            return None
+        return '\n\n'.join(thinking_parts)
+
+    @property
+    def tool_calls(self) -> List[ToolCallPart]:
+        tool_call_parts: list[ToolCallPart] = []
+        for part in self.parts:
+            if isinstance(part, ToolCallPart):
+                tool_call_parts.append(part)
+        return tool_call_parts
+
+@dataclass
+class AgentResponse:
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    content: str | None = None
+    parsed: Any | None = None
+    reasoning_content: str | None = None
+    messages: list[Message] = field(default_factory=list)
+    finish_reason: str | None = None
+    usage: Usage = field(default_factory=Usage)
+    created_at: datetime = field(default_factory=now_utc)
+
+@dataclass
+class ToolResponse:
     tool_call_id: str
     tool_name: str
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
-    result: Optional[str] = None
+    content: str | None = None
     usage: Optional[Usage] = None
-    created_at: int = Field(default_factory=lambda: int(time()))
+    created_at: datetime = field(default_factory=now_utc)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
     def to_message(self) -> Message:
         return Message(
             role="tool",
             tool_call_id=self.tool_call_id,
-            tool_name=self.tool_name,
-            content=self.result,
+            content=self.content,
         )
-
-
-class ModelResponse(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-
-    role: Optional[str] = None
-
-    content: Optional[str] = None
-    parsed: Optional[Any] = None
-    reasoning_content: Optional[str] = None
-    tool_calls: List[ToolCall] = Field(default_factory=list)
-
-    finish_reason: Optional[str] = None
-    usage: Optional[Usage] = None
-
-    created_at: int = Field(default_factory=lambda: int(time()))
-
-    def to_message(self) -> Message:
-        return Message(**self.model_dump(exclude_unset=True))
-
-
-class AgentResponse(BaseModel):
-    id: UUID4 = Field(default_factory=uuid.uuid4, frozen=True)
-    """The id of the response."""
-
-    content: Optional[str] = None
-    parsed: Optional[Any] = None
-    reasoning_content: Optional[str] = None
-
-    messages: list[Message] = Field(default_factory=list)
-    """A list of messages generated by the agent."""
-
-    finish_reason: Optional[str] = None
-    usage: Usage = Field(default_factory=Usage)
-
-    created_at: int = Field(default_factory=lambda: int(time()))
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def deny_user_set_id(cls, v: Optional[UUID4]) -> None:
-        if v:
-            raise ValueError("This field is not to be set by the user.")
-
-    def to_messages(self) -> list[Message]:
-        """Convert the output into a list of input items suitable for passing to the model."""
-        return [Message(**it.model_dump(exclude_unset=True)) for it in self.messages]  # type: ignore

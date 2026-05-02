@@ -1,29 +1,22 @@
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
-from gwenflow.tools.base import BaseTool
-from gwenflow.tools.utils import function_to_json
+from gwenflow.tools.tool import Tool, function_to_json_schema
 
 
-class FunctionTool(BaseTool):
-    func: Callable
-    """The function that will be executed when the tool is called."""
+@dataclass(kw_only=True)
+class FunctionTool(Tool):
+    func: Optional[Callable] = None
+
+    def __post_init__(self) -> None:
+        _schema = function_to_json_schema(self.func)
+        self.name        = _schema["function"]["name"]
+        self.description = _schema["function"]["description"]
+        self.parameters  = _schema["function"]["parameters"]
 
     def _run(self, **kwargs: Any) -> Any:
         return self.func(**kwargs)
 
     @classmethod
     def from_function(cls, func: Callable) -> "FunctionTool":
-        if func.__doc__ is None:
-            raise ValueError("Function must have a docstring")
-        if func.__annotations__ is None:
-            raise ValueError("Function must have type annotations")
-
-        openai_schema = function_to_json(func)
-
-        return cls(
-            name=func.__name__,
-            description=func.__doc__,
-            func=func,
-            params_json_schema=openai_schema["function"]["parameters"],
-            tool_type="function",
-        )
+        return cls(func=func)

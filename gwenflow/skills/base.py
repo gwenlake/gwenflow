@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, List, Optional
 import yaml
 
 if TYPE_CHECKING:
-    from gwenflow.tools import BaseTool
+    from gwenflow.tools import Tool
 
 
 SKILL_TEMPLATE = """<skill>
@@ -73,17 +73,17 @@ class Skill:
             content=self.content,
         )
 
-    def get_tools(self) -> List["BaseTool"]:
+    def get_tools(self) -> List["Tool"]:
         """Dynamically load tools from this skill's script files.
 
         Each script may expose tools in one of two ways:
-        - A module-level ``tools`` list of ``BaseTool`` instances (preferred).
+        - A module-level ``tools`` list of ``Tool`` instances (preferred).
         - Any module-level function that has a docstring and type annotations
           (auto-wrapped as ``FunctionTool``).
         """
-        from gwenflow.tools import BaseTool, FunctionTool
+        from gwenflow.tools import Tool, FunctionTool
 
-        all_tools: List[BaseTool] = []
+        all_tools: List[Tool] = []
 
         for script_path in self.scripts:
             spec = importlib.util.spec_from_file_location("_skill_script", script_path)

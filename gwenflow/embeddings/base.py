@@ -1,18 +1,18 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
 
-
-class Embeddings(BaseModel):
-    """Base class for embeddings."""
+@dataclass(kw_only=True)
+class Embeddings(ABC):
 
     model: str
     dimensions: Optional[int] = 1536
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-
+    @abstractmethod
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def embed_query(self, text: str) -> List[float]:
-        raise NotImplementedError
+        pass

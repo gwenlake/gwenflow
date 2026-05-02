@@ -1,29 +1,27 @@
 import hashlib
 import re
-from typing import Any, List
+from dataclasses import dataclass, field
+from typing import List
 
-from pydantic import BaseModel, model_validator
 from tqdm import tqdm
 
 from gwenflow.logger import logger
 from gwenflow.types.document import Document
 
 
-class TokenTextSplitter(BaseModel):
+@dataclass
+class TokenTextSplitter:
     chunk_size: int = 500
     chunk_overlap: int = 100
     encoding_name: str = "cl100k_base"
     strip_whitespace: bool = False
     normalize_text: bool = False
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
+    def __post_init__(self) -> None:
         try:
             import tiktoken  # noqa: F401
         except ImportError as e:
             raise ImportError("`tiktoken` is not installed. Please install it with `uv add tiktoken`.") from e
-        return values
 
     def split_text(self, text: str) -> List[str]:
         import tiktoken

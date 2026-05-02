@@ -1,16 +1,9 @@
 import dotenv
 
-from gwenflow import Agent, ChatOpenAI, TelemetryBase, set_log_level_to_debug
+from gwenflow import Agent, ChatOpenAI
 from gwenflow.tools import PDFReaderTool, WebsiteReaderTool
 
-set_log_level_to_debug()
-
 dotenv.load_dotenv(override=True)
-
-telemetry = TelemetryBase(service_name="gwenflow-v1", enabled=True, endpoint="http://localhost:6006/v1/traces")
-
-telemetry.setup_telemetry()
-telemetry.add_exporter()
 
 agent = Agent(
     name="Website explorer",

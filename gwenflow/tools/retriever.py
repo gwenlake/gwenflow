@@ -1,28 +1,27 @@
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from gwenflow.logger import logger
 from gwenflow.retriever.base import Retriever
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import Tool
 from gwenflow.types.document import Document
 
 
-class RetrieverTool(BaseTool):
+@dataclass(kw_only=True)
+class RetrieverTool(Tool):
     name: str = "RetrieverTool"
     description: str = "Use this tool for fetching documents from the knowledge base."
+    retriever: Optional[Retriever] = None
 
-    retriever: Optional[Retriever] = Field(None, validate_default=True)
-
-    @field_validator("retriever", mode="before")
-    @classmethod
-    def set_retriever(cls, v: Optional[Retriever]) -> Retriever:
-        if not v:
+    def __post_init__(self) -> None:
+        if not self.retriever:
             try:
-                v = Retriever("default")
+                self.retriever = Retriever(name="default")
             except Exception as e:
                 logger.error(f"Error creating RetrieverTool: {e}")
-        return v
+        super().__post_init__()
 
     def load_documents(self, documents: List[Any]) -> bool:
         for document in documents:

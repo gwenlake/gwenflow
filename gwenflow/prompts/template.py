@@ -1,61 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from string import Formatter
-from typing import Any, Optional, Union
-
-from pydantic import BaseModel, model_validator
+from typing import Optional, Union
 
 
 def _get_template_variables(template: str) -> list[str]:
-    """Get the variables from the template.
-
-    Args:
-        template: The template string.
-        template_format: The template format. Should be one of "f-string" or "jinja2".
-
-    Returns:
-        The variables from the template.
-
-    Raises:
-        ValueError: If the template format is not supported.
-    """
     input_variables = {v for _, v, _, _ in Formatter().parse(template) if v is not None}
-
     return sorted(input_variables)
 
 
-class PromptTemplate(BaseModel):
-    """Prompt template for a language model."""
-
+@dataclass
+class PromptTemplate:
     template: str
-    """The prompt template."""
+    input_variables: list[str] = field(default_factory=list)
 
-    input_variables: list[str]
-    """The prompt input variables."""
+    def __post_init__(self) -> None:
+        self.input_variables = _get_template_variables(self.template)
 
-    @model_validator(mode="before")
-    @classmethod
-    def pre_init_validation(cls, values: dict) -> Any:
-        """Check that template and input variables are consistent."""
-        if values.get("template") is None:
-            # pydantic will fail if template is not provided.
-            return values
-        values["input_variables"] = _get_template_variables(values["template"])
-        return values
-
-    def __str__(self) -> dict:
+    def __str__(self) -> str:
         return self.template
 
-    def format(self, **kwargs: Any) -> str:
-        """Format the prompt with the inputs.
-
-        Args:
-            kwargs: Any arguments to be passed to the prompt template.
-
-        Returns:
-            A formatted string.
-        """
+    def format(self, **kwargs) -> str:
         return self.template.format(**kwargs)
 
     @classmethod
@@ -64,34 +31,10 @@ class PromptTemplate(BaseModel):
         template_file: Union[str, Path],
         encoding: Optional[str] = None,
     ) -> PromptTemplate:
-        """Load a prompt from a file.
-
-        Args:
-            template_file: The path to the file containing the prompt template.
-            encoding: The encoding system for opening the template file.
-                If not provided, will use the OS default.
-
-        Returns:
-            The prompt loaded from the file.
-        """
         with open(str(template_file), encoding=encoding) as f:
             template = f.read()
-        return cls.from_template(template=template, role="user")
+        return cls(template=template)
 
     @classmethod
-    def from_template(
-        cls,
-        template: str,
-        role: str = "user",
-    ) -> PromptTemplate:
-        """Load a prompt template from a template.
-
-        Args:
-            template: The template to load.
-            kwargs: Any other arguments to pass to the prompt template.
-            role: The role of the prompt (e.g., "user", "assistant", etc.).
-
-        Returns:
-            The prompt template loaded from the template.
-        """
-        return cls(template=template, role=role)
+    def from_template(cls, template: str) -> PromptTemplate:
+        return cls(template=template)
