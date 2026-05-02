@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
@@ -6,7 +7,8 @@ from pydantic import BaseModel
 
 from gwenflow.agents.agent import Agent
 from gwenflow.tools import Tool
-from gwenflow.types import Function, Message, ModelResponse, ToolCall, Usage
+from gwenflow.types import Message, ModelResponse, RequestUsage
+from gwenflow.types.response import TextPart, ToolCallPart
 
 
 # ---------------------------------------------------------------------------
@@ -14,6 +16,7 @@ from gwenflow.types import Function, Message, ModelResponse, ToolCall, Usage
 # ---------------------------------------------------------------------------
 
 
+@dataclass(kw_only=True)
 class AddTool(Tool):
     name: str = "add"
     description: str = "Adds two numbers"
@@ -24,7 +27,7 @@ class AddTool(Tool):
 
 def _mock_llm(responses):
     llm = MagicMock()
-    llm.get_context_window_size.return_value = 96000
+    llm.get_context_size.return_value = 96000
     llm.response_format = None
     llm.tools = []
     llm.tool_choice = None
@@ -33,12 +36,15 @@ def _mock_llm(responses):
 
 
 def _response(content="done", tool_calls=None):
+    parts = []
+    if content:
+        parts.append(TextPart(content=content))
+    if tool_calls:
+        parts.extend(tool_calls)
     return ModelResponse(
-        role="assistant",
-        content=content,
+        parts=parts,
         finish_reason="stop" if not tool_calls else "tool_calls",
-        tool_calls=tool_calls or [],
-        usage=Usage(requests=1, input_tokens=10, output_tokens=5, total_tokens=15),
+        usage=RequestUsage(input_tokens=10, output_tokens=5),
     )
 
 
@@ -200,12 +206,22 @@ def test_agent_run_accumulates_usage():
 
 
 def test_agent_run_with_tool_call():
-    tool_call = ToolCall(id="tc_1", type="function", function=Function(name="add", arguments='{"a": 2, "b": 3}'))
+    tool_call = ToolCallPart(id="tc_1", function="add", arguments='{"a": 2, "b": 3}')
     llm = _mock_llm([_response(tool_calls=[tool_call]), _response("The result is 5")])
     agent = Agent(tools=[AddTool()], llm=llm)
     result = agent.run("Add 2 and 3")
 
     assert result.content == "The result is 5"
+
+
+def test_agent_run_tool_call_increments_usage():
+    tool_call = ToolCallPart(id="tc_1", function="add", arguments='{"a": 2, "b": 3}')
+    llm = _mock_llm([_response(tool_calls=[tool_call]), _response("The result is 5")])
+    agent = Agent(tools=[AddTool()], llm=llm)
+    result = agent.run("Add 2 and 3")
+
+    assert result.usage.tool_calls == 1
+    assert result.usage.requests == 2
 
 
 def test_agent_run_with_context_string():
@@ -217,7 +233,7 @@ def test_agent_run_with_context_string():
 
 
 def test_agent_run_respects_max_turns():
-    tool_call = ToolCall(id="tc_1", type="function", function=Function(name="add", arguments='{"a": 1, "b": 1}'))
+    tool_call = ToolCallPart(id="tc_1", function="add", arguments='{"a": 1, "b": 1}')
     # Always returns a tool call — agent should stop after max_turns
     llm = _mock_llm([_response(tool_calls=[tool_call])] * 10)
     agent = Agent(tools=[AddTool()], llm=llm, max_turns=3)
@@ -233,7 +249,7 @@ def test_agent_run_respects_max_turns():
 
 
 def test_execute_tool_calls_returns_result():
-    tool_call = ToolCall(id="tc_1", type="function", function=Function(name="add", arguments='{"a": 2, "b": 3}'))
+    tool_call = ToolCallPart(id="tc_1", function="add", arguments='{"a": 2, "b": 3}')
     agent = Agent(tools=[AddTool()], llm=_mock_llm([]))
     messages = agent.execute_tool_calls([tool_call])
 
@@ -243,7 +259,7 @@ def test_execute_tool_calls_returns_result():
 
 
 def test_execute_tool_calls_unknown_tool():
-    tool_call = ToolCall(id="tc_1", type="function", function=Function(name="nonexistent", arguments="{}"))
+    tool_call = ToolCallPart(id="tc_1", function="nonexistent", arguments="{}")
     agent = Agent(tools=[AddTool()], llm=_mock_llm([]))
     messages = agent.execute_tool_calls([tool_call])
 

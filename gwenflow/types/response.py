@@ -8,7 +8,7 @@ from pydantic import Discriminator
 from typing_extensions import Literal
 
 from gwenflow.types.message import Message
-from gwenflow.types.usage import Usage
+from gwenflow.types.usage import RequestUsage, AgentUsage
 from gwenflow.utils.utils import now_utc
 
 
@@ -49,7 +49,7 @@ class ModelResponse:
     parts: Sequence[ModelResponsePart] = field(default_factory=list)
     parsed: Any | None = None
     finish_reason: str | None = None
-    usage: Optional[Usage] = None
+    usage: RequestUsage = field(default_factory=RequestUsage)
     created_at: datetime = field(default_factory=now_utc)
 
     def to_message(self) -> Message:
@@ -87,11 +87,7 @@ class ModelResponse:
 
     @property
     def tool_calls(self) -> List[ToolCallPart]:
-        tool_call_parts: list[ToolCallPart] = []
-        for part in self.parts:
-            if isinstance(part, ToolCallPart):
-                tool_call_parts.append(part)
-        return tool_call_parts
+        return [part for part in self.parts if isinstance(part, ToolCallPart)]
 
 @dataclass
 class AgentResponse:
@@ -101,7 +97,7 @@ class AgentResponse:
     reasoning_content: str | None = None
     messages: list[Message] = field(default_factory=list)
     finish_reason: str | None = None
-    usage: Usage = field(default_factory=Usage)
+    usage: AgentUsage = field(default_factory=AgentUsage)
     created_at: datetime = field(default_factory=now_utc)
 
 @dataclass
@@ -111,7 +107,6 @@ class ToolResponse:
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
     content: str | None = None
-    usage: Optional[Usage] = None
     created_at: datetime = field(default_factory=now_utc)
     
     def to_dict(self) -> Dict[str, Any]:

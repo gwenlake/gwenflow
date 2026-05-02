@@ -1,31 +1,53 @@
-from pydantic import BaseModel, Field
+from __future__ import annotations as _annotations
 
+from dataclasses import dataclass, field
 
-class UsageDetails(BaseModel):
-    cached_tokens: int = 0
-    reasoning_tokens: int = 0
-
-    def add(self, other: "UsageDetails") -> None:
-        self.cached_tokens += other.cached_tokens
-        self.reasoning_tokens += other.reasoning_tokens
-
-
-class Usage(BaseModel):
-    requests: int = 0
+@dataclass(kw_only=True)
+class RequestUsage:
     input_tokens: int = 0
+    """Number of input tokens."""
+    cache_write_tokens: int = 0
+    """Number of tokens written to the cache."""
+    cache_read_tokens: int = 0
+    """Number of tokens read from the cache."""
     output_tokens: int = 0
-    total_tokens: int = 0
 
-    input_tokens_details: UsageDetails = Field(default_factory=UsageDetails)
-    output_tokens_details: UsageDetails = Field(default_factory=UsageDetails)
+    input_audio_tokens: int = 0
+    """Number of audio input tokens."""
+    cache_audio_read_tokens: int = 0
+    """Number of audio tokens read from the cache."""
+    output_audio_tokens: int = 0
+    """Number of audio output tokens."""
 
-    def add(self, other: "Usage") -> None:
-        self.requests += other.requests if other.requests else 0
-        self.input_tokens += other.input_tokens if other.input_tokens else 0
-        self.output_tokens += other.output_tokens if other.output_tokens else 0
-        self.total_tokens += other.total_tokens if other.total_tokens else 0
+    details: dict[str, int] = field(default_factory=dict[str, int])
 
-        if other.input_tokens_details:
-            self.input_tokens_details.add(other.input_tokens_details)
-        if other.output_tokens_details:
-            self.output_tokens_details.add(other.output_tokens_details)
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(kw_only=True)
+class AgentUsage(RequestUsage):
+    requests: int = 0
+    """Number of requests made to the LLM API."""
+
+    tool_calls: int = 0
+    """Number of successful tool calls executed during the run."""
+
+    def add(self, other: RequestUsage | AgentUsage) -> None:
+        if isinstance(other, AgentUsage):
+            self.requests += other.requests
+            self.tool_calls += other.tool_calls
+        else:
+            self.requests += 1
+
+        self.input_tokens += other.input_tokens
+        self.cache_write_tokens += other.cache_write_tokens
+        self.cache_read_tokens += other.cache_read_tokens
+        self.input_audio_tokens += other.input_audio_tokens
+        self.cache_audio_read_tokens += other.cache_audio_read_tokens
+        self.output_tokens += other.output_tokens
+
+        for key, value in other.details.items():
+            if isinstance(value, (int, float)):
+                self.details[key] = self.details.get(key, 0) + value

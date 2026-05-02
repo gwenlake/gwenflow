@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
-from gwenflow.types import ItemHelpers, Message, ModelResponse, Usage
+from gwenflow.types import ItemHelpers, Message, ModelResponse, RequestUsage
 from gwenflow.types.response import TextPart, ToolCallPart, ThinkingPart
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
@@ -168,16 +168,14 @@ class ChatAnthropic(ChatBase):
 
         return formatted
 
-    def _get_usage(self, usage) -> Optional[Usage]:
-        if usage is None:
+    def _get_usage(self, usage) -> RequestUsage:
+        if not usage:
             return None
         input_tokens = getattr(usage, "input_tokens", 0) or 0
         output_tokens = getattr(usage, "output_tokens", 0) or 0
-        return Usage(
-            requests=1,
+        return RequestUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
         )
 
     def _parse_response(self, response) -> ModelResponse:
@@ -271,11 +269,9 @@ class ChatAnthropic(ChatBase):
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
-                            response.usage = Usage(
-                                requests=1,
+                            response.usage = RequestUsage(
                                 input_tokens=_input_tokens,
                                 output_tokens=output_tokens,
-                                total_tokens=_input_tokens + output_tokens,
                             )
                             yield response
 
@@ -324,11 +320,9 @@ class ChatAnthropic(ChatBase):
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
-                            response.usage = Usage(
-                                requests=1,
+                            response.usage = RequestUsage(
                                 input_tokens=_input_tokens,
                                 output_tokens=output_tokens,
-                                total_tokens=_input_tokens + output_tokens,
                             )
                             yield response
 

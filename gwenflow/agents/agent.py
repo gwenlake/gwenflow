@@ -386,6 +386,7 @@ class Agent:
             if response.tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
+                    agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
 
@@ -441,6 +442,7 @@ class Agent:
             if response.tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
+                    agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
 
@@ -512,6 +514,7 @@ class Agent:
             if final_tool_calls and self.get_all_tools():
                 tool_messages = self.execute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
+                    agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
 
@@ -586,6 +589,7 @@ class Agent:
             if final_tool_calls and self.get_all_tools():
                 tool_messages = await self.aexecute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
+                    agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
 

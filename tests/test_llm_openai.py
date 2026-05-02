@@ -2,6 +2,7 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+
 import pytest
 from pydantic import BaseModel
 
@@ -58,12 +59,10 @@ def test_invoke_with_message_list(monkeypatch):
 
 
 def test_invoke_with_tool_calls(monkeypatch):
-    tool_call = MagicMock()
-    tool_call.model_dump.return_value = {
-        "id": "call_1",
-        "type": "function",
-        "function": {"name": "my_tool", "arguments": '{"x": 1}'},
-    }
+    tool_call = SimpleNamespace(
+        id="call_1",
+        function=SimpleNamespace(name="my_tool", arguments='{"x": 1}'),
+    )
     fake_client = MagicMock()
     fake_client.chat.completions.create.return_value = _make_openai_response("", tool_calls=[tool_call])
     monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
@@ -72,8 +71,8 @@ def test_invoke_with_tool_calls(monkeypatch):
     result = llm.invoke("Use a tool")
 
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].function.name == "my_tool"
-    assert result.tool_calls[0].function.arguments == '{"x": 1}'
+    assert result.tool_calls[0].function == "my_tool"
+    assert result.tool_calls[0].arguments == '{"x": 1}'
 
 
 def test_invoke_no_usage_returns_none(monkeypatch):

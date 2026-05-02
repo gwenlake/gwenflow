@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gwenflow.llms.base import LLM_MODEL_PARAMETERS
+from gwenflow.llms.models import MODELS
 from gwenflow.llms.openai import ChatOpenAI
 from gwenflow.types import Message
 
@@ -22,33 +22,33 @@ def _make_openai_response(text="hello", tool_calls=None):
 
 
 # ---------------------------------------------------------------------------
-# LLM_MODEL_PARAMETERS
+# MODELS
 # ---------------------------------------------------------------------------
 
 
 def test_known_model_context_window():
-    assert LLM_MODEL_PARAMETERS["gpt-4o"]["context_token"] == 128000
+    assert MODELS["gpt-4o"]["context_window"] == 128000
 
 
 def test_known_model_reasoning_false():
-    assert LLM_MODEL_PARAMETERS["gpt-4o"]["reasoning"] is False
+    assert MODELS["gpt-4o"]["reasoning"] is False
 
 
 def test_known_model_reasoning_true():
-    assert LLM_MODEL_PARAMETERS["o3"]["reasoning"] is True
+    assert MODELS["o3"]["reasoning"] is True
 
 
 def test_gpt41_variants_same_context():
-    assert LLM_MODEL_PARAMETERS["gpt-4.1"]["context_token"] == LLM_MODEL_PARAMETERS["gpt-4.1-mini"]["context_token"]
-    assert LLM_MODEL_PARAMETERS["gpt-4.1"]["context_token"] == LLM_MODEL_PARAMETERS["gpt-4.1-nano"]["context_token"]
+    assert MODELS["gpt-4.1"]["context_window"] == MODELS["gpt-4.1-mini"]["context_window"]
+    assert MODELS["gpt-4.1"]["context_window"] == MODELS["gpt-4.1-nano"]["context_window"]
 
 
 def test_anthropic_haiku_versioned_matches_base():
-    assert LLM_MODEL_PARAMETERS["claude-haiku-4-5"]["context_token"] == LLM_MODEL_PARAMETERS["claude-haiku-4-5-20251001"]["context_token"]
+    assert MODELS["claude-haiku-4-5"]["context_window"] == MODELS["claude-haiku-4-5-20251001"]["context_window"]
 
 
 def test_mistral_default_model_present():
-    assert "open-mistral-7b" in LLM_MODEL_PARAMETERS
+    assert "open-mistral-7b" in MODELS
 
 
 # ---------------------------------------------------------------------------
@@ -58,12 +58,12 @@ def test_mistral_default_model_present():
 
 def test_get_context_window_known_model():
     llm = ChatOpenAI(model="gpt-4.1", api_key="fake")
-    assert llm.get_context_window_size() == int(1047576 * 0.75)
+    assert llm.get_context_size() == int(1047576 * 0.75)
 
 
 def test_get_context_window_unknown_model():
     llm = ChatOpenAI(model="unknown-model-xyz", api_key="fake")
-    assert llm.get_context_window_size() == int(128000 * 0.75)
+    assert llm.get_context_size() == int(128000 * 0.75)
 
 
 def test_get_reasoning_model_true():
@@ -77,8 +77,10 @@ def test_get_reasoning_model_false():
 
 
 def test_get_tool_names_and_map():
+    from dataclasses import dataclass
     from gwenflow.tools import Tool
 
+    @dataclass(kw_only=True)
     class DummyTool(Tool):
         name: str = "dummy"
         description: str = "A dummy tool"
@@ -112,12 +114,10 @@ def test_openai_invoke_returns_content(monkeypatch):
 
 
 def test_openai_invoke_with_tool_calls(monkeypatch):
-    tool_call = MagicMock()
-    tool_call.model_dump.return_value = {
-        "id": "call_1",
-        "type": "function",
-        "function": {"name": "my_tool", "arguments": '{"x": 1}'},
-    }
+    tool_call = SimpleNamespace(
+        id="call_1",
+        function=SimpleNamespace(name="my_tool", arguments='{"x": 1}'),
+    )
     fake_client = MagicMock()
     fake_client.chat.completions.create.return_value = _make_openai_response("", tool_calls=[tool_call])
     monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
@@ -126,7 +126,7 @@ def test_openai_invoke_with_tool_calls(monkeypatch):
     result = llm.invoke("Use a tool")
 
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].function.name == "my_tool"
+    assert result.tool_calls[0].function == "my_tool"
 
 
 def test_openai_invoke_with_message_list(monkeypatch):

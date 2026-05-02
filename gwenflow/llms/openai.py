@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from gwenflow.llms.base import ChatBase
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
-from gwenflow.types import ItemHelpers, Message, ModelResponse, Usage
+from gwenflow.types import ItemHelpers, Message, ModelResponse, RequestUsage
 from gwenflow.types.response import TextPart, ToolCallPart, ThinkingPart
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
@@ -139,14 +139,12 @@ class ChatOpenAI(ChatBase):
         """Format a message into the format expected by OpenAI."""
         return message.to_openai()
 
-    def _get_openai_usage(self, completion: Union[ChatCompletion, ChatCompletionChunk]) -> Usage:
+    def _get_usage(self, completion: Union[ChatCompletion, ChatCompletionChunk]) -> RequestUsage:
         if not completion.usage:
             return None
-        return Usage(
-            requests=1,
+        return RequestUsage(
             input_tokens=completion.usage.prompt_tokens,
             output_tokens=completion.usage.completion_tokens,
-            total_tokens=completion.usage.total_tokens,
         )
 
     def _parse_response(self, completion: ChatCompletion) -> ModelResponse:
@@ -171,7 +169,7 @@ class ChatOpenAI(ChatBase):
         model_response = ModelResponse(
             parts=parts,
             finish_reason="stop",
-            usage=self._get_openai_usage(completion),
+            usage=self._get_usage(completion),
         )
 
         if self.response_format:
@@ -252,7 +250,7 @@ class ChatOpenAI(ChatBase):
 
                 else:
                     if hasattr(response, "usage"):
-                        response.usage = self._get_openai_usage(chunk)
+                        response.usage = self._get_usage(chunk)
                         yield response
 
         except Exception as e:
@@ -301,7 +299,7 @@ class ChatOpenAI(ChatBase):
 
                 else:
                     if hasattr(response, "usage"):
-                        response.usage = self._get_openai_usage(chunk)
+                        response.usage = self._get_usage(chunk)
                         yield response
 
         except Exception as e:
