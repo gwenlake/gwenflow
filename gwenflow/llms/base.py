@@ -1,10 +1,11 @@
+import copy
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 from gwenflow.tools import Tool
-from gwenflow.types import ModelResponse
+from gwenflow.types import ModelResponse, Message
 from gwenflow.llms.models import MODELS
 
 
@@ -52,3 +53,16 @@ class ChatBase(ABC):
 
     def get_tool_map(self):
         return {tool.name: tool for tool in self.tools}
+
+    def input_to_message_list(
+        self,
+        input: Union[str, List[Message], List[Dict[str, str]]],
+    ) -> List[Message]:
+        """Converts a string or list of messages into a list of messages."""
+        if isinstance(input, str):
+            return [Message(role="user", content=input)]
+        messages = copy.deepcopy(input)
+        for i, message in enumerate(messages):
+            if isinstance(message, dict):
+                messages[i] = Message(**message)
+        return messages

@@ -1,5 +1,62 @@
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, List, Optional, Annotated, Dict, Union
+from typing_extensions import Literal
+from dataclasses import dataclass, field, asdict
+from pydantic import Discriminator
+import json
+
+@dataclass(kw_only=True)
+class TextContent:
+    content: str
+    kind: Literal['text'] = 'text'
+    
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TextContent":
+        return TextContent(**data)
+
+
+@dataclass(kw_only=True)
+class ThinkingContent:
+    content: str
+    extra: dict[str, Any] = field(default_factory=dict)
+    kind: Literal['thinking'] = 'thinking'
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ThinkingContent":
+        return ThinkingContent(**data)
+
+
+@dataclass(kw_only=True)
+class ToolCall:
+    id: str | None = None
+    name: str
+    arguments: str | dict[str, Any] | None = None
+    kind: Literal['tool-call'] = 'tool-call'
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ToolCall":
+        return ToolCall(**data)
+
+    def to_message_dict(self) -> dict[str, Any]:
+        args = self.arguments if isinstance(self.arguments, str) else json.dumps(self.arguments)
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": args,
+            }
+        }
+    
+MessageContent = Annotated[TextContent | ThinkingContent | ToolCall, Discriminator('kind')]
 
 
 SYSTEM = "system"
@@ -18,7 +75,7 @@ class Message:
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     reasoning_content: Optional[str] = None
-    extra: Optional[dict] = None
+    extra: dict[str, Any] | None = None
 
     def __post_init__(self):
         if self.role not in _VALID_ROLES:

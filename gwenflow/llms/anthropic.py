@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
+from gwenflow.tools import Tool
 from gwenflow.telemetry import tracer
-from gwenflow.types import ItemHelpers, Message, ModelResponse, RequestUsage
-from gwenflow.types.response import TextPart, ToolCallPart, ThinkingPart
+from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ToolCall, ThinkingContent
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
@@ -84,7 +84,7 @@ class ChatAnthropic(ChatBase):
                 model_params["output_config"] = self.response_format
         return {k: v for k, v in model_params.items() if v is not None}
 
-    def _tool_to_anthropic(self, tool) -> Dict[str, Any]:
+    def _tool_to_anthropic(self, tool: Tool) -> Dict[str, Any]:
         return {
             "name": tool.name,
             "description": tool.description or "",
@@ -182,11 +182,11 @@ class ChatAnthropic(ChatBase):
         parts = []
         for block in response.content:
             if block.type == "text":
-                parts.append(TextPart(content=block.text))
+                parts.append(TextContent(content=block.text))
             elif block.type == "thinking":
-                parts.append(ThinkingPart(content=block.thinking))
+                parts.append(ThinkingContent(content=block.thinking))
             elif block.type == "tool_use":
-                parts.append(ToolCallPart(id=block.id, function=block.name, arguments=json.dumps(block.input)))
+                parts.append(ToolCall(id=block.id, name=block.name, arguments=block.input))
 
         model_response = ModelResponse(
             parts=parts,
@@ -212,7 +212,7 @@ class ChatAnthropic(ChatBase):
     @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             response = self.get_client().messages.create(**self._build_request(messages_for_model))
         except Exception as e:
             raise RuntimeError(f"Error in calling anthropic API: {e}") from e
@@ -221,7 +221,7 @@ class ChatAnthropic(ChatBase):
     @tracer.llm(name="LLM Async Invoke")
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             response = await self.get_async_client().messages.create(**self._build_request(messages_for_model))
         except Exception as e:
             raise RuntimeError(f"Error in calling anthropic API: {e}") from e
@@ -230,9 +230,9 @@ class ChatAnthropic(ChatBase):
     @tracer.llm(name="LLM Stream")
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             request = self._build_request(messages_for_model)
-            _full_tool_calls: Dict[int, ToolCallPart] = {}
+            _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
 
             with self.get_client().messages.stream(**request) as stream:
@@ -244,27 +244,27 @@ class ChatAnthropic(ChatBase):
 
                     elif event.type == "content_block_start":
                         if event.content_block.type == "tool_use":
-                            _full_tool_calls[event.index] = ToolCallPart(
+                            _full_tool_calls[event.index] = ToolCall(
                                 id=event.content_block.id,
-                                function=event.content_block.name,
+                                name=event.content_block.name,
                                 arguments="",
                             )
 
                     elif event.type == "content_block_delta":
                         if event.delta.type == "text_delta":
-                            response.parts.append(TextPart(content=event.delta.text))
+                            response.parts.append(TextContent(content=event.delta.text))
                             yield response
                         elif event.delta.type == "input_json_delta":
                             if event.index in _full_tool_calls:
                                 _full_tool_calls[event.index].function.arguments += event.delta.partial_json
                         elif event.delta.type == "thinking_delta":
-                            response.parts.append(ThinkingPart(content=event.delta.thinking))
+                            response.parts.append(ThinkingContent(content=event.delta.thinking))
                             yield response
 
                     elif event.type == "message_delta":
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
-                                response.parts.append(ToolCallPart(id=tc.id, function=tc.function.name, arguments=tc.function.arguments))
+                                response.parts.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
                             response.finish_reason = "tool_calls"
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
@@ -281,9 +281,9 @@ class ChatAnthropic(ChatBase):
     @tracer.llm(name="LLM Async Astream")
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             request = self._build_request(messages_for_model)
-            _full_tool_calls: Dict[int, ToolCallPart] = {}
+            _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
 
             async with self.get_async_client().messages.stream(**request) as stream:
@@ -295,27 +295,27 @@ class ChatAnthropic(ChatBase):
 
                     elif event.type == "content_block_start":
                         if event.content_block.type == "tool_use":
-                            _full_tool_calls[event.index] = ToolCallPart(
+                            _full_tool_calls[event.index] = ToolCall(
                                 id=event.content_block.id,
-                                function=event.content_block.name,
+                                name=event.content_block.name,
                                 arguments="",
                             )
 
                     elif event.type == "content_block_delta":
                         if event.delta.type == "text_delta":
-                            response.parts.append(TextPart(content=event.delta.text))
+                            response.parts.append(TextContent(content=event.delta.text))
                             yield response
                         elif event.delta.type == "input_json_delta":
                             if event.index in _full_tool_calls:
                                 _full_tool_calls[event.index].function.arguments += event.delta.partial_json
                         elif event.delta.type == "thinking_delta":
-                            response.parts.append(ThinkingPart(content=event.delta.thinking))
+                            response.parts.append(ThinkingContent(content=event.delta.thinking))
                             yield response
 
                     elif event.type == "message_delta":
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
-                                response.parts.append(ToolCallPart(id=tc.id, function=tc.function.name, arguments=tc.function.arguments))
+                                response.parts.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
                             response.finish_reason = "tool_calls"
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0

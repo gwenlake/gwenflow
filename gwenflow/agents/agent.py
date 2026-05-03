@@ -14,11 +14,8 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
-from gwenflow.tools.function import FunctionTool
-from gwenflow.tools.mcp import MCPServer
-from gwenflow.types import AgentResponse, ItemHelpers, Message
-from gwenflow.types.response import ToolCallPart, ToolResponse
+from gwenflow.tools import Tool, FunctionTool, MCPServer
+from gwenflow.types import AgentResponse, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
 
 
@@ -265,22 +262,24 @@ class Agent:
         return tools
 
     @tracer.tool(name="Tool Call")
-    def run_tool(self, tool_call: ToolCallPart) -> Message:
+    def run_tool(self, tool_call: ToolCall) -> Message:
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
-            tool_name=tool_call.function,
+            tool_name=tool_call.name,
         )
 
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
-        if tool_call.function not in tool_map.keys():
-            logger.error(f"Tool {tool_call.function} does not exist")
-            tool_execution.content = f"Tool {tool_call.function} does not exist"
+        if tool_call.name not in tool_map.keys():
+            logger.error(f"Tool {tool_call.name} does not exist")
+            tool_execution.content = f"Tool {tool_call.name} does not exist"
             return tool_execution.to_message()
 
-        if self.skills and tool_call.function == "load_skill":
+        if self.skills and tool_call.name == "load_skill":
             try:
-                args = json.loads(tool_call.arguments)
+                args = tool_call.arguments
+                if not isinstance(args, dict):
+                    args = json.loads(args)
                 skill_name = args.get("skill_name")
                 logger.debug(f"[SKILL CALL] Loading skill '{skill_name}'")
                 skill = next((s for s in self.skills if s.name == skill_name), None)
@@ -288,23 +287,25 @@ class Agent:
                     tool_execution.content = skill.to_prompt()
                     return tool_execution.to_message()
             except Exception as e:
-                logger.error(f"Error loading skill '{tool_call.function}': {e}")
+                logger.error(f"Error loading skill '{tool_call.name}': {e}")
 
         try:
-            tool = tool_map[tool_call.function]
-            arguments = json.loads(tool_call.arguments)
-            logger.info(f"[Tool Call] '{tool_call.function}'({arguments})")
+            tool = tool_map[tool_call.name]
+            arguments = tool_call.arguments
+            if not isinstance(arguments, dict):
+                arguments = json.loads(arguments)
+            logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
             tool_execution.content = tool.run(**arguments)
             if tool_execution.content:
                 return tool_execution.to_message()
 
         except Exception as e:
-            logger.error(f"Error executing tool '{tool_call.function}': {e}")
+            logger.error(f"Error executing tool '{tool_call.name}': {e}")
 
-        tool_execution.content = f"Error executing tool '{tool_call.function}'"
+        tool_execution.content = f"Error executing tool '{tool_call.name}'"
         return tool_execution.to_message()
 
-    def execute_tool_calls(self, tool_calls: List[ToolCallPart]) -> List[Message]:
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         results = []
         for tool_call in tool_calls:
             result = self.run_tool(tool_call)
@@ -313,7 +314,7 @@ class Agent:
 
         return results
 
-    async def aexecute_tool_calls(self, tool_calls: List[ToolCallPart]) -> List[Message]:
+    async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         tasks = []
         for tool_call in tool_calls:
             task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
@@ -330,7 +331,7 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
         # prepare messages and task
-        messages = ItemHelpers.input_to_message_list(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         # init agent response
@@ -354,6 +355,7 @@ class Agent:
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
+            # print(json.dumps(messages_for_model, indent=2))
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
@@ -362,7 +364,7 @@ class Agent:
             agent_response.usage.add(response.usage)
 
             # keep answer in memory
-            tool_calls = [t.to_openai() for t in response.tool_calls]
+            tool_calls = [t.to_message_dict() for t in response.tool_calls]
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             self.history.add_message(_message)
 
@@ -403,7 +405,7 @@ class Agent:
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AgentResponse:
-        messages = ItemHelpers.input_to_message_list(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         agent_response = AgentResponse()
@@ -429,7 +431,7 @@ class Agent:
             # usage
             agent_response.usage.add(response.usage)
 
-            tool_calls = [t.to_openai() for t in response.tool_calls]
+            tool_calls = [t.to_message_dict() for t in response.tool_calls]
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             self.history.add_message(_message)
 
@@ -463,7 +465,7 @@ class Agent:
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> Iterator[AgentResponse]:
-        messages = ItemHelpers.input_to_message_list(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         agent_response = AgentResponse()
@@ -485,7 +487,7 @@ class Agent:
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             full_content = ""
-            final_tool_calls: List[ToolCallPart] = []
+            final_tool_calls: List[ToolCall] = []
 
             for chunk in self.llm.stream(input=messages_for_model):
                 if chunk.usage:
@@ -502,7 +504,7 @@ class Agent:
 
                 yield agent_response
 
-            tool_calls_dicts = [t.to_openai() for t in final_tool_calls]
+            tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             self.history.add_message(_message)
 
@@ -538,7 +540,7 @@ class Agent:
         input: Union[str, List[Message], List[Dict[str, str]]],
         context: Optional[Union[str, Dict[str, str]]] = None,
     ) -> AsyncIterator[AgentResponse]:
-        messages = ItemHelpers.input_to_message_list(input)
+        messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
         agent_response = AgentResponse()
@@ -560,7 +562,7 @@ class Agent:
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             full_content = ""
-            final_tool_calls: List[ToolCallPart] = []
+            final_tool_calls: List[ToolCall] = []
 
             async for chunk in self.llm.astream(input=messages_for_model):
                 if chunk.usage:
@@ -577,7 +579,7 @@ class Agent:
 
                 yield agent_response
 
-            tool_calls_dicts = [t.to_openai() for t in final_tool_calls]
+            tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             self.history.add_message(_message)
 

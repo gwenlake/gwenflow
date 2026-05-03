@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from gwenflow.prompts.template import PromptTemplate
+from gwenflow.memory.prompts.template import PromptTemplate
 
 
 @dataclass

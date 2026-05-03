@@ -11,10 +11,10 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
+from gwenflow.tools import Tool
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
-from gwenflow.types import ItemHelpers, Message, ModelResponse, RequestUsage
-from gwenflow.types.response import TextPart, ToolCallPart, ThinkingPart
+from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ToolCall, ThinkingContent
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
@@ -90,7 +90,7 @@ class ChatOpenAI(ChatBase):
         }
 
         if self.tools and self.tool_type == "fncall":
-            model_params["tools"] = [tool.to_openai() for tool in self.tools]
+            model_params["tools"] = [self._tool_to_openai(tool) for tool in self.tools]
             model_params["tool_choice"] = self.tool_choice or "auto"
 
         if self.response_format:
@@ -109,6 +109,16 @@ class ChatOpenAI(ChatBase):
 
         return model_params
 
+    def _tool_to_openai(self, tool: Tool) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters,
+            },
+        }
+    
     def get_client(self) -> OpenAI:
         if self.client:
             return self.client
@@ -140,28 +150,30 @@ class ChatOpenAI(ChatBase):
         return message.to_openai()
 
     def _get_usage(self, completion: Union[ChatCompletion, ChatCompletionChunk]) -> RequestUsage:
+        if not hasattr(completion, "usage"):
+            return None
         if not completion.usage:
             return None
+        details = {}
+        if hasattr(completion.usage, "completion_tokens_details"):
+            details = completion.usage.completion_tokens_details.model_dump()
         return RequestUsage(
             input_tokens=completion.usage.prompt_tokens,
             output_tokens=completion.usage.completion_tokens,
+            details=details,
         )
 
     def _parse_response(self, completion: ChatCompletion) -> ModelResponse:
-
         parts = []
         for block in completion.choices:
-
             if block.message.content:
-                parts.append( TextPart(content=block.message.content) )
-
+                parts.append( TextContent(content=block.message.content) )
             if hasattr(block.message, "reasoning_content"):
-                parts.append( ThinkingPart(content=block.message.content) )
-
+                parts.append( ThinkingContent(content=block.message.content) )
             tool_calls = block.message.tool_calls
             if tool_calls is not None and len(tool_calls) > 0:
                 try:
-                    tool_calls = [ToolCallPart(id=t.id, function=t.function.name, arguments=t.function.arguments) for t in tool_calls]
+                    tool_calls = [ToolCall(id=t.id, name=t.function.name, arguments=t.function.arguments) for t in tool_calls]
                     parts.extend(tool_calls)
                 except Exception as e:
                     logger.warning(f"Error processing tool calls: {e}")
@@ -182,7 +194,7 @@ class ChatOpenAI(ChatBase):
     @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             response: ChatCompletion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -196,7 +208,7 @@ class ChatOpenAI(ChatBase):
     @tracer.llm(name="LLM Async Invoke")
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             response: ChatCompletion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -210,7 +222,7 @@ class ChatOpenAI(ChatBase):
     @tracer.llm(name="LLM Stream")
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             completion = self.get_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -228,17 +240,17 @@ class ChatOpenAI(ChatBase):
                     delta: ChoiceDelta = chunk.choices[0].delta
 
                     if hasattr(delta, "content") and delta.content:
-                        response.parts.append( TextPart(content=delta.content) )
+                        response.parts.append( TextContent(content=delta.content) )
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tool_call in delta.tool_calls or []:
-                            if _full_tool_calls and (not tool_call.id or tool_call.id == _full_tool_calls[-1].id):
-                                if tool_call.function.name:
-                                    _full_tool_calls[-1].function.name += tool_call.function.name
-                                if tool_call.function.arguments:
-                                    _full_tool_calls[-1].function.arguments += tool_call.function.arguments
+                        for tc in delta.tool_calls or []:
+                            if _full_tool_calls and (not tc.id or tc.id == _full_tool_calls[-1].id):
+                                if tc.function.name:
+                                    _full_tool_calls[-1].name += tc.function.name
+                                if tc.function.arguments:
+                                    _full_tool_calls[-1].arguments += tc.function.arguments
                             else:
-                                _full_tool_calls.append(ToolCallPart(id=tool_call.id, function=tool_call.function.name, arguments=tool_call.function.arguments))
+                                _full_tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
@@ -259,7 +271,7 @@ class ChatOpenAI(ChatBase):
     @tracer.llm(name="LLM Async Astream")
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
         try:
-            messages_for_model = ItemHelpers.input_to_message_list(input)
+            messages_for_model = self.input_to_message_list(input)
             completion = await self.get_async_client().chat.completions.create(
                 model=self.model,
                 messages=[self._format_message(m) for m in messages_for_model],
@@ -277,17 +289,17 @@ class ChatOpenAI(ChatBase):
                     delta: ChoiceDelta = chunk.choices[0].delta
 
                     if hasattr(delta, "content") and delta.content:
-                        response.parts.append( TextPart(content=delta.content) )
+                        response.parts.append( TextContent(content=delta.content) )
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tool_call in delta.tool_calls or []:
-                            if _full_tool_calls and (not tool_call.id or tool_call.id == _full_tool_calls[-1].id):
-                                if tool_call.function.name:
-                                    _full_tool_calls[-1].function.name += tool_call.function.name
-                                if tool_call.function.arguments:
-                                    _full_tool_calls[-1].function.arguments += tool_call.function.arguments
+                        for tc in delta.tool_calls or []:
+                            if _full_tool_calls and (not tc.id or tc.id == _full_tool_calls[-1].id):
+                                if tc.function.name:
+                                    _full_tool_calls[-1].name += tc.function.name
+                                if tc.function.arguments:
+                                    _full_tool_calls[-1].arguments += tc.function.arguments
                             else:
-                                _full_tool_calls.append(ToolCallPart(id=tool_call.id, function=tool_call.function.name, arguments=tool_call.function.arguments))
+                                _full_tool_calls.append(ToolCall(id=tc.id, function=tc.function.name, arguments=tc.function.arguments))
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)

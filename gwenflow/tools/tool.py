@@ -3,10 +3,12 @@ import inspect
 import re
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from pydantic import BaseModel
+
+from gwenflow.logger import logger
 
 
 def _parse_docstring(func) -> tuple[str, dict[str, str]]:
@@ -148,38 +150,17 @@ def function_to_json_schema(func, name: str = None, description: str = None) -> 
 
 @dataclass(kw_only=True)
 class Tool(ABC):
-    name: str | None = None
-    description: str | None = None
+    name: str = field(init=False)
+    description: str = field(init=False)
     parameters: Optional[dict[str, Any]] = None
     tool_type: str = "function"
     max_results: int = 50
 
     def __post_init__(self) -> None:
         _schema = function_to_json_schema(self._run, name=self.name, description=self.description)
-        if not self.name:
-            self.name = _schema["function"]["name"]
-        if not self.description:
-            self.description = _schema["function"]["description"]
-        if self.parameters is None:
-            self.parameters = _schema["function"]["parameters"]
-
-    def to_openai(self) -> dict:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description or "",
-                "parameters": self.parameters,
-            },
-        }
-
-    def to_openai_new(self) -> dict:
-        return {
-            "type": "function",
-            "name": self.name,
-            "description": self.description or "",
-            "parameters": self.parameters,
-        }
+        self.name        = _schema["function"]["name"]
+        self.description = _schema["function"]["description"]
+        self.parameters  = _schema["function"]["parameters"]
 
     def _cast_response_to_str(self, response) -> str:
         if not response:
@@ -190,7 +171,8 @@ class Tool(ABC):
             return response.model_dump_json(exclude_none=True)
         try:
             return json.dumps(response, ensure_ascii=False)
-        except (TypeError, ValueError):
+        except Exception as e:
+            logger.error(e)
             return str(response)
 
     @abstractmethod
