@@ -355,7 +355,6 @@ class Agent:
 
             # format messages
             messages_for_model = [m.to_dict() for m in self.history.get()]
-            # print(json.dumps(messages_for_model, indent=2))
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)

@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable
 
 from gwenflow.types import Message
 from gwenflow.utils.tokens import num_tokens_from_string
@@ -10,8 +10,8 @@ from gwenflow.utils.tokens import num_tokens_from_string
 class BaseChatMemory:
     id: str | None = None
     system_prompt: str | None = None
-    messages: List[Message] = field(default_factory=list)
-    tokenizer_fn: Optional[Callable] = None
+    messages: list[Message] = field(default_factory=list)
+    tokenizer_fn: Callable | None = None
 
     def __post_init__(self) -> None:
         if self.id is None:
@@ -37,11 +37,11 @@ class BaseChatMemory:
         else:
             self.messages.append(Message(**message.__dict__))
 
-    def add_messages(self, messages: List[Message]):
+    def add_messages(self, messages: list[Message]):
         for message in messages:
             self.add_message(message)
 
-    def _token_count_for_messages(self, messages: List[Message]) -> int:
+    def _token_count_for_messages(self, messages: list[Message]) -> int:
         if not messages:
             return 0
         text = " ".join(str(m.content) for m in messages)

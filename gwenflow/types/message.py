@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Annotated, Dict, Union
+from typing import Any, Annotated
 from typing_extensions import Literal
 from dataclasses import dataclass, field, asdict
 from pydantic import Discriminator
@@ -70,12 +70,12 @@ _VALID_ROLES = {USER, ASSISTANT, SYSTEM, TOOL}
 @dataclass
 class Message:
     role: str
-    content: Optional[Union[str, List[Union[str, dict]]]] = None
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    reasoning_content: Optional[str] = None
-    extra: dict[str, Any] | None = None
+    content: str | list[MessageContent] | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    reasoning_content: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.role not in _VALID_ROLES:
@@ -84,7 +84,7 @@ class Message:
     def __repr__(self):
         return f"Message({self.to_dict()})"
 
-    def to_dict(self, **kwargs: Any) -> Dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         message_dict = {
             "role": self.role,
             "content": self.content,
@@ -98,8 +98,8 @@ class Message:
             k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
         }
 
-    def to_openai(self) -> Dict[str, Any]:
-        message_dict: Dict[str, Any] = {
+    def to_openai(self) -> dict[str, Any]:
+        message_dict: dict[str, Any] = {
             "role": self.role,
             "content": self.content,
             "name": self.name,

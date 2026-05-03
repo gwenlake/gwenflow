@@ -4,8 +4,9 @@ import abc
 import asyncio
 import json
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession
@@ -14,7 +15,25 @@ from mcp.types import CallToolResult, JSONRPCMessage, Tool as MCPToolDef
 from typing_extensions import NotRequired, TypedDict
 
 from gwenflow.logger import logger
-from gwenflow.tools.function import FunctionTool
+from gwenflow.tools.tool import Tool
+
+
+@dataclass(kw_only=True)
+class _MCPTool(Tool):
+    """A Tool wrapping a single MCP server tool call."""
+
+    _mcp_name: str = ""
+    _mcp_description: str = ""
+    _mcp_parameters: dict = dataclass_field(default_factory=dict)
+    func: Callable = None
+
+    def __post_init__(self) -> None:
+        self.name = self._mcp_name
+        self.description = self._mcp_description
+        self.parameters = self._mcp_parameters
+
+    def _run(self, **kwargs: Any) -> Any:
+        return self.func(**kwargs)
 
 
 def _result_to_str(result: CallToolResult) -> str:
@@ -65,8 +84,8 @@ class MCPServer(abc.ABC):
     def name(self) -> str:
         pass
 
-    def get_tools(self) -> list[FunctionTool]:
-        """Synchronously fetch all tools from the server as FunctionTool instances."""
+    def get_tools(self) -> list[Tool]:
+        """Synchronously fetch all tools from the server."""
 
         async def _list():
             await self.connect()
@@ -79,7 +98,7 @@ class MCPServer(abc.ABC):
         return [self._as_function_tool(t) for t in mcp_tools]
 
     @abc.abstractmethod
-    def _as_function_tool(self, mcp_tool: MCPToolDef) -> FunctionTool:
+    def _as_function_tool(self, mcp_tool: MCPToolDef) -> Tool:
         pass
 
 
@@ -182,12 +201,11 @@ class MCPServerSse(_SessionMCPServer):
 
             return asyncio.run(_call())
 
-        return FunctionTool(
-            name=mcp_tool.name,
-            description=mcp_tool.description or "",
-            parameters=mcp_tool.inputSchema,
+        return _MCPTool(
+            _mcp_name=mcp_tool.name,
+            _mcp_description=mcp_tool.description or "",
+            _mcp_parameters=mcp_tool.inputSchema,
             func=_run,
-            tool_type="function",
         )
 
 
@@ -233,10 +251,9 @@ class MCPServerStdio(_SessionMCPServer):
 
             return asyncio.run(_call())
 
-        return FunctionTool(
-            name=mcp_tool.name,
-            description=mcp_tool.description or "",
-            parameters=mcp_tool.inputSchema,
+        return _MCPTool(
+            _mcp_name=mcp_tool.name,
+            _mcp_description=mcp_tool.description or "",
+            _mcp_parameters=mcp_tool.inputSchema,
             func=_run,
-            tool_type="function",
         )
