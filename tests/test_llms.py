@@ -20,6 +20,11 @@ def _make_openai_response(text="hello", tool_calls=None):
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
+def skip_if_no_real_api_key():
+    key = os.environ.get("OPENAI_API_KEY")
+    return pytest.mark.skipif(key in [None, "", "test"], reason="OPENAI_API_KEY missing or fake value.")
+
+
 # ---------------------------------------------------------------------------
 # MODELS
 # ---------------------------------------------------------------------------
@@ -160,7 +165,7 @@ def test_openai_invoke_no_usage_returns_none(monkeypatch):
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY missing")
+@skip_if_no_real_api_key()
 def test_openai_invoke_real_api():
     llm = ChatOpenAI()
     result = llm.invoke("Reply with exactly one word: hello")

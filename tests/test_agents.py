@@ -46,6 +46,11 @@ def _response(content="done", tool_calls=None):
     )
 
 
+def skip_if_no_real_api_key():
+    key = os.environ.get("OPENAI_API_KEY")
+    return pytest.mark.skipif(key in [None, "", "test"], reason="OPENAI_API_KEY missing or fake value.")
+
+
 # ---------------------------------------------------------------------------
 # __post_init__
 # ---------------------------------------------------------------------------
@@ -271,7 +276,7 @@ def test_execute_tool_calls_unknown_tool():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY missing")
+@skip_if_no_real_api_key()
 def test_agent_run_real_api():
     agent = Agent()
     result = agent.run("Reply with exactly one word: hello")
