@@ -6,11 +6,11 @@ from typing import Any, Dict, List, Optional
 import requests
 from pydantic import Field
 
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class WebSearchTool(Tool):
+class WebSearchTool(BaseTool):
     name: str = "WebSearchTool"
     description: str = "Searches the web for information related to a given query."
     search_engine_id: Optional[str] = field(default_factory=lambda: os.getenv("WEBSEARCH_SEARCH_ENGINE_ID"))

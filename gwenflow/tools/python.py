@@ -6,7 +6,7 @@ from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from gwenflow.logger import logger
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 DESCRIPTION = """\
 This function to runs Python code in the current environment.
@@ -17,7 +17,7 @@ Returns the value of `variable_to_return` if successful, otherwise returns an er
 
 
 @dataclass(kw_only=True)
-class PythonCodeTool(Tool):
+class PythonCodeTool(BaseTool):
     name: str = "PythonCodeTool"
     description: str = DESCRIPTION
     base_dir: Optional[Union[Path, str]] = None

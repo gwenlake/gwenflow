@@ -71,7 +71,7 @@ def test_invoke_with_tool_calls(monkeypatch):
     result = llm.invoke("Use a tool")
 
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].function == "my_tool"
+    assert result.tool_calls[0].name == "my_tool"
     assert result.tool_calls[0].arguments == '{"x": 1}'
 
 

@@ -5,12 +5,12 @@ from pydantic import Field
 
 from gwenflow.logger import logger
 from gwenflow.retriever.base import Retriever
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 from gwenflow.types.document import Document
 
 
 @dataclass(kw_only=True)
-class RetrieverTool(Tool):
+class RetrieverTool(BaseTool):
     name: str = "RetrieverTool"
     description: str = "Use this tool for fetching documents from the knowledge base."
     retriever: Optional[Retriever] = None

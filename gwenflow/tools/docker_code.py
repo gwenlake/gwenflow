@@ -6,7 +6,7 @@ from typing import Optional, Union
 from pydantic import Field
 
 from gwenflow.logger import logger
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 DESCRIPTION = """\
 Executes Python or Shell (sh) code in an isolated Docker container.
@@ -17,7 +17,7 @@ Returns the standard output (stdout) if successful, or the error message (stderr
 
 
 @dataclass(kw_only=True)
-class DockerCodeTool(Tool):
+class DockerCodeTool(BaseTool):
     name: str = "DockerCodeTool"
     description: str = DESCRIPTION
     base_dir: Optional[Union[Path, str]] = None

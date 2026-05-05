@@ -8,11 +8,11 @@ from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from gwenflow.logger import logger
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class ShellTool(Tool):
+class ShellTool(BaseTool):
     name: str = "ShellTool"
     description: str = "Runs a shell command and returns the output or error."
     base_dir: Optional[Union[Path, str]] = None

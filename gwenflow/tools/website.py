@@ -3,11 +3,11 @@ from dataclasses import dataclass
 from pydantic import Field
 
 from gwenflow.readers.website import WebsiteReader
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class WebsiteReaderTool(Tool):
+class WebsiteReaderTool(BaseTool):
     name: str = "WebsiteReaderTool"
     description: str = "Fetches and returns the content of a given URL."
     max_depth: int = 1

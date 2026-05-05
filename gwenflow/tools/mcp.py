@@ -4,7 +4,7 @@ import abc
 import asyncio
 import json
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -15,25 +15,33 @@ from mcp.types import CallToolResult, JSONRPCMessage, Tool as MCPToolDef
 from typing_extensions import NotRequired, TypedDict
 
 from gwenflow.logger import logger
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class _MCPTool(Tool):
+class _MCPTool(BaseTool):
     """A Tool wrapping a single MCP server tool call."""
 
     _mcp_name: str = ""
     _mcp_description: str = ""
-    _mcp_parameters: dict = dataclass_field(default_factory=dict)
-    func: Callable = None
+    _mcp_parameters: dict = field(default_factory=dict)
+    function: Callable = None
 
     def __post_init__(self) -> None:
         self.name = self._mcp_name
         self.description = self._mcp_description
         self.parameters = self._mcp_parameters
+        self.function_schema = {
+            "type": "function",
+            "function": {
+                "name": self._mcp_name,
+                "description": self._mcp_description,
+                "parameters": self._mcp_parameters,
+            },
+        }
 
     def _run(self, **kwargs: Any) -> Any:
-        return self.func(**kwargs)
+        return self.function(**kwargs)
 
 
 def _result_to_str(result: CallToolResult) -> str:
@@ -84,7 +92,7 @@ class MCPServer(abc.ABC):
     def name(self) -> str:
         pass
 
-    def get_tools(self) -> list[Tool]:
+    def get_tools(self) -> list[BaseTool]:
         """Synchronously fetch all tools from the server."""
 
         async def _list():
@@ -95,10 +103,10 @@ class MCPServer(abc.ABC):
                 await self.cleanup()
 
         mcp_tools = asyncio.run(_list())
-        return [self._as_function_tool(t) for t in mcp_tools]
+        return [self._as_tool(t) for t in mcp_tools]
 
     @abc.abstractmethod
-    def _as_function_tool(self, mcp_tool: MCPToolDef) -> Tool:
+    def _as_tool(self, mcp_tool: MCPToolDef) -> BaseTool:
         pass
 
 
@@ -188,7 +196,7 @@ class MCPServerSse(_SessionMCPServer):
             sse_read_timeout=self.params.get("sse_read_timeout", 300),
         )
 
-    def _as_function_tool(self, mcp_tool: MCPToolDef) -> FunctionTool:
+    def _as_tool(self, mcp_tool: MCPToolDef) -> BaseTool:
         params = self.params
         tool_name = mcp_tool.name
 
@@ -205,7 +213,7 @@ class MCPServerSse(_SessionMCPServer):
             _mcp_name=mcp_tool.name,
             _mcp_description=mcp_tool.description or "",
             _mcp_parameters=mcp_tool.inputSchema,
-            func=_run,
+            function=_run,
         )
 
 
@@ -238,7 +246,7 @@ class MCPServerStdio(_SessionMCPServer):
         )
         return stdio_client(server_params)
 
-    def _as_function_tool(self, mcp_tool: MCPToolDef) -> FunctionTool:
+    def _as_tool(self, mcp_tool: MCPToolDef) -> BaseTool:
         params = self.params
         tool_name = mcp_tool.name
 
@@ -255,5 +263,5 @@ class MCPServerStdio(_SessionMCPServer):
             _mcp_name=mcp_tool.name,
             _mcp_description=mcp_tool.description or "",
             _mcp_parameters=mcp_tool.inputSchema,
-            func=_run,
+            function=_run,
         )

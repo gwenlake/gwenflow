@@ -3,11 +3,11 @@ from typing import Optional
 
 from pydantic import Field
 
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class DuckDuckGoTool(Tool):
+class DuckDuckGoTool(BaseTool):
     region: Optional[str] = "wt-wt"
     source: str = "text"
     time: Optional[str] = "y"

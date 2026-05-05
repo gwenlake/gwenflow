@@ -21,8 +21,11 @@ class ModelResponse:
     usage: RequestUsage = field(default_factory=RequestUsage)
     created_at: datetime = field(default_factory=now_utc)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
     def to_message(self) -> Message:
-        return Message(**self.model_dump(exclude_unset=True))
+        return Message(**self.to_dict())
 
     @property
     def text(self) -> str | None:

@@ -14,7 +14,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool, FunctionTool, MCPServer
+from gwenflow.tools import BaseTool, Tool, MCPServer
 from gwenflow.types import AgentResponse, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
 
@@ -42,7 +42,7 @@ class Agent:
     llm: Optional[ChatBase] = None
     """The model implementation to use when invoking the LLM."""
 
-    tools: List[Tool] = field(default_factory=list)
+    tools: List[BaseTool] = field(default_factory=list)
     """A list of tools that the agent can use."""
 
     mcp_servers: List[MCPServer] = field(default_factory=list)
@@ -89,7 +89,8 @@ class Agent:
 
     def tool(self, func: Callable) -> Callable:
         """Decorator that registers a function as a tool on this agent instance."""
-        self.tools = list(self.tools) + [FunctionTool.from_function(func)]
+        # self.tools = list(self.tools) + [FunctionTool.from_function(func)]
+        self.tools = list(self.tools) + [Tool(func)]
         self.llm.tools = self.get_all_tools()
         self.llm.tool_choice = self.tool_choice
         return func
@@ -235,7 +236,7 @@ class Agent:
             tools=self.tools,
         )
 
-        response = await reasoning_agent.run(input)
+        response = await reasoning_agent.arun(input)
 
         # only keep text outside <think>
         reasoning_content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL)
@@ -254,7 +255,7 @@ class Agent:
 
         return response
 
-    def get_all_tools(self) -> list[Tool]:
+    def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
         tools = list(self.tools)
         for server in self.mcp_servers:
@@ -435,9 +436,19 @@ class Agent:
             self.history.add_message(_message)
 
             if not response.tool_calls:
-                agent_response.content = response.content
-                agent_response.messages.append(_message)
-                break
+                content_to_check = response.parsed if response.parsed else response.content
+                is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
+
+                if is_valid:
+                    agent_response.content = response.content
+                    agent_response.parsed = parsed_data
+                    agent_response.messages.append(_message)
+                    break
+                else:
+                    self.history.add_message(_message)
+                    retry_message = Message(role="user", content=error_msg)
+                    self.history.add_message(retry_message)
+                    continue
 
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
@@ -449,10 +460,6 @@ class Agent:
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
-
-        if self.response_model:
-            agent_response.content = json.loads(agent_response.content)
-            agent_response.parsed = agent_response.content
 
         agent_response.finish_reason = "stop"
 

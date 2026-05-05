@@ -11,7 +11,7 @@ from gwenflow.logger import logger, set_log_level_to_debug
 from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.retriever import Retriever
 from gwenflow.telemetry import Telemetry
-from gwenflow.tools import Tool, FunctionTool
+from gwenflow.tools import BaseTool, Tool
 from gwenflow.types import Document, Message
 
 __all__ = [
@@ -31,8 +31,8 @@ __all__ = [
     "SimpleDirectoryReader",
     "Retriever",
     "Agent",
+    "BaseTool",
     "Tool",
-    "FunctionTool",
     "Flow",
     "FlowRunner",
     "AutoFlow",

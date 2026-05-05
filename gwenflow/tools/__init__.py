@@ -1,7 +1,6 @@
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool, Tool
 from gwenflow.tools.docker_code import DockerCodeTool
 from gwenflow.tools.duckduckgo import DuckDuckGoNewsTool, DuckDuckGoSearchTool
-from gwenflow.tools.function import FunctionTool
 from gwenflow.tools.mcp import MCPServer, MCPServerSse, MCPServerSseParams, MCPServerStdio, MCPServerStdioParams
 from gwenflow.tools.pdf import PDFReaderTool
 from gwenflow.tools.python import PythonCodeTool
@@ -17,8 +16,8 @@ from gwenflow.tools.yahoofinance import (
 )
 
 __all__ = [
+    "BaseTool",
     "Tool",
-    "FunctionTool",
     "ShellTool",
     "PythonCodeTool",
     "DockerCodeTool",

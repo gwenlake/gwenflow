@@ -3,13 +3,13 @@ from typing import Any, Optional
 
 from pydantic import Field
 
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 WIKIPEDIA_MAX_QUERY_LENGTH = 300
 
 
 @dataclass(kw_only=True)
-class WikipediaBase(Tool):
+class WikipediaBase(BaseTool):
     client: Optional[Any] = None
     lang: str = "en"
     top_k_results: int = 5
@@ -53,5 +53,5 @@ class WikipediaTool(WikipediaBase):
                 pass
 
         if not documents:
-            return "No good Wikipedia Search Result was found"
+            raise ValueError(f"No Wikipedia results found for query: {query!r}")
         return list(documents)

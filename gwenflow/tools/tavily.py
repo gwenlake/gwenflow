@@ -5,11 +5,11 @@ from typing import Any, Optional
 from pydantic import Field
 
 from gwenflow.logger import logger
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class TavilyTool(Tool):
+class TavilyTool(BaseTool):
     client: Optional[Any] = None
     api_key: Optional[str] = None
     max_results: int = 5

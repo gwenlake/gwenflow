@@ -3,11 +3,11 @@ from typing import Annotated, Union
 
 from pydantic import Field
 
-from gwenflow.tools.tool import Tool
+from gwenflow.tools.tool import BaseTool
 
 
 @dataclass(kw_only=True)
-class YahooFinanceSearch(Tool):
+class YahooFinanceSearch(BaseTool):
     name: str = "YahooFinanceSearch"
     description: str = "Search for a stock on Yahoo Finance."
 
@@ -20,7 +20,7 @@ class YahooFinanceSearch(Tool):
 
 
 @dataclass(kw_only=True)
-class YahooFinancePick(Tool):
+class YahooFinancePick(BaseTool):
     name: str = "YahooFinancePick"
     description: str = "Search for a stock on Yahoo Finance."
 
@@ -33,7 +33,7 @@ class YahooFinancePick(Tool):
 
 
 @dataclass(kw_only=True)
-class YahooFinanceStock(Tool):
+class YahooFinanceStock(BaseTool):
     name: str = "YahooFinanceStock"
     description: str = "Retrieve stock data from Yahoo Finance."
 
@@ -46,7 +46,7 @@ class YahooFinanceStock(Tool):
 
 
 @dataclass(kw_only=True)
-class YahooFinanceNews(Tool):
+class YahooFinanceNews(BaseTool):
     name: str = "YahooFinanceNews"
     description: str = (
         "Search for news on company on Yahoo Finance."
@@ -65,7 +65,7 @@ class YahooFinanceNews(Tool):
 
 
 @dataclass(kw_only=True)
-class YahooFinanceScreen(Tool):
+class YahooFinanceScreen(BaseTool):
     name: str = "YahooFinanceScreen"
     description: str = (
         "Screen for stocks on Yahoo Finance.This tool will return a list of stocks that meet the criteria."

@@ -1,12 +1,15 @@
 import json
 import inspect
 import re
+import asyncio
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 from gwenflow.logger import logger
 
@@ -149,18 +152,22 @@ def function_to_json_schema(func, name: str = None, description: str = None) -> 
 
 
 @dataclass(kw_only=True)
-class Tool(ABC):
-    name: str = field(init=False)
-    description: str = field(init=False)
-    parameters: Optional[dict[str, Any]] = None
-    tool_type: str = "function"
+class BaseTool(ABC):
+    name: str = field(default=None)
+    description: str = field(default=None)
+    parameters: dict[str, Any] = field(default=None)
+    function_schema: dict[str, Any] = field(default=None)
     max_results: int = 50
+    max_retries: int | None = 3
 
-    def __post_init__(self) -> None:
-        _schema = function_to_json_schema(self._run, name=self.name, description=self.description)
-        self.name        = _schema["function"]["name"]
-        self.description = _schema["function"]["description"]
-        self.parameters  = _schema["function"]["parameters"]
+    def __post_init__(self):
+        self.function_schema = function_to_json_schema(self._run)
+        if self.name is None:
+            self.name = self.function_schema["function"]["name"]
+        if self.description is None:
+            self.description = self.function_schema["function"]["description"]
+        if self.parameters is None:
+            self.parameters = self.function_schema["function"]["parameters"]
 
     def _cast_response_to_str(self, response) -> str:
         if not response:
@@ -180,10 +187,66 @@ class Tool(ABC):
         """Actual implementation of the tool."""
 
     def run(self, **kwargs: Any) -> str:
-        response = self._run(**kwargs)
+        _retry = retry(
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            reraise=True,
+        )
+        try:
+            response = _retry(self._run)(**kwargs)
+        except RetryError as e:
+            logger.error(f"Tool {self.name} failed after {self.max_retries} retries: {e}")
+            raise
         return self._cast_response_to_str(response)
 
     async def arun(self, **kwargs: Any) -> str:
-        import asyncio
-        response = await asyncio.to_thread(self._run, **kwargs)
+        _retry = retry(
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            reraise=True,
+        )
+        try:
+            response = await asyncio.to_thread(_retry(self._run), **kwargs)
+        except RetryError as e:
+            logger.error(f"Tool {self.name} failed after {self.max_retries} retries: {e}")
+            raise
         return self._cast_response_to_str(response)
+
+
+@dataclass(kw_only=True, init=False)
+class Tool(BaseTool):
+    function: Callable[..., Any] = field(default=None)
+
+    def __init__(
+        self,
+        function: Callable[..., Any],
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        max_results: int = 50,
+        max_retries: int | None = 3,
+    ):
+        self.function = function
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.function_schema = None
+        self.max_results = max_results
+        self.max_retries = max_retries
+        self.__post_init__()
+
+    def __post_init__(self):
+        if self.function is not None:
+            self.function_schema = function_to_json_schema(self.function)
+            if self.name is None:
+                self.name = self.function_schema["function"]["name"]
+            if self.description is None:
+                self.description = self.function_schema["function"]["description"]
+            if self.parameters is None:
+                self.parameters = self.function_schema["function"]["parameters"]
+        else:
+            super().__post_init__()
+
+    def _run(self, **kwargs: Any) -> Any:
+        return self.function(**kwargs)

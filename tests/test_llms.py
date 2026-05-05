@@ -78,10 +78,10 @@ def test_get_reasoning_model_false():
 
 def test_get_tool_names_and_map():
     from dataclasses import dataclass
-    from gwenflow.tools import Tool
+    from gwenflow.tools import BaseTool
 
     @dataclass(kw_only=True)
-    class DummyTool(Tool):
+    class DummyTool(BaseTool):
         name: str = "dummy"
         description: str = "A dummy tool"
 
@@ -126,7 +126,7 @@ def test_openai_invoke_with_tool_calls(monkeypatch):
     result = llm.invoke("Use a tool")
 
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].function == "my_tool"
+    assert result.tool_calls[0].name == "my_tool"
 
 
 def test_openai_invoke_with_message_list(monkeypatch):
