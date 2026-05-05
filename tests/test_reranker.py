@@ -11,6 +11,11 @@ from gwenflow.types import Document
 # ---------------------------------------------------------------------------
 
 
+def is_valid_key(key_name):
+    val = os.environ.get(key_name)
+    return bool(val and val not in ["test", "fake", "your_api_key_here", "dummy"])
+
+
 def _doc(content, score=None):
     return Document(content=content, score=score)
 
@@ -159,7 +164,7 @@ def test_rerank_top_k_and_threshold_combined():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.environ.get("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing")
+@pytest.mark.skipif(not is_valid_key("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing or dummy")
 def test_rerank_real_api():
     r = GwenlakeReranker()
     docs = [

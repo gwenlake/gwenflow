@@ -10,6 +10,11 @@ from gwenflow.embeddings.gwenlake import EMBEDDING_DIMS, GwenlakeEmbeddings
 # ---------------------------------------------------------------------------
 
 
+def is_valid_key(key_name):
+    val = os.environ.get(key_name)
+    return bool(val and val not in ["test", "fake", "your_api_key_here", "dummy"])
+
+
 def _make_fake_api(embeddings):
     """Return a mock Api whose client.post returns the given embeddings."""
     fake_response = MagicMock()
@@ -172,7 +177,7 @@ def test_embed_query_no_double_prefix():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.environ.get("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing")
+@pytest.mark.skipif(not is_valid_key("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing or dummy")
 def test_embed_documents_real_api():
     emb = GwenlakeEmbeddings()
     result = emb.embed_documents(["hello world"])
@@ -183,7 +188,7 @@ def test_embed_documents_real_api():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.environ.get("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing")
+@pytest.mark.skipif(not is_valid_key("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing or dummy")
 def test_embed_query_real_api():
     emb = GwenlakeEmbeddings()
     result = emb.embed_query("hello world")
