@@ -1,7 +1,8 @@
-"""
-Demonstrates FlowRunner: a YAML-defined pipeline where nodes are wired together
-and executed in topological order. The output of each node is passed as input
-to its downstream nodes.
+"""Demonstrates FlowRunner: a YAML-defined pipeline where nodes are wired together.
+
+A YAML-defined pipeline where nodes are wired together and executed in
+topological order. The output of each node is passed as input to its
+downstream nodes.
 
 Run:
     uv run python examples/demo_flow_yaml.py

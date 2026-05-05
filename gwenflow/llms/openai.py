@@ -1,9 +1,8 @@
 import json
 import os
 from collections.abc import AsyncIterator
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
-
 from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -11,10 +10,10 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.tools import Tool
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
-from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ToolCall, ThinkingContent
+from gwenflow.tools import Tool
+from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
@@ -118,7 +117,7 @@ class ChatOpenAI(ChatBase):
                 "parameters": tool.parameters,
             },
         }
-    
+
     def get_client(self) -> OpenAI:
         if self.client:
             return self.client
@@ -167,13 +166,15 @@ class ChatOpenAI(ChatBase):
         parts = []
         for block in completion.choices:
             if block.message.content:
-                parts.append( TextContent(content=block.message.content) )
+                parts.append(TextContent(content=block.message.content))
             if hasattr(block.message, "reasoning_content"):
-                parts.append( ThinkingContent(content=block.message.content) )
+                parts.append(ThinkingContent(content=block.message.content))
             tool_calls = block.message.tool_calls
             if tool_calls is not None and len(tool_calls) > 0:
                 try:
-                    tool_calls = [ToolCall(id=t.id, name=t.function.name, arguments=t.function.arguments) for t in tool_calls]
+                    tool_calls = [
+                        ToolCall(id=t.id, name=t.function.name, arguments=t.function.arguments) for t in tool_calls
+                    ]
                     parts.extend(tool_calls)
                 except Exception as e:
                     logger.warning(f"Error processing tool calls: {e}")
@@ -185,9 +186,7 @@ class ChatOpenAI(ChatBase):
         )
 
         if self.response_format:
-            model_response.parsed = self._format_response(
-                model_response.text, response_format=self.response_format
-            )
+            model_response.parsed = self._format_response(model_response.text, response_format=self.response_format)
 
         return model_response
 
@@ -240,7 +239,7 @@ class ChatOpenAI(ChatBase):
                     delta: ChoiceDelta = chunk.choices[0].delta
 
                     if hasattr(delta, "content") and delta.content:
-                        response.parts.append( TextContent(content=delta.content) )
+                        response.parts.append(TextContent(content=delta.content))
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tc in delta.tool_calls or []:
@@ -250,7 +249,9 @@ class ChatOpenAI(ChatBase):
                                 if tc.function.arguments:
                                     _full_tool_calls[-1].arguments += tc.function.arguments
                             else:
-                                _full_tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
+                                _full_tool_calls.append(
+                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+                                )
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
@@ -289,7 +290,7 @@ class ChatOpenAI(ChatBase):
                     delta: ChoiceDelta = chunk.choices[0].delta
 
                     if hasattr(delta, "content") and delta.content:
-                        response.parts.append( TextContent(content=delta.content) )
+                        response.parts.append(TextContent(content=delta.content))
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tc in delta.tool_calls or []:
@@ -299,7 +300,9 @@ class ChatOpenAI(ChatBase):
                                 if tc.function.arguments:
                                     _full_tool_calls[-1].arguments += tc.function.arguments
                             else:
-                                _full_tool_calls.append(ToolCall(id=tc.id, function=tc.function.name, arguments=tc.function.arguments))
+                                _full_tool_calls.append(
+                                    ToolCall(id=tc.id, function=tc.function.name, arguments=tc.function.arguments)
+                                )
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)

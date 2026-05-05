@@ -1,15 +1,14 @@
-import json
-import inspect
-import re
 import asyncio
-
+import inspect
+import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 from gwenflow.logger import logger
 
@@ -34,22 +33,22 @@ def _parse_docstring(func) -> tuple[str, dict[str, str]]:
             rst_params[m.group(1)] = m.group(2).strip()
 
     # --- Summary: everything before the first section header or :param ---
-    SECTION_RE = re.compile(r"^(\w[\w\s]*):\s*$")
+    section_re = re.compile(r"^(\w[\w\s]*):\s*$")
     summary_lines: list[str] = []
     for line in lines:
         stripped = line.strip()
-        if SECTION_RE.match(stripped) or re.match(r":param\s", stripped):
+        if section_re.match(stripped) or re.match(r":param\s", stripped):
             break
         summary_lines.append(stripped)
-    summary = " ".join(l for l in summary_lines if l).strip()
+    summary = " ".join(line for line in summary_lines if line).strip()
 
     if rst_params:
         return summary, rst_params
 
     # --- Google style: Args: / Parameters: section ---
-    ARGS_HEADERS = {"args", "arguments", "parameters"}
-    OTHER_HEADERS = re.compile(r"^(\w[\w\s]*):\s*$")
-    PARAM_LINE = re.compile(r"^[ \t]{2,}(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)")
+    args_headers = {"args", "arguments", "parameters"}
+    other_headers = re.compile(r"^(\w[\w\s]*):\s*$")
+    param_line = re.compile(r"^[ \t]{2,}(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)")
 
     google_params: dict[str, str] = {}
     in_args = False
@@ -58,18 +57,18 @@ def _parse_docstring(func) -> tuple[str, dict[str, str]]:
 
     for line in lines:
         stripped = line.strip()
-        section_m = OTHER_HEADERS.match(stripped)
+        section_m = other_headers.match(stripped)
         if section_m:
             if current_param:
                 google_params[current_param] = " ".join(current_desc).strip()
                 current_param, current_desc = None, []
-            in_args = section_m.group(1).lower() in ARGS_HEADERS
+            in_args = section_m.group(1).lower() in args_headers
             continue
 
         if not in_args:
             continue
 
-        param_m = PARAM_LINE.match(line)
+        param_m = param_line.match(line)
         if param_m:
             if current_param:
                 google_params[current_param] = " ".join(current_desc).strip()
@@ -148,7 +147,6 @@ def function_to_json_schema(func, name: str = None, description: str = None) -> 
             },
         },
     }
-
 
 
 @dataclass(kw_only=True)

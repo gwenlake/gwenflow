@@ -9,6 +9,7 @@ def _get_semconv() -> tuple:
     """Load openinference semantic conventions once and cache the result."""
     try:
         from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+
         return OpenInferenceSpanKindValues, SpanAttributes
     except ImportError:
         return None, None
@@ -57,6 +58,7 @@ class DecoratorTracer:
         if self._tracer is None:
             try:
                 from opentelemetry import trace
+
                 self._tracer = trace.get_tracer(self.tracer_name)
             except ImportError:
                 pass
@@ -71,7 +73,7 @@ class DecoratorTracer:
     @contextmanager
     def _start_span(self, name, kind, instance, func, args, kwargs):
         otel_tracer = self._ensure_tracer()
-        _, SpanAttributes = _get_semconv()
+        _, span_attributes = _get_semconv()
 
         if otel_tracer is None:
             yield _NoOpSpan()
@@ -79,17 +81,17 @@ class DecoratorTracer:
 
         try:
             from opentelemetry.trace import StatusCode
-            from .utils import prepare_llm_attributes
-            from .utils import extract_user_inputs
+
+            from .utils import extract_user_inputs, prepare_llm_attributes
         except ImportError:
             yield _NoOpSpan()
             return
 
         with otel_tracer.start_as_current_span(name) as span:
-            if span.is_recording() and SpanAttributes and kind:
-                span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, kind.value)
+            if span.is_recording() and span_attributes and kind:
+                span.set_attribute(span_attributes.OPENINFERENCE_SPAN_KIND, kind.value)
                 input_val = extract_user_inputs(func, (instance, *args), kwargs)
-                span.set_attribute(SpanAttributes.INPUT_VALUE, str(input_val))
+                span.set_attribute(span_attributes.INPUT_VALUE, str(input_val))
                 if hasattr(kind, "value") and kind.value == "LLM":
                     prepare_llm_attributes(span, instance)
             try:
@@ -103,21 +105,22 @@ class DecoratorTracer:
     def _finalize_span_output(self, span, content: str, tool_calls_json: str | None, fallback_obj: Any) -> None:
         if not span.is_recording():
             return
-        _, SpanAttributes = _get_semconv()
-        if not SpanAttributes:
+        _, span_attributes = _get_semconv()
+        if not span_attributes:
             return
         try:
             from opentelemetry.trace import StatusCode
+
             from .utils import safe_serialize
         except ImportError:
             return
 
         if content:
-            span.set_attribute(SpanAttributes.OUTPUT_VALUE, content)
+            span.set_attribute(span_attributes.OUTPUT_VALUE, content)
         elif tool_calls_json:
-            span.set_attribute(SpanAttributes.OUTPUT_VALUE, f"Tool Calls: {tool_calls_json}")
+            span.set_attribute(span_attributes.OUTPUT_VALUE, f"Tool Calls: {tool_calls_json}")
         elif fallback_obj is not None:
-            span.set_attribute(SpanAttributes.OUTPUT_VALUE, safe_serialize(fallback_obj))
+            span.set_attribute(span_attributes.OUTPUT_VALUE, safe_serialize(fallback_obj))
         span.set_status(StatusCode.OK)
 
     def _finalize_after(self, span, kind_name: str, result: Any, content: str, tool_calls: Any) -> None:
@@ -135,9 +138,9 @@ class DecoratorTracer:
 
     def _wrap_logic(self, name_attr: str, kind_name: str, name_override: str | None = None):
         def decorator(func):
-
             # 1. ASYNC GENERATOR
             if inspect.isasyncgenfunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
@@ -146,28 +149,40 @@ class DecoratorTracer:
                         try:
                             async for chunk in func(instance, *args, **kwargs):
                                 last_chunk = chunk
-                                accumulated_content, latest_tool_calls = _update_stream_state(chunk, accumulated_content, latest_tool_calls)
+                                accumulated_content, latest_tool_calls = _update_stream_state(
+                                    chunk, accumulated_content, latest_tool_calls
+                                )
                                 yield chunk
                             self._finalize_after(span, kind_name, last_chunk, accumulated_content, latest_tool_calls)
                         except Exception as e:
                             if span.is_recording():
                                 span.record_exception(e)
                             raise
+
                 return wrapper
 
             # 2. ASYNC FUNCTION
             elif inspect.iscoroutinefunction(func):
+
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
                     name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
                     with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
                         result = await func(instance, *args, **kwargs)
-                        self._finalize_after(span, kind_name, result, getattr(result, "content", "") or "", getattr(result, "tool_calls", None))
+                        self._finalize_after(
+                            span,
+                            kind_name,
+                            result,
+                            getattr(result, "content", "") or "",
+                            getattr(result, "tool_calls", None),
+                        )
                         return result
+
                 return wrapper
 
             # 3. SYNC GENERATOR
             elif inspect.isgeneratorfunction(func):
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
@@ -176,24 +191,35 @@ class DecoratorTracer:
                         try:
                             for chunk in func(instance, *args, **kwargs):
                                 last_chunk = chunk
-                                accumulated_content, latest_tool_calls = _update_stream_state(chunk, accumulated_content, latest_tool_calls)
+                                accumulated_content, latest_tool_calls = _update_stream_state(
+                                    chunk, accumulated_content, latest_tool_calls
+                                )
                                 yield chunk
                             self._finalize_after(span, kind_name, last_chunk, accumulated_content, latest_tool_calls)
                         except Exception as e:
                             if span.is_recording():
                                 span.record_exception(e)
                             raise
+
                 return wrapper
 
             # 4. SYNC FUNCTION
             else:
+
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
                     name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
                     with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
                         result = func(instance, *args, **kwargs)
-                        self._finalize_after(span, kind_name, result, getattr(result, "content", "") or "", getattr(result, "tool_calls", None))
+                        self._finalize_after(
+                            span,
+                            kind_name,
+                            result,
+                            getattr(result, "content", "") or "",
+                            getattr(result, "tool_calls", None),
+                        )
                         return result
+
                 return wrapper
 
         return decorator

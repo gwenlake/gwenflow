@@ -7,8 +7,7 @@ from pydantic import BaseModel
 
 from gwenflow.agents.agent import Agent
 from gwenflow.tools import BaseTool
-from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ToolCall
-
+from gwenflow.types import ModelResponse, RequestUsage, TextContent, ToolCall
 
 # ---------------------------------------------------------------------------
 # Helpers

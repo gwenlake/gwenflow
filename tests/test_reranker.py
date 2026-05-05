@@ -6,7 +6,6 @@ import pytest
 from gwenflow.reranker.gwenlake import GwenlakeReranker
 from gwenflow.types import Document
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -163,7 +162,11 @@ def test_rerank_top_k_and_threshold_combined():
 @pytest.mark.skipif(not os.environ.get("GWENLAKE_API_KEY"), reason="GWENLAKE_API_KEY missing")
 def test_rerank_real_api():
     r = GwenlakeReranker()
-    docs = [_doc("Paris is the capital of France."), _doc("The Eiffel Tower is in Paris."), _doc("Python is a language.")]
+    docs = [
+        _doc("Paris is the capital of France."),
+        _doc("The Eiffel Tower is in Paris."),
+        _doc("Python is a language."),
+    ]
     result = r.rerank("Where is the Eiffel Tower?", docs)
 
     assert len(result) == 3

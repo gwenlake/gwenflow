@@ -14,6 +14,7 @@ class YahooFinanceSearch(BaseTool):
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
+
             return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
@@ -27,6 +28,7 @@ class YahooFinancePick(BaseTool):
     def _run(self, query: str = Field(description="The stock to search for.")):
         try:
             import yfinance as yf
+
             return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
@@ -40,6 +42,7 @@ class YahooFinanceStock(BaseTool):
     def _run(self, ticker: str = Field(description="The ticker stock to search for.")):
         try:
             import yfinance as yf
+
             return yf.Ticker(ticker).info
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
@@ -58,6 +61,7 @@ class YahooFinanceNews(BaseTool):
     def _run(self, query: str = Field(description="The query to search for.")):
         try:
             import yfinance as yf
+
             stocks = yf.Search(query, enable_fuzzy_query=True, news_count=15, max_results=0)
             return {news["title"]: news["link"] for news in stocks.news}
         except ImportError:

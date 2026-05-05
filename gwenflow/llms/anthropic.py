@@ -1,16 +1,16 @@
 import json
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import anthropic
-from dataclasses import dataclass
 from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.tools import Tool
 from gwenflow.telemetry import tracer
-from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ToolCall, ThinkingContent
+from gwenflow.tools import Tool
+from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 
@@ -264,7 +264,9 @@ class ChatAnthropic(ChatBase):
                     elif event.type == "message_delta":
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
-                                response.parts.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
+                                response.parts.append(
+                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+                                )
                             response.finish_reason = "tool_calls"
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
@@ -315,7 +317,9 @@ class ChatAnthropic(ChatBase):
                     elif event.type == "message_delta":
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
-                                response.parts.append(ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments))
+                                response.parts.append(
+                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+                                )
                             response.finish_reason = "tool_calls"
                             yield response
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0

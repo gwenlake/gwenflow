@@ -1,14 +1,16 @@
-from typing import Any, Annotated
-from typing_extensions import Literal
-from dataclasses import dataclass, field, asdict
-from pydantic import Discriminator
 import json
+from dataclasses import asdict, dataclass, field
+from typing import Annotated, Any
+
+from pydantic import Discriminator
+from typing_extensions import Literal
+
 
 @dataclass(kw_only=True)
 class TextContent:
     content: str
-    kind: Literal['text'] = 'text'
-    
+    kind: Literal["text"] = "text"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -21,7 +23,7 @@ class TextContent:
 class ThinkingContent:
     content: str
     extra: dict[str, Any] = field(default_factory=dict)
-    kind: Literal['thinking'] = 'thinking'
+    kind: Literal["thinking"] = "thinking"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,7 +38,7 @@ class ToolCall:
     id: str | None = None
     name: str
     arguments: str | dict[str, Any] | None = None
-    kind: Literal['tool-call'] = 'tool-call'
+    kind: Literal["tool-call"] = "tool-call"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,10 +55,11 @@ class ToolCall:
             "function": {
                 "name": self.name,
                 "arguments": args,
-            }
+            },
         }
-    
-MessageContent = Annotated[TextContent | ThinkingContent | ToolCall, Discriminator('kind')]
+
+
+MessageContent = Annotated[TextContent | ThinkingContent | ToolCall, Discriminator("kind")]
 
 
 SYSTEM = "system"

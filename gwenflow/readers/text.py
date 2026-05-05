@@ -13,11 +13,13 @@ class TextReader(Reader):
         try:
             filename = self.get_file_name(file)
             content = self.get_file_content(file, text_mode=True)
-            return [Document(
-                id=self.key(filename),
-                content=content,
-                metadata={"filename": filename},
-            )]
+            return [
+                Document(
+                    id=self.key(filename),
+                    content=content,
+                    metadata={"filename": filename},
+                )
+            ]
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return []

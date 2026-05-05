@@ -1,13 +1,14 @@
 import json
 import os
-from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union, Annotated
-# from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union
 
+# from typing import Annotated, Any, List, Literal, Optional, Union
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel, Field, RootModel
 
 from gwenflow.llms.base import ChatBase
-from gwenflow.types import ItemHelpers, Message
+from gwenflow.tools import Tool
+from gwenflow.types import ItemHelpers, Message, Usage
 from gwenflow.types.responses import (
     Response,
     ResponseContentDeltaEvent,
@@ -17,11 +18,7 @@ from gwenflow.types.responses import (
     ResponseReasoningEvent,
     ResponseToolCallEvent,
 )
-
-from gwenflow.tools import Tool
-from gwenflow.types import Usage
 from gwenflow.utils import extract_json_str
-
 
 
 class ResponseContent(BaseModel):
@@ -44,7 +41,7 @@ class ReasoningItem(BaseModel):
     summary: Literal["auto", "concise", "detailed"]
 
 
-class Response(BaseModel):
+class Response(BaseModel):  # noqa: F811
     model_config = {"extra": "ignore"}
     id: str
     object: Literal["response"]
@@ -85,7 +82,7 @@ class ResponseDeltaEventBase(BaseModel):
     sequence_number: int
 
 
-class ResponseReasoningDeltaEvent(ResponseDeltaEventBase):
+class ResponseReasoningDeltaEvent(ResponseDeltaEventBase):  # noqa: F811
     type: Literal["response.reasoning_summary_text.delta"]
     delta: str
 
@@ -106,7 +103,7 @@ AnyResponseEvent = Annotated[
 ]
 
 
-class ResponseEvent(RootModel):
+class ResponseEvent(RootModel):  # noqa: F811
     root: AnyResponseEvent
 
 

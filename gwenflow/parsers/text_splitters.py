@@ -1,6 +1,6 @@
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 from tqdm import tqdm

@@ -4,10 +4,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from gwenflow.tools import Tool
-from gwenflow.types import ModelResponse, Message
 from gwenflow.llms.models import MODELS
-
+from gwenflow.tools import Tool
+from gwenflow.types import Message, ModelResponse
 
 DEFAULT_CONTEXT_SIZE = 128000
 

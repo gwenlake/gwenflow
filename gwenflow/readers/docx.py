@@ -54,11 +54,13 @@ class DocxReader(Reader):
             data = content.getvalue() if isinstance(content, io.BytesIO) else content
             text = self.get_text(io.BytesIO(data))
             tables = self.get_tables(io.BytesIO(data))
-            return [Document(
-                id=self.key(filename),
-                content=text,
-                metadata={"filename": filename, "tables": tables},
-            )]
+            return [
+                Document(
+                    id=self.key(filename),
+                    content=text,
+                    metadata={"filename": filename, "tables": tables},
+                )
+            ]
         except Exception as e:
             logger.exception(f"Error reading file: {e}")
             return []

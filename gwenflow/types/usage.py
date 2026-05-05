@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 
+
 @dataclass(kw_only=True)
 class RequestUsage:
     input_tokens: int = 0

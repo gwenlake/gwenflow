@@ -5,7 +5,6 @@ import pytest
 
 from gwenflow.embeddings.gwenlake import EMBEDDING_DIMS, GwenlakeEmbeddings
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -2,13 +2,11 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-
 import pytest
 from pydantic import BaseModel
 
 from gwenflow.llms.openai import ChatOpenAI
 from gwenflow.types import Message
-
 
 # ---------------------------------------------------------------------------
 # Helpers

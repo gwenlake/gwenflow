@@ -6,7 +6,6 @@ from typing import Any
 
 import httpx
 
-
 NODE_TYPE_REGISTRY: dict[str, Callable] = {}
 
 
@@ -14,6 +13,7 @@ def node_type(type_name: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         NODE_TYPE_REGISTRY[type_name] = fn
         return fn
+
     return decorator
 
 
@@ -46,6 +46,7 @@ def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
         headers["Authorization"] = f"Bearer {auth['token']}"
     elif auth.get("type") == "basic":
         import base64
+
         creds = base64.b64encode(f"{auth['username']}:{auth['password']}".encode()).decode()
         headers["Authorization"] = f"Basic {creds}"
 
@@ -116,6 +117,7 @@ def handle_postgres(parameters: dict, input_data: dict | None) -> Any:
 @node_type("gwenflow.pdfReader")
 def handle_pdf_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
+
     from gwenflow.readers.pdf import PDFReader
 
     file_path = parameters["file"]
@@ -134,6 +136,7 @@ def handle_pdf_reader(parameters: dict, input_data: dict | None) -> Any:
 @node_type("gwenflow.csvReader")
 def handle_csv_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
+
     from gwenflow.readers.csv import CSVReader
 
     reader = CSVReader()
@@ -152,6 +155,7 @@ def handle_csv_reader(parameters: dict, input_data: dict | None) -> Any:
 @node_type("gwenflow.excelReader")
 def handle_excel_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
+
     from gwenflow.readers.excel import ExcelReader
 
     reader = ExcelReader()
@@ -191,7 +195,13 @@ def handle_csv_writer(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
     file_path = parameters["file"]
-    data = input_data.get(parameters["source"]) if parameters.get("source") else next(iter(input_data.values())) if input_data else []
+    data = (
+        input_data.get(parameters["source"])
+        if parameters.get("source")
+        else next(iter(input_data.values()))
+        if input_data
+        else []
+    )
     if not data or not isinstance(data, list):
         raise ValueError("csv_writer expects a list of dicts from a parent node.")
 
@@ -209,7 +219,13 @@ def handle_json_writer(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
     file_path = parameters["file"]
-    data = input_data.get(parameters["source"]) if parameters.get("source") else next(iter(input_data.values())) if input_data else None
+    data = (
+        input_data.get(parameters["source"])
+        if parameters.get("source")
+        else next(iter(input_data.values()))
+        if input_data
+        else None
+    )
     if data is None:
         raise ValueError("json_writer expects data from a parent node.")
 
@@ -236,7 +252,9 @@ def handle_text_splitter(parameters: dict, input_data: dict | None) -> Any:
         documents = [Document(id="0", content=raw, metadata={})]
     elif isinstance(raw, list):
         documents = [
-            Document(id=str(i), content=item.get("content", ""), metadata={k: v for k, v in item.items() if k != "content"})
+            Document(
+                id=str(i), content=item.get("content", ""), metadata={k: v for k, v in item.items() if k != "content"}
+            )
             for i, item in enumerate(raw)
             if isinstance(item, dict)
         ]

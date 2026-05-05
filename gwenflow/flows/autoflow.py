@@ -6,7 +6,6 @@ from gwenflow.agents import Agent
 from gwenflow.logger import logger
 from gwenflow.utils.json import parse_json_markdown
 
-
 EXAMPLE = [
     {
         "name": "Biographer",
@@ -142,11 +141,7 @@ class AutoFlow:
         for name in nx.topological_sort(graph):
             info = agents[name]
             task = info["task"]
-            context_parts = [
-                f"Output from {dep}:\n{results[dep]}"
-                for dep in info["depends_on"]
-                if dep in results
-            ]
+            context_parts = [f"Output from {dep}:\n{results[dep]}" for dep in info["depends_on"] if dep in results]
             if context_parts:
                 task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(context_parts)
             logger.info(f"Running agent: {name}")

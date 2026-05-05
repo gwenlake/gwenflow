@@ -25,11 +25,13 @@ class PDFReader(Reader):
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
                     safe_text = text.encode("utf-8", errors="ignore").decode("utf-8")
-                    documents.append(Document(
-                        id=self.key(f"{filename}_{i + 1}"),
-                        content=safe_text,
-                        metadata={"filename": filename, "page": i + 1, "tables": page.extract_tables()},
-                    ))
+                    documents.append(
+                        Document(
+                            id=self.key(f"{filename}_{i + 1}"),
+                            content=safe_text,
+                            metadata={"filename": filename, "page": i + 1, "tables": page.extract_tables()},
+                        )
+                    )
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return []

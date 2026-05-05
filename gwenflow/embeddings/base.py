@@ -5,7 +5,6 @@ from typing import List, Optional
 
 @dataclass(kw_only=True)
 class Embeddings(ABC):
-
     model: str
     dimensions: Optional[int] = 1536
 

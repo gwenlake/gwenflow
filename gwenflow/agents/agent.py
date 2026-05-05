@@ -14,7 +14,7 @@ from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
-from gwenflow.tools import BaseTool, Tool, MCPServer
+from gwenflow.tools import BaseTool, MCPServer, Tool
 from gwenflow.types import AgentResponse, Message, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
 

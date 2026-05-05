@@ -7,7 +7,6 @@ from gwenflow.types import Document
 
 @dataclass(kw_only=True)
 class Reranker(ABC):
-
     model: str
     top_k: Optional[int] = None
     threshold: Optional[float] = None

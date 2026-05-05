@@ -1,5 +1,5 @@
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from gwenflow.embeddings import GwenlakeEmbeddings
@@ -60,10 +60,12 @@ class Retriever:
             )
             for doc in text_splitter.create_documents([document.content]):
                 if len(doc.page_content) > MIN_CONTENT_LENGTH:
-                    docs.append(Document(
-                        id=self._unique_key(doc.page_content),
-                        content=doc.page_content,
-                    ))
+                    docs.append(
+                        Document(
+                            id=self._unique_key(doc.page_content),
+                            content=doc.page_content,
+                        )
+                    )
             if docs:
                 self.vector_db.insert(docs)
             return True

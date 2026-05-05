@@ -1,7 +1,7 @@
 from gwenflow.types.document import Document
-from gwenflow.types.message import TextContent, ThinkingContent, ToolCall, Message
+from gwenflow.types.message import Message, TextContent, ThinkingContent, ToolCall
 from gwenflow.types.response import AgentResponse, ModelResponse, ToolResponse
-from gwenflow.types.usage import RequestUsage, AgentUsage
+from gwenflow.types.usage import AgentUsage, RequestUsage
 
 __all__ = [
     "Document",

@@ -8,7 +8,6 @@ from gwenflow.llms.models import MODELS
 from gwenflow.llms.openai import ChatOpenAI
 from gwenflow.types import Message
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -78,6 +77,7 @@ def test_get_reasoning_model_false():
 
 def test_get_tool_names_and_map():
     from dataclasses import dataclass
+
     from gwenflow.tools import BaseTool
 
     @dataclass(kw_only=True)

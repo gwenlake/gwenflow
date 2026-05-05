@@ -11,7 +11,8 @@ from typing import Any, Callable, Literal
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from mcp.types import CallToolResult, JSONRPCMessage, Tool as MCPToolDef
+from mcp.types import CallToolResult, JSONRPCMessage
+from mcp.types import Tool as MCPToolDef
 from typing_extensions import NotRequired, TypedDict
 
 from gwenflow.logger import logger

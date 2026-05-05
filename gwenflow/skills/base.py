@@ -81,7 +81,7 @@ class Skill:
         - Any module-level function that has a docstring and type annotations
           (auto-wrapped as ``FunctionTool``).
         """
-        from gwenflow.tools import Tool, FunctionTool
+        from gwenflow.tools import FunctionTool, Tool
 
         all_tools: List[Tool] = []
 

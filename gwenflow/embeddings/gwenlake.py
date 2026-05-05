@@ -1,8 +1,9 @@
 import re
-import requests
 from dataclasses import dataclass
 from functools import cached_property
 from typing import List, Optional
+
+import requests
 
 try:
     from tenacity import retry, stop_after_attempt, wait_fixed

@@ -12,9 +12,8 @@ class Telemetry:
 
     def __post_init__(self) -> None:
         if not self.endpoint:
-            self.endpoint = (
-                os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-                or ("localhost:4317" if self.protocol.upper() == "GRPC" else "http://localhost:4318")
+            self.endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or (
+                "localhost:4317" if self.protocol.upper() == "GRPC" else "http://localhost:4318"
             )
 
         try:

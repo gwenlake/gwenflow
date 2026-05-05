@@ -7,8 +7,8 @@ from typing import Any
 import networkx as nx
 import yaml
 
-from gwenflow.logger import logger
 from gwenflow.flows.handlers import NODE_TYPE_REGISTRY
+from gwenflow.logger import logger
 
 
 @dataclass
@@ -76,11 +76,13 @@ class Flow:
                     if target_id is None:
                         errors.append(f"Connection references unknown target node '{target_name}'")
                     else:
-                        targets.append(ConnectionEndpoint(
-                            node=target_id,
-                            type=t.get("type", "main"),
-                            index=t.get("index", 0),
-                        ))
+                        targets.append(
+                            ConnectionEndpoint(
+                                node=target_id,
+                                type=t.get("type", "main"),
+                                index=t.get("index", 0),
+                            )
+                        )
                 connections[source_id].append(targets)
 
         if errors:
@@ -126,51 +128,39 @@ class FlowRunner:
     def plot(self, filename="pipeline_graph"):
         p = nx.drawing.nx_pydot.to_pydot(self.graph)
         for node in p.get_nodes():
-            node.set_shape('box')
-            node.set_style('filled')
-            node.set_fillcolor('#eeeeee')
+            node.set_shape("box")
+            node.set_style("filled")
+            node.set_fillcolor("#eeeeee")
         p.write_png(f"{filename}.png")
 
     def plot_interactive(self):
         from pyvis.network import Network
-        net = Network(notebook=False, directed=True, bgcolor='#222222', font_color='white')
+
+        net = Network(notebook=False, directed=True, bgcolor="#222222", font_color="white")
 
         node_styles = {
-            "data": {
-                "color": {"background": "#4da6ff", "border": "#0059b3"},
-                "shape": "ellipse",
-                "size": 20
-            },
-            "python": {
-                "color": {"background": "#5cd65c", "border": "#2d862d"},
-                "shape": "box",
-                "size": 25
-            },
-            "agent": {
-                "color": {"background": "#ffad33", "border": "#b36b00"},
-                "shape": "dot",
-                "size": 30
-            }
+            "data": {"color": {"background": "#4da6ff", "border": "#0059b3"}, "shape": "ellipse", "size": 20},
+            "python": {"color": {"background": "#5cd65c", "border": "#2d862d"}, "shape": "box", "size": 25},
+            "agent": {"color": {"background": "#ffad33", "border": "#b36b00"}, "shape": "dot", "size": 30},
         }
 
         for node_id in self.graph.nodes:
-            node_obj = self.graph.nodes[node_id]['data']
-            style = node_styles.get(node_obj.type.lower(), {
-                "color": {"background": "#97c2fc", "border": "#2b7ce9"},
-                "shape": "dot",
-                "size": 25
-            })
+            node_obj = self.graph.nodes[node_id]["data"]
+            style = node_styles.get(
+                node_obj.type.lower(),
+                {"color": {"background": "#97c2fc", "border": "#2b7ce9"}, "shape": "dot", "size": 25},
+            )
             net.add_node(
                 node_id,
                 label=f"{node_obj.name}\n{node_obj.type}",
                 shape=style["shape"],
                 color=style["color"],
                 size=style["size"],
-                font={'color': 'white', 'size': 14}
+                font={"color": "white", "size": 14},
             )
 
         for source, target, data in self.graph.edges(data=True):
-            net.add_edge(source, target, title=data.get('input_type'), color='#848484')
+            net.add_edge(source, target, title=data.get("input_type"), color="#848484")
 
         net.show("pipeline.html", notebook=False)
 

@@ -1,14 +1,11 @@
 import uuid
-from datetime import datetime
-from typing import Any, List, Optional, Annotated, Dict
 from collections.abc import Sequence
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from pydantic import Discriminator
-from typing_extensions import Literal
-
-from gwenflow.types.message import Message, MessageContent, TextContent, ToolCall, ThinkingContent
-from gwenflow.types.usage import RequestUsage, AgentUsage
+from gwenflow.types.message import Message, MessageContent, TextContent, ThinkingContent, ToolCall
+from gwenflow.types.usage import AgentUsage, RequestUsage
 from gwenflow.utils.utils import now_utc
 
 
@@ -42,7 +39,7 @@ class ModelResponse:
         if not texts:
             return None
 
-        return '\n\n'.join(texts)
+        return "\n\n".join(texts)
 
     @property
     def content(self) -> str | None:
@@ -54,7 +51,7 @@ class ModelResponse:
         thinking_parts = [part.content for part in self.parts if isinstance(part, ThinkingContent)]
         if not thinking_parts:
             return None
-        return '\n\n'.join(thinking_parts)
+        return "\n\n".join(thinking_parts)
 
     @property
     def tool_calls(self) -> List[ToolCall]:
@@ -81,7 +78,7 @@ class ToolResponse:
     tool_call_error: Optional[bool] = None
     content: str | None = None
     created_at: datetime = field(default_factory=now_utc)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 

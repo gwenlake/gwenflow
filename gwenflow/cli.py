@@ -97,8 +97,16 @@ def run(flow_file, plot, interactive):
 @main.command()
 @click.argument("query")
 @click.option("--model", "-m", default=DEFAULT_MODEL, show_default=True, help="LLM to use (provider/model-name).")
-@click.option("--tools", "-t", multiple=True, metavar="TOOL", help="Built-in tool to equip the agent with (repeatable).")
-@click.option("--instructions", "-i", default="You are a helpful assistant.", show_default=True, help="System instructions for the agent.")
+@click.option(
+    "--tools", "-t", multiple=True, metavar="TOOL", help="Built-in tool to equip the agent with (repeatable)."
+)
+@click.option(
+    "--instructions",
+    "-i",
+    default="You are a helpful assistant.",
+    show_default=True,
+    help="System instructions for the agent.",
+)
 def ask(query, model, tools, instructions):
     """Run a single agent with QUERY."""
     from gwenflow.agents import Agent
@@ -129,7 +137,7 @@ def list_tools():
     table = Table(title="Available tools", show_header=True, header_style="bold cyan")
     table.add_column("Name", style="green")
     table.add_column("Class")
-    for name, (module, cls) in sorted(_TOOLS.items()):
+    for name, (_, cls) in sorted(_TOOLS.items()):
         table.add_row(name, cls)
     console.print(table)
 
