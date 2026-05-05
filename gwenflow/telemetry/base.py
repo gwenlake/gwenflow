@@ -6,15 +6,18 @@ from dataclasses import dataclass, field
 @dataclass
 class Telemetry:
     service_name: str = field(default_factory=lambda: os.getenv("OTEL_SERVICE_NAME", "gwenflow-service"))
-    protocol: str = "http/protobuf"
+    protocol: str = "HTTP"
     endpoint: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.endpoint:
-            self.endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or (
-                "localhost:4317" if self.protocol.upper() == "GRPC" else "http://localhost:4318"
-            )
+            if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+                self.endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+            elif self.protocol.upper() == "GRPC":
+                self.endpoint = "http://localhost:4317"
+            else:
+                self.endpoint = "http://localhost:4318/v1/traces"
 
         try:
             from opentelemetry import trace
