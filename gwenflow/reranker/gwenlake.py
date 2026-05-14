@@ -1,28 +1,30 @@
-from typing import Dict, List
+from dataclasses import dataclass
+from functools import cached_property
+from typing import List, Optional
 
 import requests
-from pydantic import model_validator
 
-from gwenflow.api import api
+from gwenflow.api import Api, api
 from gwenflow.logger import logger
 from gwenflow.reranker.base import Reranker
 from gwenflow.types import Document
 
 
+@dataclass(kw_only=True)
 class GwenlakeReranker(Reranker):
     """Gwenlake reranker."""
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Dict) -> Dict:
-        if "model" not in values:
-            values["model"] = "BAAI/bge-reranker-v2-m3"
-        return values
+    model: str = "BAAI/bge-reranker-v2-m3"
+    base_url: Optional[str] = None
+
+    @cached_property
+    def _api(self) -> Api:
+        return Api(base_url=self.base_url) if self.base_url else api
 
     def _rerank(self, query: str, input: List[str]) -> List[List[float]]:
         try:
             payload = {"query": query, "input": input, "model": self.model}
-            response = api.client.post("/v1/rerank", json=payload)
+            response = self._api.client.post("/v1/rerank", json=payload)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Error raised by inference endpoint: {e}") from e
 
@@ -63,7 +65,6 @@ class GwenlakeReranker(Reranker):
             for i, _ in enumerate(compressed_documents):
                 compressed_documents[i].score = reranked_documents[i]["relevance_score"]
 
-            # Order by relevance score
             compressed_documents.sort(
                 key=lambda x: x.score if x.score is not None else float("-inf"),
                 reverse=True,

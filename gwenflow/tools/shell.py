@@ -1,6 +1,6 @@
 import json
-import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
@@ -8,9 +8,10 @@ from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from gwenflow.logger import logger
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import BaseTool
 
 
+@dataclass(kw_only=True)
 class ShellTool(BaseTool):
     name: str = "ShellTool"
     description: str = "Runs a shell command and returns the output or error."
@@ -48,7 +49,6 @@ class ShellTool(BaseTool):
             }
 
             logger.debug(f"Command result: {response_data}")
-
             return json.dumps(response_data, ensure_ascii=False)
 
         except Exception as e:

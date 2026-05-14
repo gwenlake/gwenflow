@@ -1,28 +1,22 @@
 import io
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Union
-
-from pydantic import model_validator
+from typing import List, Union
 
 from gwenflow.logger import logger
 from gwenflow.readers.base import Reader
 from gwenflow.types import Document
 
 
+@dataclass
 class PptxReader(Reader):
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
+    def __post_init__(self) -> None:
         try:
             __import__("pptx")
         except ImportError:
             raise ImportError("Missing required package: python-pptx. Install with: `uv add python-pptx`")
-        return values
 
-    def read(
-        self,
-        file: Union[Path, io.BytesIO],
-    ) -> List[Document]:
+    def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
         from pptx import Presentation
 
         try:
@@ -39,11 +33,10 @@ class PptxReader(Reader):
                         line = "".join(run.text for run in para.runs).strip()
                         if line:
                             texts.append(line)
-                slide_text = "\n".join(texts)
                 documents.append(
                     Document(
                         id=self.key(f"{filename}_slide{slide_num}"),
-                        content=slide_text,
+                        content="\n".join(texts),
                         metadata={"filename": filename, "page": slide_num, "slide": slide_num},
                     )
                 )

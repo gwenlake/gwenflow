@@ -1,11 +1,13 @@
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Optional
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import BaseTool
 
 
-class DuckDuckGoBaseTool(BaseTool):
+@dataclass(kw_only=True)
+class DuckDuckGoTool(BaseTool):
     region: Optional[str] = "wt-wt"
     source: str = "text"
     time: Optional[str] = "y"
@@ -13,20 +15,18 @@ class DuckDuckGoBaseTool(BaseTool):
     safesearch: str = "moderate"
     backend: str = "api"
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
-        """Validate that the python package exists in environment."""
+    def __post_init__(self) -> None:
         try:
             from duckduckgo_search import DDGS  # noqa: F401
         except ImportError as e:
             raise ImportError(
                 "duckduckgo-search is not installed. Please install it with `pip install duckduckgo-search`."
             ) from e
-        return values
+        super().__post_init__()
 
 
-class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
+@dataclass(kw_only=True)
+class DuckDuckGoSearchTool(DuckDuckGoTool):
     name: str = "DuckDuckGoSearchTool"
     description: str = "Search for a query in DuckDuckGo and returns the content."
 
@@ -34,18 +34,18 @@ class DuckDuckGoSearchTool(DuckDuckGoBaseTool):
         from duckduckgo_search import DDGS
 
         with DDGS() as ddgs:
-            results = ddgs.text(
+            return ddgs.text(
                 query,
-                region=self.region,  # type: ignore[arg-type]
+                region=self.region,
                 safesearch=self.safesearch,
                 timelimit=self.time,
                 max_results=self.max_results,
                 backend=self.backend,
             )
-            return results
 
 
-class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
+@dataclass(kw_only=True)
+class DuckDuckGoNewsTool(DuckDuckGoTool):
     name: str = "DuckDuckGoNewsTool"
     description: str = "Search for a query in DuckDuckGo News and returns the content."
 
@@ -53,11 +53,10 @@ class DuckDuckGoNewsTool(DuckDuckGoBaseTool):
         from duckduckgo_search import DDGS
 
         with DDGS() as ddgs:
-            results = ddgs.news(
+            return ddgs.news(
                 query,
-                region=self.region,  # type: ignore[arg-type]
+                region=self.region,
                 safesearch=self.safesearch,
                 timelimit=self.time,
                 max_results=self.max_results,
             )
-            return results

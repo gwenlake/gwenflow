@@ -1,10 +1,12 @@
+from dataclasses import dataclass
 from typing import Annotated, Union
 
 from pydantic import Field
 
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import BaseTool
 
 
+@dataclass(kw_only=True)
 class YahooFinanceSearch(BaseTool):
     name: str = "YahooFinanceSearch"
     description: str = "Search for a stock on Yahoo Finance."
@@ -13,12 +15,12 @@ class YahooFinanceSearch(BaseTool):
         try:
             import yfinance as yf
 
-            stocks = yf.Search(query)
-            return stocks.quotes
+            return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
+@dataclass(kw_only=True)
 class YahooFinancePick(BaseTool):
     name: str = "YahooFinancePick"
     description: str = "Search for a stock on Yahoo Finance."
@@ -27,12 +29,12 @@ class YahooFinancePick(BaseTool):
         try:
             import yfinance as yf
 
-            stocks = yf.Search(query)
-            return stocks.quotes
+            return yf.Search(query).quotes
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
+@dataclass(kw_only=True)
 class YahooFinanceStock(BaseTool):
     name: str = "YahooFinanceStock"
     description: str = "Retrieve stock data from Yahoo Finance."
@@ -41,12 +43,12 @@ class YahooFinanceStock(BaseTool):
         try:
             import yfinance as yf
 
-            stock = yf.Ticker(ticker)
-            return stock.info
+            return yf.Ticker(ticker).info
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
+@dataclass(kw_only=True)
 class YahooFinanceNews(BaseTool):
     name: str = "YahooFinanceNews"
     description: str = (
@@ -61,16 +63,12 @@ class YahooFinanceNews(BaseTool):
             import yfinance as yf
 
             stocks = yf.Search(query, enable_fuzzy_query=True, news_count=15, max_results=0)
-            # create a dict of news with title and link
-            news_dict = {}
-            for news in stocks.news:
-                news_dict[news["title"]] = news["link"]
-
-            return news_dict
+            return {news["title"]: news["link"] for news in stocks.news}
         except ImportError:
             return "yfinance is not installed. Please install it with `pip install yfinance`."
 
 
+@dataclass(kw_only=True)
 class YahooFinanceScreen(BaseTool):
     name: str = "YahooFinanceScreen"
     description: str = (
@@ -90,7 +88,6 @@ class YahooFinanceScreen(BaseTool):
             screener = yf.Screener()
             try:
                 query = yf.EquityQuery(operator, eval(values))
-
             except Exception:
                 return "Query not valid. Please check the Yahoo Finance screener documentation."
 
@@ -107,11 +104,7 @@ class YahooFinanceScreen(BaseTool):
                         "userIdType": "guid",
                     }
                 )
-
-                result = screener.response
-                symbols = [quote["symbol"] for quote in result["quotes"]]
-
-                return symbols
+                return [quote["symbol"] for quote in screener.response["quotes"]]
             except Exception:
                 return "Query not valid. Please check the Yahoo Finance screener documentation."
 

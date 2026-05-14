@@ -1,14 +1,15 @@
 import re
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import requests
-from pydantic import model_validator
 
 try:
     from tenacity import retry, stop_after_attempt, wait_fixed
 except ImportError as e:
     raise ImportError("`tenacity` is not installed. Please install it with `pip install tenacity`.") from e
+
 from gwenflow.api import Api, api
 from gwenflow.embeddings.base import Embeddings
 
@@ -22,22 +23,19 @@ EMBEDDING_DIMS = {
 EMBEDDING_WITH_PASSAGE = list(EMBEDDING_DIMS.keys())
 
 
+@dataclass(kw_only=True)
 class GwenlakeEmbeddings(Embeddings):
     """Gwenlake embedding models."""
 
+    model: str = "intfloat/e5-base-v2"
     base_url: Optional[str] = None
+
+    def __post_init__(self):
+        self.dimensions = EMBEDDING_DIMS[self.model]
 
     @cached_property
     def _api(self) -> Api:
         return Api(base_url=self.base_url) if self.base_url else api
-
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Dict) -> Dict:
-        if "model" not in values:
-            values["model"] = "intfloat/e5-base-v2"
-        values["dimensions"] = EMBEDDING_DIMS[values["model"]]
-        return values
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(1))
     def _embed(self, input: List[str]) -> List[List[float]]:
@@ -61,14 +59,6 @@ class GwenlakeEmbeddings(Embeddings):
         return embeddings
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Call out to Gwenlake's embedding endpoint.
-
-        Args:
-            texts: The list of texts to embed.
-
-        Returns:
-            List of embeddings, one for each text.
-        """
         if not texts:
             return []
 
@@ -92,14 +82,6 @@ class GwenlakeEmbeddings(Embeddings):
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        """Call out to Gwenlake's embedding endpoint.
-
-        Args:
-            text: The text to embed.
-
-        Returns:
-            Embeddings for the text.
-        """
         text = text.replace("\n", " ")
         text = re.sub(" +", " ", text)
         text = text.strip()

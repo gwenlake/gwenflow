@@ -1,4 +1,5 @@
 import io
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, List, Union
 
@@ -7,6 +8,7 @@ from gwenflow.readers.base import Reader
 from gwenflow.types import Document
 
 
+@dataclass
 class DocxReader(Reader):
     trans: ClassVar[dict[int, int | None]] = {
         0x00A0: 0x20,
@@ -32,7 +34,6 @@ class DocxReader(Reader):
         except ImportError as e:
             raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`") from e
         doc = docx.Document(file_obj)
-
         tables = []
         for t in doc.tables:
             rows = []
@@ -50,19 +51,16 @@ class DocxReader(Reader):
         try:
             filename = self.get_file_name(file)
             content = self.get_file_content(file)
-
             data = content.getvalue() if isinstance(content, io.BytesIO) else content
-
             text = self.get_text(io.BytesIO(data))
             tables = self.get_tables(io.BytesIO(data))
-
-            doc = Document(
-                id=self.key(f"{filename}"),
-                content=text,
-                metadata={"filename": filename, "tables": tables},
-            )
-            return [doc]
-
+            return [
+                Document(
+                    id=self.key(filename),
+                    content=text,
+                    metadata={"filename": filename, "tables": tables},
+                )
+            ]
         except Exception as e:
             logger.exception(f"Error reading file: {e}")
             return []

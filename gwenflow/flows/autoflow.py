@@ -1,9 +1,10 @@
 import json
 
-from gwenflow.agents import Agent
-from gwenflow.utils.json import parse_json_markdown
+import networkx as nx
 
-from .base import Flow
+from gwenflow.agents import Agent
+from gwenflow.logger import logger
+from gwenflow.utils.json import parse_json_markdown
 
 EXAMPLE = [
     {
@@ -98,32 +99,54 @@ Now, please create the list of AI Agents based on the provided tasks.
 """
 
 
-class AutoFlow(Flow):
+class AutoFlow:
+    def __init__(self, llm, tools=None):
+        self.llm = llm
+        self.tools = tools or []
+
     def run(self, query: str) -> str:
-        tools = [tool.name for tool in self.tools]
-        tools = ", ".join(tools)
+        tool_names = ", ".join(t.name for t in self.tools)
 
-        task_prompt = TASK_GENERATOR.format(tasks=query, tools=tools, examples=json.dumps(EXAMPLE, indent=4))
+        task_prompt = TASK_GENERATOR.format(
+            tasks=query,
+            tools=tool_names,
+            examples=json.dumps(EXAMPLE, indent=4),
+        )
         response = self.llm.invoke(input=[{"role": "user", "content": task_prompt}])
-        response = parse_json_markdown(response.choices[0].message.content)
+        agent_plan = parse_json_markdown(response.content)
 
-        for agent_json in response:
-            tools = []
-            if agent_json.get("tools"):
+        agents: dict[str, dict] = {}
+        for entry in agent_plan:
+            agent_tools = []
+            if entry.get("tools"):
                 for t in self.tools:
-                    if t.name in agent_json["tools"]:
-                        tools.append(t)
+                    if t.name in entry["tools"]:
+                        agent_tools.append(t)
+            agents[entry["name"]] = {
+                "agent": Agent(name=entry["name"], llm=self.llm, tools=agent_tools),
+                "task": entry.get("task", ""),
+                "depends_on": entry.get("depends_on") or [],
+            }
 
-            agent = Agent(
-                name=agent_json.get("name"),
-                llm=self.llm,
-                tools=tools,
-            )
+        graph = nx.DiGraph()
+        for name in agents:
+            graph.add_node(name)
+        for name, info in agents.items():
+            for dep in info["depends_on"]:
+                if dep in agents:
+                    graph.add_edge(dep, name)
 
-            self.steps.append(
-                {"agent": agent, "task": agent_json.get("task"), "depends_on": agent_json.get("depends_on")}
-            )
+        results: dict[str, str] = {}
+        last_result = ""
+        for name in nx.topological_sort(graph):
+            info = agents[name]
+            task = info["task"]
+            context_parts = [f"Output from {dep}:\n{results[dep]}" for dep in info["depends_on"] if dep in results]
+            if context_parts:
+                task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(context_parts)
+            logger.info(f"Running agent: {name}")
+            response = info["agent"].run(task)
+            results[name] = response.content
+            last_result = response.content
 
-        self.describe()
-
-        return super().run(query)
+        return last_result

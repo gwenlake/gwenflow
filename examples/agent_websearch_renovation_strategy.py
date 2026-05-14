@@ -1,18 +1,11 @@
+import json
+
 import dotenv
 
-from gwenflow import Agent, ChatOpenAI, set_log_level_to_debug
+from gwenflow import Agent, ChatOpenAI
 from gwenflow.tools import PDFReaderTool, TavilyWebSearchTool, WebsiteReaderTool
 
-set_log_level_to_debug()
-
 dotenv.load_dotenv(override=True)
-
-"""
-
-Exemple pour montrer que l'on peut imposer
-
-
-"""
 
 
 EXAMPLE = [
@@ -75,5 +68,5 @@ agent = Agent(
     tools=[TavilyWebSearchTool(), WebsiteReaderTool(), PDFReaderTool()],
 )
 
-response = agent.run(task)
+response = agent.run(task.format(EXAMPLE=json.dumps(EXAMPLE, indent=2)))
 print(response.content)

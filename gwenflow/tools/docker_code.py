@@ -1,10 +1,12 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Union
-from pydantic import Field, model_validator
+from typing import Optional, Union
+
+from pydantic import Field
 
 from gwenflow.logger import logger
-from gwenflow.tools import BaseTool
+from gwenflow.tools.tool import BaseTool
 
 DESCRIPTION = """\
 Executes Python or Shell (sh) code in an isolated Docker container.
@@ -14,20 +16,18 @@ Returns the standard output (stdout) if successful, or the error message (stderr
 """
 
 
+@dataclass(kw_only=True)
 class DockerCodeTool(BaseTool):
     name: str = "DockerCodeTool"
     description: str = DESCRIPTION
-
     base_dir: Optional[Union[Path, str]] = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_environment(cls, values: Any) -> Any:
+    def __post_init__(self) -> None:
         try:
             import docker  # noqa: F401
         except ImportError as e:
             raise ImportError("`docker` is not installed. Please install it with `uv add docker`.") from e
-        return values
+        super().__post_init__()
 
     def _run(
         self,
@@ -48,7 +48,7 @@ class DockerCodeTool(BaseTool):
                 "nano_cpus": 500000000,
                 "security_opt": ["no-new-privileges:true"],
                 "tmpfs": {"/tmp": "size=50m"},
-                "user": "nobody"
+                "user": "nobody",
             }
 
             if language == "python":
@@ -62,22 +62,19 @@ class DockerCodeTool(BaseTool):
 
             if self.base_dir:
                 abs_path = os.path.abspath(self.base_dir)
-                os.makedirs(abs_path, exist_ok=True)                
+                os.makedirs(abs_path, exist_ok=True)
                 run_kwargs["volumes"] = {abs_path: {"bind": "/mnt/workspace", "mode": "rw"}}
                 run_kwargs["working_dir"] = "/mnt/workspace"
-                if os.name != 'nt':
+                if os.name != "nt":
                     run_kwargs["user"] = os.getuid()
 
             client = docker.from_env()
             result = client.containers.run(**run_kwargs)
             output = result.decode("utf-8").strip()
-
             logger.debug(f"Command result: {output}")
-
             return output
 
         except docker.errors.ContainerError as e:
             return f"Docker error:\n{e.stderr.decode('utf-8')}"
-
         except Exception as e:
             return f"Error: {str(e)}"

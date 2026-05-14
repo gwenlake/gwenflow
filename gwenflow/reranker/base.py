@@ -1,18 +1,16 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional
-
-from pydantic import BaseModel, ConfigDict
 
 from gwenflow.types import Document
 
 
-class Reranker(BaseModel):
-    """Base class for rerankers."""
-
+@dataclass(kw_only=True)
+class Reranker(ABC):
     model: str
     top_k: Optional[int] = None
     threshold: Optional[float] = None
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-
+    @abstractmethod
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
-        raise NotImplementedError
+        pass

@@ -1,14 +1,13 @@
 import os
 
+import dotenv
 import requests
 
-from gwenflow import ChatOpenAI
-from gwenflow.agents.agent import Agent
-from gwenflow.tools import FunctionTool
+from gwenflow import Agent, ChatOpenAI, FunctionTool
 
-os.environ["OPENAI_API_KEY"] = "sk-proj-................................"
+dotenv.load_dotenv(override=True)
 
-OMDB_API_KEY = "OMDB_API_KEY"
+OMDB_API_KEY = os.environ.get("OMDB_API_KEY", "")
 
 
 def search_best_books(topic: str) -> str:

@@ -1,17 +1,17 @@
-from gwenflow.agents import Agent, ChatAgent, ReactAgent
+from gwenflow.agents import Agent
 from gwenflow.exceptions import (
     GwenflowException,
     MaxTurnsExceeded,
     ModelBehaviorError,
     UserError,
 )
-from gwenflow.flows import AutoFlow, Flow
+from gwenflow.flows import AutoFlow, Flow, FlowRunner
 from gwenflow.llms import ChatAnthropic, ChatAzureOpenAI, ChatGwenlake, ChatOllama, ChatOpenAI
 from gwenflow.logger import logger, set_log_level_to_debug
 from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.retriever import Retriever
-from gwenflow.telemetry import TelemetryBase
-from gwenflow.tools import BaseTool, FunctionTool
+from gwenflow.telemetry import Telemetry
+from gwenflow.tools import BaseTool, Tool
 from gwenflow.types import Document, Message
 
 __all__ = [
@@ -31,11 +31,10 @@ __all__ = [
     "SimpleDirectoryReader",
     "Retriever",
     "Agent",
-    "ReactAgent",
-    "ChatAgent",
     "BaseTool",
-    "FunctionTool",
+    "Tool",
     "Flow",
+    "FlowRunner",
     "AutoFlow",
-    "TelemetryBase",
+    "Telemetry",
 ]

@@ -1,7 +1,6 @@
 import hashlib
+from dataclasses import dataclass
 from typing import Any, List, Optional
-
-from pydantic import BaseModel, ConfigDict, model_validator
 
 from gwenflow.embeddings import GwenlakeEmbeddings
 from gwenflow.logger import logger
@@ -13,19 +12,16 @@ from gwenflow.vector_stores.base import VectorStoreBase
 MIN_CONTENT_LENGTH = 20
 
 
-class Retriever(BaseModel):
+@dataclass
+class Retriever:
     name: str
-
     pathname: Optional[str] = None
     vector_db: Optional[VectorStoreBase] = None
-    chunk_size: Optional[int] = 500
-    chunk_overlap: Optional[int] = 100
-    top_k: Optional[int] = 5
+    chunk_size: int = 500
+    chunk_overlap: int = 100
+    top_k: int = 5
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
-
-    @model_validator(mode="after")
-    def model_valid(self) -> Any:
+    def __post_init__(self) -> None:
         if not self.vector_db:
             try:
                 from gwenflow.vector_stores.lancedb import LanceDB
@@ -39,8 +35,7 @@ class Retriever(BaseModel):
                     reranker=GwenlakeReranker(model="BAAI/bge-reranker-v2-m3"),
                 )
             except Exception as e:
-                logger.error(f"Error creating retriver: {e}")
-        return self
+                logger.error(f"Error creating retriever: {e}")
 
     def search(self, query: str, filters: dict = None) -> list[Document]:
         try:
@@ -52,38 +47,30 @@ class Retriever(BaseModel):
             logger.error(f"Error searching for documents: {e}")
         return []
 
-    def _unique_key(self, text: str):
+    def _unique_key(self, text: str) -> str:
         return hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
 
     def load_document(self, document: Document) -> bool:
         if not self.vector_db:
             return False
-
         try:
             docs = []
             text_splitter = TokenTextSplitter(
                 chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap, encoding_name="cl100k_base"
             )
-
             for doc in text_splitter.create_documents([document.content]):
                 if len(doc.page_content) > MIN_CONTENT_LENGTH:
                     docs.append(
                         Document(
-                            id=self._unique_key(
-                                doc.page_content
-                            ),  # id based on content to remove content duplicates in knowledge
+                            id=self._unique_key(doc.page_content),
                             content=doc.page_content,
                         )
                     )
-
-            if len(docs) > 0:
+            if docs:
                 self.vector_db.insert(docs)
-
             return True
-
         except Exception as e:
             logger.error(f"Error loading document: {e}")
-
         return False
 
     def load_documents(self, documents: List[Any]) -> bool:

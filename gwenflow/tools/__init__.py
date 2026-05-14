@@ -1,13 +1,12 @@
-from gwenflow.tools.base import BaseTool
 from gwenflow.tools.docker_code import DockerCodeTool
 from gwenflow.tools.duckduckgo import DuckDuckGoNewsTool, DuckDuckGoSearchTool
-from gwenflow.tools.function import FunctionTool
-from gwenflow.tools.mcp.tool import MCPTool
+from gwenflow.tools.mcp import MCPServer, MCPServerSse, MCPServerSseParams, MCPServerStdio, MCPServerStdioParams
 from gwenflow.tools.pdf import PDFReaderTool
 from gwenflow.tools.python import PythonCodeTool
 from gwenflow.tools.retriever import RetrieverTool
 from gwenflow.tools.shell import ShellTool
 from gwenflow.tools.tavily import TavilyWebSearchTool
+from gwenflow.tools.tool import BaseTool, Tool
 from gwenflow.tools.website import WebsiteReaderTool
 from gwenflow.tools.wikipedia import WikipediaTool
 from gwenflow.tools.yahoofinance import (
@@ -18,7 +17,7 @@ from gwenflow.tools.yahoofinance import (
 
 __all__ = [
     "BaseTool",
-    "FunctionTool",
+    "Tool",
     "ShellTool",
     "PythonCodeTool",
     "DockerCodeTool",
@@ -32,5 +31,9 @@ __all__ = [
     "YahooFinanceStock",
     "YahooFinanceScreen",
     "TavilyWebSearchTool",
-    "MCPTool",
+    "MCPServer",
+    "MCPServerSse",
+    "MCPServerSseParams",
+    "MCPServerStdio",
+    "MCPServerStdioParams",
 ]

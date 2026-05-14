@@ -1,6 +1,4 @@
-from typing import Optional
-
-from pydantic import Field, field_validator
+from dataclasses import dataclass
 
 from gwenflow.logger import logger
 from gwenflow.memory.base import BaseChatMemory
@@ -12,14 +10,14 @@ DEFAULT_TOKEN_LIMIT_RATIO = 0.75
 MAX_MESSAGE_CONTENT = 0.5
 
 
+@dataclass
 class ChatMemoryBuffer(BaseChatMemory):
-    token_limit: Optional[int] = Field(None, validate_default=True)
+    token_limit: int | None = None
 
-    @field_validator("token_limit", mode="before")
-    @classmethod
-    def set_token_limit(cls, v: Optional[int]) -> int:
-        token_limit = v or int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
-        return token_limit
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.token_limit:
+            self.token_limit = int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
 
     def get(self):
         initial_token_count = 0

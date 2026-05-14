@@ -1,61 +1,25 @@
-import os
+import dotenv
 
-from gwenflow.agents import Agent
-from gwenflow.flows.base import Flow
-from gwenflow.llms import ChatOpenAI
+from gwenflow import Agent, ChatOpenAI
 
-os.environ["OPENAI_API_KEY"] = "sk-proj-................................"
+dotenv.load_dotenv(override=True)
 
-print("Initialisation du LLM OpenAI (GPT-4o-mini)...")
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-print("Création manuelle des Agents...")
-
-# --- Agent 1 ---
-joker_agent = Agent(
+joker = Agent(
     name="Joker",
-    description="Tu es un humoriste. Tu inventes des blagues courtes.",
-    response_model=None,
-    tools=[],
+    instructions="You are a comedian. Tell short, funny jokes.",
     llm=llm,
-    depends_on=[],
 )
 
-# --- Agent 2 ---
-explainer_agent = Agent(
+explainer = Agent(
     name="Explainer",
-    description="Tu es un professeur sérieux. Tu expliques pourquoi une blague est drôle de manière scientifique.",
-    response_model=None,
-    tools=[],
+    instructions="You are a professor. Explain why jokes are funny in a scientific way, citing humour theory.",
     llm=llm,
-    depends_on=["Joker"],
 )
 
-print("Construction du Flow...")
+joke_response = joker.run("Tell me a joke about programmers.")
+print(f"Joke:\n{joke_response.content}\n")
 
-steps = [{"agent": explainer_agent, "depends_on": ["Joker"]}, {"agent": joker_agent, "depends_on": []}]
-
-flow = Flow(steps=steps, tools=[], llm=llm)
-
-print("\n--- Structure de l'équipe ---")
-flow.describe()
-
-print("\nLancement de la mission...")
-try:
-    results = flow.run("Fais ton travail.")
-
-    print("\nRésultats :")
-    for agent_name, response in results.items():
-        print(f"\n[Agent: {agent_name}]")
-        if hasattr(response, "choices"):
-            print(f"> {response.choices[0].message.content}")
-        elif hasattr(response, "content"):
-            print(f"> {response.content}")
-        else:
-            print(f"> {response}")
-
-except Exception as e:
-    import traceback
-
-    traceback.print_exc()
-    print(f"\nErreur : {e}")
+explanation = explainer.run(f"Explain why this joke is funny:\n\n{joke_response.content}")
+print(f"Why it's funny:\n{explanation.content}")

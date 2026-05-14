@@ -1,0 +1,21 @@
+name: News Summary Pipeline
+
+nodes:
+  - name: fetch_news
+    type: gwenflow.httpRequest
+    parameters:
+      url: https://hacker-news.firebaseio.com/v0/topstories.json
+      method: GET
+
+  - name: summarize
+    type: gwenflow.Agent
+    parameters:
+      model: openai/gpt-4o-mini
+      instructions: You are a tech journalist who writes concise summaries.
+      task: "Here are the IDs of the top Hacker News stories today:\n\n{fetch_news}\n\nDescribe what kinds of stories are trending based on these IDs and any patterns you notice."
+
+connections:
+  fetch_news:
+    - - node: summarize
+        type: main
+        index: 0

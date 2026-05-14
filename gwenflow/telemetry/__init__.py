@@ -1,4 +1,4 @@
-from .base import TelemetryBase
+from .base import Telemetry
 from .tracer import tracer
 
-__all__ = ["TelemetryBase", "tracer"]
+__all__ = ["Telemetry", "tracer"]

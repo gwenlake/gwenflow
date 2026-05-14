@@ -33,7 +33,7 @@ agent = Agent(name="Medical assistant", llm=ChatOpenAI(model="gpt-4o-mini"), his
 
 response = agent.run_stream("What were we talking about at first ?")
 for chunk in response:
-    if chunk.thinking:
-        print(chunk.thinking)
+    if chunk.reasoning_content:
+        print(chunk.reasoning_content)
     if chunk.content:
         print(chunk.content, end="")

@@ -6,45 +6,37 @@ This Markdown shows various examples, they are more detailed in their specific P
 
 ## 📦 Function Agents
 
-You can provide agents with specific tools that perform targeted tasks. These tools can be local functions converted into actionable tools for agents.
+You can provide agents with specific tools that perform targeted tasks. Use the `@agent.tool` decorator to register any Python function — the name, docstring, and type annotations are automatically converted into the schema the LLM receives.
 
 ### Example: Bike Availability Tool
-
-This example demonstrates how to create a simple tool that retrieves bike availability data from a public API and integrates it into an agent:
 
 ```python
 import requests
 import json
-from gwenflow.tools import FunctionTool
-from gwenflow.llms import ChatOpenAI
-from gwenflow.agent import Agent
 
+from gwenflow import Agent, ChatOpenAI
+
+agent = Agent(
+    name="City Data Agent",
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    instructions=[
+        "Provide bike data for specified stations.",
+        "Respond in JSON format only."
+    ],
+)
+
+@agent.tool
 def get_bike_availability(station_name: str = None) -> str:
+    """Get bike availability from Rennes Métropole stations. Omit station_name to list all stations."""
     url_station = f"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records?where=nom=%22{station_name}%22&limit=1"
     url_general = "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records"
     try:
         response = requests.get(url_station if station_name else url_general)
         response.raise_for_status()
-        data = response.json()
-        return json.dumps(data.get('results', []))
+        return json.dumps(response.json().get('results', []))
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# Convert the function into a tool
-bike_tool = FunctionTool.from_function(get_bike_availability)
-
-# Initialize the agent
-agent = Agent(
-    name="City Data Agent",
-    llm=ChatOpenAI(model="gpt-4o-mini"),
-    instructions=[
-        "Provide bike data for specified stations.",
-        "Respond in JSON format only."
-    ],
-    tools=[bike_tool]
-)
-
-# Example queries
 queries = [
     "What is the bike availability at Oberthur station?",
     "List all bike docking stations."
@@ -52,7 +44,7 @@ queries = [
 
 for query in queries:
     response = agent.run(query)
-    print(response)
+    print(response.content)
 ```
 
 ---
@@ -64,21 +56,18 @@ Web search agents can explore and extract data from the internet, making them id
 ### Example: SEO Content Generator
 
 ```python
+from gwenflow import Agent, ChatOpenAI
 from gwenflow.tools import TavilyWebSearchTool, WebsiteReaderTool, PDFReaderTool
-from gwenflow.llms import ChatOpenAI
-from gwenflow.agent import Agent
 
-# Task description
 task = """
 Create an outline for an article that will be 2,000 words on the keyword 'Best SEO prompts' for a company working in the sector '{sector}', based on the top 10 results from Google.
 Include every relevant heading possible, FAQs, and LSI keywords. Provide recommended external links with anchor text.
 Split the outline into part 1 and part 2.
 """
 
-# Agent initialization with detailed configuration
 agent = Agent(
     name="SEO-Prompt",
-    llm=ChatOpenAI(model="gpt-4o-mini"),
+    llm=ChatOpenAI(model="gpt-5-mini"),
     instructions=[
         "You are a content strategist.",
         "Write the content in markdown format.",
@@ -87,7 +76,6 @@ agent = Agent(
     tools=[TavilyWebSearchTool(), WebsiteReaderTool(), PDFReaderTool()]
 )
 
-# Execute the task
 response = agent.run(task.format(sector="Data Analytics"))
 print(response.content)
 ```
@@ -101,24 +89,20 @@ Agents can be initialized with memory to maintain context across interactions, a
 ### Example: Medical Assistant with Memory
 
 ```python
+from gwenflow import Agent, ChatOpenAI
 from gwenflow.memory import ChatMemoryBuffer
-from gwenflow.llms import ChatOpenAI
-from gwenflow.agent import Agent
 
-# Initial context messages
 messages = [
     {"role": "user", "content": "Tell me about Alzheimer"},
     {"role": "assistant", "content": "Alzheimer is a neurodegenerative disease."}
 ]
 
-# Initialize memory with a token limit
 memory = ChatMemoryBuffer(token_limit=300)
 memory.add_messages(messages)
 
-# Create the agent with memory
 agent = Agent(
     name="Medical Assistant",
-    llm=ChatOpenAI(model="gpt-4o-mini"),
+    llm=ChatOpenAI(model="gpt-5-mini"),
     instructions=[
         "Provide medical explanations in simple language.",
         "Maintain context across multiple queries."
@@ -126,9 +110,8 @@ agent = Agent(
     history=memory
 )
 
-# Query the agent
 response = agent.run("What did we discuss previously?")
-print(response)
+print(response.content)
 ```
 
 ---

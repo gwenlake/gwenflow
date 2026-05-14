@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "0.9.6"
+version = "0.9.8"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -9,6 +9,7 @@ keywords = ["gwenflow", "gwenlake", "agents", "llms", "ai", "ml", "nlp", "framew
 authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain Barthélémy", email = "sylvain.barthelemy@gwenlake.com" }, { name = "Guillaume Beguec", email = "guillaume.beguec@gwenlake.com" }, { name = "Antoine de Parthenay", email = "antoine.departhenay@gwenlake.com" }]
 
 dependencies = [
+    "click>=8.1",
     "httpx==0.28.1",
     "pydantic==2.12.5",
     "tqdm==4.67.3",
@@ -23,6 +24,7 @@ dependencies = [
     "tiktoken==0.12.0",
     "tenacity==9.1.4",
     "pyyaml>=6.0.3",
+    "networkx>=3.6.1",
 ]
 
 classifiers = [
@@ -36,9 +38,16 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.scripts]
+gwenflow = "gwenflow.cli:main"
+
 [project.urls]
 "Homepage" = "https://gwenlake.com"
 "Source" = "https://github.com/gwenlake/gwenflow"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["gwenflow*"]
@@ -69,6 +78,9 @@ fail_licenses = ["GPL", "GPL V3", "LGPL", "LGPL V3"]
 testpaths = ["tests"]
 env_files = [
     ".env.test",
+]
+markers = [
+    "integration: marks tests that call live APIs (deselect with -m 'not integration')",
 ]
 
 

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gwenflow.llms.anthropic.chat import ChatAnthropic
+from gwenflow.llms.anthropic import ChatAnthropic
 from gwenflow.types import Message
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ def test_invoke_with_tool_calls_mock(monkeypatch):
 
     assert result.finish_reason == "tool_calls"
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].function.name == "my_tool"
+    assert result.tool_calls[0].name == "my_tool"
 
 
 def test_format_messages_extracts_system_prompt():
