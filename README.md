@@ -132,6 +132,28 @@ response = agent.run("Summarize the Wikipedia page about Winston Churchill.")
 print(response.content)
 ```
 
+## Coding Agent
+
+`CodingAgent` is an `Agent` preset that ships with a sandboxed bundle of file, shell, and web-reader tools (`ReadFile`, `EditFile`, `WriteFile`, `Grep`, `Find`, `Ls`, `Shell`, `LocalFileWrite`, `WebsiteReader`). All file and shell operations are scoped to `base_dir`.
+
+```python
+from gwenflow import ChatOpenAI
+from gwenflow.agents import CodingAgent
+
+agent = CodingAgent(
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    base_dir="./my_project",
+)
+
+response = agent.run(
+    "Add a `greet(name)` function to utils.py that returns 'Hello, <name>!', "
+    "then write a pytest test for it and run the test suite."
+)
+print(response.content)
+```
+
+The agent will list files, read the relevant ones, make targeted edits, run the tests via the shell, and report back. Extra tools passed via `tools=` are appended to the bundled set.
+
 ## Structured Output
 
 Pass a Pydantic model as `response_model` and the agent returns a parsed object via `response.parsed`.
