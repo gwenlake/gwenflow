@@ -24,6 +24,41 @@ class ModelResponse:
     def to_message(self) -> Message:
         return Message(**self.to_dict())
 
+    def to_openai(self) -> Dict[str, Any]:
+        """Return this response as an OpenAI ChatCompletion-shaped dict."""
+        message: Dict[str, Any] = {"role": "assistant", "content": self.text}
+
+        if self.thinking is not None:
+            message["reasoning_content"] = self.thinking
+
+        if self.tool_calls:
+            message["tool_calls"] = [tc.to_message_dict() for tc in self.tool_calls]
+
+        completion: Dict[str, Any] = {
+            "id": self.id,
+            "object": "chat.completion",
+            "created": int(self.created_at.timestamp()),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": self.finish_reason,
+                }
+            ],
+        }
+
+        if self.usage is not None:
+            usage_dict: Dict[str, Any] = {
+                "prompt_tokens": self.usage.input_tokens,
+                "completion_tokens": self.usage.output_tokens,
+                "total_tokens": self.usage.total_tokens,
+            }
+            if self.usage.details:
+                usage_dict["completion_tokens_details"] = self.usage.details
+            completion["usage"] = usage_dict
+
+        return completion
+
     @property
     def text(self) -> str | None:
         """Get the text in the response."""

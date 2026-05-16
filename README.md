@@ -103,15 +103,15 @@ print(agent.run("What's the exchange rate of the Euro?").content)
 # 0.9709 EUR per 1 USD (last updated at 15:55 GMT).
 ```
 
-You can also pass tools explicitly at construction time using `FunctionTool.from_function`:
+You can also pass tools explicitly at construction time by wrapping the function with `Tool`:
 
 ```python
-from gwenflow import FunctionTool
+from gwenflow import Tool
 
 agent = Agent(
     name="Finance Agent",
     llm=ChatOpenAI(model="gpt-5-mini"),
-    tools=[FunctionTool.from_function(get_exchange_rate)],
+    tools=[Tool(get_exchange_rate)],
 )
 ```
 

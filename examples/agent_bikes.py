@@ -3,7 +3,7 @@ import json
 import dotenv
 import requests
 
-from gwenflow import Agent, ChatOpenAI, FunctionTool
+from gwenflow import Agent, ChatOpenAI, Tool
 
 dotenv.load_dotenv(override=True)
 
@@ -29,7 +29,7 @@ def get_bike_availability(station_name: str = None) -> str:
         return json.dumps({"error": "Failed to retrieve data"})
 
 
-tool_get_bike_availability = FunctionTool.from_function(get_bike_availability)
+tool_get_bike_availability = Tool(get_bike_availability)
 
 
 llm = ChatOpenAI(model="gpt-4o-mini")

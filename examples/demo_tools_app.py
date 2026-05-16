@@ -3,7 +3,7 @@ import os
 import dotenv
 import requests
 
-from gwenflow import Agent, ChatOpenAI, FunctionTool
+from gwenflow import Agent, ChatOpenAI, Tool
 
 dotenv.load_dotenv(override=True)
 
@@ -42,8 +42,8 @@ def search_cult_movies(topic: str) -> str:
         return str(e)
 
 
-tool_books = FunctionTool.from_function(search_best_books)
-tool_movies = FunctionTool.from_function(search_cult_movies)
+tool_books = Tool(search_best_books)
+tool_movies = Tool(search_cult_movies)
 
 llm = ChatOpenAI(model="gpt-4o-mini")
 
