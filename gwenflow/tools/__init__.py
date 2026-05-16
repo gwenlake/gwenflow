@@ -1,7 +1,18 @@
+from gwenflow.tools.clinicaltrials import ClinicalTrialsTool
+from gwenflow.tools.coding import (
+    EditFileTool,
+    FindTool,
+    GrepTool,
+    LsTool,
+    ReadFileTool,
+    WriteFileTool,
+)
 from gwenflow.tools.docker_code import DockerCodeTool
 from gwenflow.tools.duckduckgo import DuckDuckGoNewsTool, DuckDuckGoSearchTool
+from gwenflow.tools.local_file_system import LocalFileReadTool, LocalFileWriteTool
 from gwenflow.tools.mcp import MCPServer, MCPServerSse, MCPServerSseParams, MCPServerStdio, MCPServerStdioParams
 from gwenflow.tools.pdf import PDFReaderTool
+from gwenflow.tools.pubmed import PubMedTool
 from gwenflow.tools.python import PythonCodeTool
 from gwenflow.tools.retriever import RetrieverTool
 from gwenflow.tools.shell import ShellTool
@@ -25,6 +36,16 @@ __all__ = [
     "WikipediaTool",
     "WebsiteReaderTool",
     "PDFReaderTool",
+    "PubMedTool",
+    "ClinicalTrialsTool",
+    "ReadFileTool",
+    "EditFileTool",
+    "WriteFileTool",
+    "GrepTool",
+    "FindTool",
+    "LsTool",
+    "LocalFileWriteTool",
+    "LocalFileReadTool",
     "DuckDuckGoSearchTool",
     "DuckDuckGoNewsTool",
     "YahooFinanceNews",
