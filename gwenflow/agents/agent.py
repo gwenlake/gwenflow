@@ -15,7 +15,7 @@ from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool, MCPServer, Tool
-from gwenflow.types import AgentResponse, Message, ToolCall, ToolResponse
+from gwenflow.types import AgentResponse, Message, RequestUsage, ToolCall, ToolResponse
 from gwenflow.utils import extract_json_str
 
 
@@ -80,12 +80,44 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+        if self.team:
+            self.tools = list(self.tools) + self._build_handoff_tools()
         if self.tools or self.mcp_servers:
             self.llm.tools = self.get_all_tools()
             self.llm.tool_choice = self.tool_choice
         else:
             self.llm.tools = None
             self.llm.tool_choice = None
+
+    def _build_handoff_tools(self) -> List[BaseTool]:
+        """Expose each team member as a callable tool the orchestrator can invoke."""
+
+        def make_handoff(member: "Agent") -> Callable[[str], str]:
+            def _handoff(task: str) -> str:
+                """Send a task to a teammate agent and return its final answer.
+
+                Args:
+                    task: The full task or question to delegate to the teammate.
+                """
+                response = member.run(task)
+                return response.content or ""
+
+            return _handoff
+
+        tools: List[BaseTool] = []
+        used_names: set[str] = set()
+        for member in self.team or []:
+            slug = re.sub(r"\W+", "_", (member.name or "agent").strip().lower()).strip("_") or "agent"
+            tool_name = f"ask_{slug}"
+            n = 2
+            while tool_name in used_names:
+                tool_name = f"ask_{slug}_{n}"
+                n += 1
+            used_names.add(tool_name)
+
+            desc = member.description or f"Delegate a task to the '{member.name or slug}' agent."
+            tools.append(Tool(make_handoff(member), name=tool_name, description=desc))
+        return tools
 
     def tool(self, func: Callable) -> Callable:
         """Decorator that registers a function as a tool on this agent instance."""
@@ -494,10 +526,11 @@ class Agent:
 
             full_content = ""
             final_tool_calls: List[ToolCall] = []
+            turn_usage = RequestUsage()
 
             for chunk in self.llm.stream(input=messages_for_model):
                 if chunk.usage:
-                    agent_response.usage.add(chunk.usage)
+                    turn_usage += chunk.usage
 
                 agent_response.content = None
 
@@ -509,6 +542,8 @@ class Agent:
                     final_tool_calls = chunk.tool_calls
 
                 yield agent_response
+
+            agent_response.usage.add(turn_usage)
 
             tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
@@ -569,10 +604,11 @@ class Agent:
 
             full_content = ""
             final_tool_calls: List[ToolCall] = []
+            turn_usage = RequestUsage()
 
             async for chunk in self.llm.astream(input=messages_for_model):
                 if chunk.usage:
-                    agent_response.usage.add(chunk.usage)
+                    turn_usage += chunk.usage
 
                 agent_response.content = None
 
@@ -584,6 +620,8 @@ class Agent:
                     final_tool_calls = chunk.tool_calls
 
                 yield agent_response
+
+            agent_response.usage.add(turn_usage)
 
             tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
