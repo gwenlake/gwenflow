@@ -155,7 +155,8 @@ class ChatOpenAI(ChatBase):
             return None
         details = {}
         if hasattr(completion.usage, "completion_tokens_details"):
-            details = completion.usage.completion_tokens_details.model_dump()
+            if completion.usage.completion_tokens_details:
+                details = completion.usage.completion_tokens_details.model_dump()
         return RequestUsage(
             input_tokens=completion.usage.prompt_tokens,
             output_tokens=completion.usage.completion_tokens,
@@ -301,7 +302,7 @@ class ChatOpenAI(ChatBase):
                                     _full_tool_calls[-1].arguments += tc.function.arguments
                             else:
                                 _full_tool_calls.append(
-                                    ToolCall(id=tc.id, function=tc.function.name, arguments=tc.function.arguments)
+                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
                                 )
 
                     if _full_tool_calls:
