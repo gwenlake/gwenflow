@@ -41,6 +41,14 @@ class ChatBase(ABC):
     async def astream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
         pass
 
+    async def aclose(self) -> None:
+        """Close the async client (if any) so its httpx connection pool is shut down
+        on the current event loop. Prevents 'Event loop is closed' warnings at teardown."""
+        async_client = getattr(self, "async_client", None)
+        if async_client is not None:
+            await async_client.close()
+            self.async_client = None
+
     def get_context_size(self) -> int:
         return int(MODELS.get(self.model, {}).get("context_window", DEFAULT_CONTEXT_SIZE) * 0.75)
 

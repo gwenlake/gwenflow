@@ -2,12 +2,33 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from pydantic import Discriminator
+from enum import Enum
+from typing import Any, Annotated
 
 from gwenflow.types.message import Message, MessageContent, TextContent, ThinkingContent, ToolCall
 from gwenflow.types.usage import AgentUsage, RequestUsage
 from gwenflow.utils.utils import now_utc
 
+
+@dataclass
+class ToolResponse:
+    tool_name: str
+    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+    tool_call_error: bool | None = None
+    content: str | None = None
+    created_at: datetime = field(default_factory=now_utc)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_message(self) -> Message:
+        return Message(
+            role="tool",
+            tool_call_id=self.tool_call_id,
+            content=self.content,
+        )
 
 @dataclass
 class ModelResponse:
@@ -18,15 +39,12 @@ class ModelResponse:
     usage: RequestUsage = field(default_factory=RequestUsage)
     created_at: datetime = field(default_factory=now_utc)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    def to_message(self) -> Message:
-        return Message(**self.to_dict())
-
-    def to_openai(self) -> Dict[str, Any]:
+    def to_openai(self) -> dict[str, Any]:
         """Return this response as an OpenAI ChatCompletion-shaped dict."""
-        message: Dict[str, Any] = {"role": "assistant", "content": self.text}
+        message: dict[str, Any] = {"role": "assistant", "content": self.text}
 
         if self.thinking is not None:
             message["reasoning_content"] = self.thinking
@@ -34,7 +52,7 @@ class ModelResponse:
         if self.tool_calls:
             message["tool_calls"] = [tc.to_message_dict() for tc in self.tool_calls]
 
-        completion: Dict[str, Any] = {
+        completion: dict[str, Any] = {
             "id": self.id,
             "object": "chat.completion",
             "created": int(self.created_at.timestamp()),
@@ -48,7 +66,7 @@ class ModelResponse:
         }
 
         if self.usage is not None:
-            usage_dict: Dict[str, Any] = {
+            usage_dict: dict[str, Any] = {
                 "prompt_tokens": self.usage.input_tokens,
                 "completion_tokens": self.usage.output_tokens,
                 "total_tokens": self.usage.total_tokens,
@@ -89,37 +107,91 @@ class ModelResponse:
         return "\n\n".join(thinking_parts)
 
     @property
-    def tool_calls(self) -> List[ToolCall]:
+    def tool_calls(self) -> list[ToolCall]:
         return [part for part in self.parts if isinstance(part, ToolCall)]
 
+class AgentEventType(str, Enum):
+    STARTED = "started"
+    COMPLETED = "completed"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+    CONTENT = "content"
+    THINKING = "thinking"
+    TOOL_STARTED = "tool_started"
+    TOOL_COMPLETED = "tool_completed"
+
+@dataclass(kw_only=True)
+class BaseAgentEvent:
+    agent_id: str
+    run_id: str
+    event_type: str
+    content: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=now_utc)
+
+@dataclass(kw_only=True)
+class AgentEventStarted(BaseAgentEvent):
+    event_type: str = AgentEventType.STARTED.value
+
+@dataclass(kw_only=True)
+class AgentEventCompleted(BaseAgentEvent):
+    event_type: str = AgentEventType.COMPLETED.value
+
+@dataclass(kw_only=True)
+class AgentEventError(BaseAgentEvent):
+    event_type: str = AgentEventType.ERROR.value
+
+@dataclass(kw_only=True)
+class AgentEventCancelled(BaseAgentEvent):
+    event_type: str = AgentEventType.CANCELLED.value
+
+@dataclass(kw_only=True)
+class AgentEventContent(BaseAgentEvent):
+    event_type: str = AgentEventType.CONTENT.value
+
+@dataclass(kw_only=True)
+class AgentEventThinking(BaseAgentEvent):
+    event_type: str = AgentEventType.THINKING.value
+
+@dataclass(kw_only=True)
+class AgentEventToolStarted(BaseAgentEvent):
+    event_type: str = AgentEventType.TOOL_STARTED.value
+    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_name: str | None = None
+    tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+
+@dataclass(kw_only=True)
+class AgentEventToolCompleted(BaseAgentEvent):
+    event_type: str = AgentEventType.TOOL_COMPLETED.value
+    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_name: str | None = None
+    tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+
+AgentResponseEvent = Annotated[
+    AgentEventStarted
+    | AgentEventCompleted
+    | AgentEventError
+    | AgentEventCancelled
+    | AgentEventContent
+    | AgentEventThinking
+    | AgentEventToolStarted
+    | AgentEventToolCompleted,
+    Discriminator("event_type"),
+]
 
 @dataclass
 class AgentResponse:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    agent_id: str
+    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     content: str | None = None
     parsed: Any | None = None
     reasoning_content: str | None = None
     messages: list[Message] = field(default_factory=list)
+    events: list[AgentResponseEvent] = field(default_factory=list)
     finish_reason: str | None = None
     usage: AgentUsage = field(default_factory=AgentUsage)
     created_at: datetime = field(default_factory=now_utc)
 
-
-@dataclass
-class ToolResponse:
-    tool_call_id: str
-    tool_name: str
-    tool_args: Optional[Dict[str, Any]] = None
-    tool_call_error: Optional[bool] = None
-    content: str | None = None
-    created_at: datetime = field(default_factory=now_utc)
-
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    def to_message(self) -> Message:
-        return Message(
-            role="tool",
-            tool_call_id=self.tool_call_id,
-            content=self.content,
-        )
