@@ -11,7 +11,7 @@ from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
 from gwenflow.tools import Tool
 from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
-from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
+from gwenflow.utils import extract_json_str
 
 
 @dataclass(kw_only=True)
@@ -74,14 +74,6 @@ class ChatAnthropic(ChatBase):
             else:
                 model_params["tool_choice"] = {"type": "auto"}
 
-        if self.response_format:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                raw_schema = self.response_format.model_json_schema()
-                strict_schema = make_pydantic_schema_strict_json(raw_schema)
-
-                model_params["output_config"] = {"format": {"type": "json_schema", "schema": strict_schema}}
-            else:
-                model_params["output_config"] = self.response_format
         return {k: v for k, v in model_params.items() if v is not None}
 
     def _tool_to_anthropic(self, tool: Tool) -> Dict[str, Any]:
@@ -256,7 +248,7 @@ class ChatAnthropic(ChatBase):
                             yield response
                         elif event.delta.type == "input_json_delta":
                             if event.index in _full_tool_calls:
-                                _full_tool_calls[event.index].function.arguments += event.delta.partial_json
+                                _full_tool_calls[event.index].arguments += event.delta.partial_json
                         elif event.delta.type == "thinking_delta":
                             response.parts.append(ThinkingContent(content=event.delta.thinking))
                             yield response
@@ -265,7 +257,7 @@ class ChatAnthropic(ChatBase):
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
                                 response.parts.append(
-                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+                                    ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
                                 )
                             response.finish_reason = "tool_calls"
                             yield response
@@ -309,7 +301,7 @@ class ChatAnthropic(ChatBase):
                             yield response
                         elif event.delta.type == "input_json_delta":
                             if event.index in _full_tool_calls:
-                                _full_tool_calls[event.index].function.arguments += event.delta.partial_json
+                                _full_tool_calls[event.index].arguments += event.delta.partial_json
                         elif event.delta.type == "thinking_delta":
                             response.parts.append(ThinkingContent(content=event.delta.thinking))
                             yield response
@@ -318,7 +310,7 @@ class ChatAnthropic(ChatBase):
                         if event.delta.stop_reason == "tool_use" and _full_tool_calls:
                             for tc in _full_tool_calls.values():
                                 response.parts.append(
-                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
+                                    ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
                                 )
                             response.finish_reason = "tool_calls"
                             yield response

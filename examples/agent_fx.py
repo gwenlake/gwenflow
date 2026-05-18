@@ -3,7 +3,7 @@ import json
 import dotenv
 import requests
 
-from gwenflow import Agent, ChatOpenAI, FunctionTool
+from gwenflow import Agent, ChatOpenAI, Tool
 
 dotenv.load_dotenv(override=True)
 
@@ -19,7 +19,7 @@ def get_exchange_rate(currency_iso: str) -> str:
     return "Currency not found"
 
 
-tool_get_exchange_rate = FunctionTool.from_function(get_exchange_rate)
+tool_get_exchange_rate = Tool(get_exchange_rate)
 
 
 llm = ChatOpenAI(model="gpt-4o-mini")

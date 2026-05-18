@@ -26,6 +26,19 @@ class RequestUsage:
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    def __iadd__(self, other: RequestUsage) -> RequestUsage:
+        self.input_tokens += other.input_tokens
+        self.cache_write_tokens += other.cache_write_tokens
+        self.cache_read_tokens += other.cache_read_tokens
+        self.input_audio_tokens += other.input_audio_tokens
+        self.cache_audio_read_tokens += other.cache_audio_read_tokens
+        self.output_audio_tokens += other.output_audio_tokens
+        self.output_tokens += other.output_tokens
+        for key, value in other.details.items():
+            if isinstance(value, (int, float)):
+                self.details[key] = self.details.get(key, 0) + value
+        return self
+
 
 @dataclass(kw_only=True)
 class AgentUsage(RequestUsage):

@@ -37,6 +37,7 @@ class TavilyWebSearchTool(TavilyTool):
 
     def _run(self, query: str = Field(description="Query to search for.")):
         response = self.client.search(query=query, search_depth=self.search_depth, max_results=self.max_results)
+
         return [
             {
                 "title": r["title"],

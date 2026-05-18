@@ -103,15 +103,15 @@ print(agent.run("What's the exchange rate of the Euro?").content)
 # 0.9709 EUR per 1 USD (last updated at 15:55 GMT).
 ```
 
-You can also pass tools explicitly at construction time using `FunctionTool.from_function`:
+You can also pass tools explicitly at construction time by wrapping the function with `Tool`:
 
 ```python
-from gwenflow import FunctionTool
+from gwenflow import Tool
 
 agent = Agent(
     name="Finance Agent",
     llm=ChatOpenAI(model="gpt-5-mini"),
-    tools=[FunctionTool.from_function(get_exchange_rate)],
+    tools=[Tool(get_exchange_rate)],
 )
 ```
 
@@ -131,6 +131,28 @@ agent = Agent(
 response = agent.run("Summarize the Wikipedia page about Winston Churchill.")
 print(response.content)
 ```
+
+## Coding Agent
+
+`CodingAgent` is an `Agent` preset that ships with a sandboxed bundle of file, shell, and web-reader tools (`ReadFile`, `EditFile`, `WriteFile`, `Grep`, `Find`, `Ls`, `Shell`, `LocalFileWrite`, `WebsiteReader`). All file and shell operations are scoped to `base_dir`.
+
+```python
+from gwenflow import ChatOpenAI
+from gwenflow.agents import CodingAgent
+
+agent = CodingAgent(
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    base_dir="./my_project",
+)
+
+response = agent.run(
+    "Add a `greet(name)` function to utils.py that returns 'Hello, <name>!', "
+    "then write a pytest test for it and run the test suite."
+)
+print(response.content)
+```
+
+The agent will list files, read the relevant ones, make targeted edits, run the tests via the shell, and report back. Extra tools passed via `tools=` are appended to the bundled set.
 
 ## Structured Output
 
@@ -191,6 +213,59 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Multi-Agent Orchestration
+
+Give an agent a `team` of specialist agents and it becomes an orchestrator. Each teammate is exposed to the orchestrator's LLM as a handoff tool named `ask_<slug>`, with the teammate's `description` as the tool description. The orchestrator decides who to delegate to, calls them, and synthesises the final answer.
+
+```python
+from gwenflow import Agent, ChatOpenAI, Tool
+
+
+def get_weather(city: str) -> str:
+    """Return the current weather for a city."""
+    return f"Sunny and 22C in {city}"
+
+
+def get_population(city: str) -> str:
+    """Return the population of a city."""
+    return {"Paris": "2.1 million", "Tokyo": "13.9 million"}.get(city, "unknown")
+
+
+weather_agent = Agent(
+    name="weather_agent",
+    description="Knows the current weather in any city.",
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    tools=[Tool(get_weather)],
+)
+
+demographics_agent = Agent(
+    name="demographics_agent",
+    description="Knows the population of cities.",
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    tools=[Tool(get_population)],
+)
+
+orchestrator = Agent(
+    name="orchestrator",
+    instructions=[
+        "You manage a team of specialist agents.",
+        "Delegate sub-tasks to the right teammate via the ask_* tools.",
+        "Then synthesise a final answer for the user.",
+    ],
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    team=[weather_agent, demographics_agent],
+)
+
+response = orchestrator.run(
+    "One-sentence travel briefing for Paris: weather and population."
+)
+print(response.content)
+# Travel briefing — Paris: currently sunny and about 22°C,
+# and the city proper has roughly 2.1 million residents.
+```
+
+Each teammate's `name` becomes the handoff tool slug and its `description` tells the orchestrator when to delegate to it — write descriptions like a job blurb.
 
 ## Multi-Agent Flows
 

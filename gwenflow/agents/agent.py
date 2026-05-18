@@ -15,7 +15,19 @@ from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool, MCPServer, Tool
-from gwenflow.types import AgentResponse, Message, ToolCall, ToolResponse
+from gwenflow.types import (
+    AgentEventCompleted,
+    AgentEventContent,
+    AgentEventStarted,
+    AgentEventThinking,
+    AgentEventToolCompleted,
+    AgentEventToolStarted,
+    AgentResponse,
+    Message,
+    RequestUsage,
+    ToolCall,
+    ToolResponse,
+)
 from gwenflow.utils import extract_json_str
 
 
@@ -80,12 +92,44 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+        if self.team:
+            self.tools = list(self.tools) + self._build_handoff_tools()
         if self.tools or self.mcp_servers:
             self.llm.tools = self.get_all_tools()
             self.llm.tool_choice = self.tool_choice
         else:
             self.llm.tools = None
             self.llm.tool_choice = None
+
+    def _build_handoff_tools(self) -> List[BaseTool]:
+        """Expose each team member as a callable tool the orchestrator can invoke."""
+
+        def make_handoff(member: "Agent") -> Callable[[str], str]:
+            def _handoff(task: str) -> str:
+                """Send a task to a teammate agent and return its final answer.
+
+                Args:
+                    task: The full task or question to delegate to the teammate.
+                """
+                response = member.run(task)
+                return response.content or ""
+
+            return _handoff
+
+        tools: List[BaseTool] = []
+        used_names: set[str] = set()
+        for member in self.team or []:
+            slug = re.sub(r"\W+", "_", (member.name or "agent").strip().lower()).strip("_") or "agent"
+            tool_name = f"ask_{slug}"
+            n = 2
+            while tool_name in used_names:
+                tool_name = f"ask_{slug}_{n}"
+                n += 1
+            used_names.add(tool_name)
+
+            desc = member.description or f"Delegate a task to the '{member.name or slug}' agent."
+            tools.append(Tool(make_handoff(member), name=tool_name, description=desc))
+        return tools
 
     def tool(self, func: Callable) -> Callable:
         """Decorator that registers a function as a tool on this agent instance."""
@@ -336,7 +380,11 @@ class Agent:
         task = messages[-1].content
 
         # init agent response
-        agent_response = AgentResponse()
+        agent_response = AgentResponse(agent_id=self.id)
+        agent_response.events.append(AgentEventStarted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        ))
 
         # history
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
@@ -348,6 +396,12 @@ class Agent:
             response = self.reason(messages_for_reasoning_model)
             agent_response.reasoning_content = response.reasoning_content
             agent_response.usage.add(response.usage)
+            if response.reasoning_content:
+                agent_response.events.append(AgentEventThinking(
+                    agent_id=self.id,
+                    run_id=agent_response.run_id,
+                    content=response.reasoning_content,
+                ))
 
         num_turns_available = self.max_turns
 
@@ -362,6 +416,13 @@ class Agent:
 
             # usage
             agent_response.usage.add(response.usage)
+
+            if response.content:
+                agent_response.events.append(AgentEventContent(
+                    agent_id=self.id,
+                    run_id=agent_response.run_id,
+                    content=response.content,
+                ))
 
             # keep answer in memory
             tool_calls = [t.to_message_dict() for t in response.tool_calls]
@@ -386,14 +447,37 @@ class Agent:
 
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
+                for tool_call in response.tool_calls:
+                    args = tool_call.arguments
+                    if not isinstance(args, dict):
+                        args = json.loads(args)
+                    agent_response.events.append(AgentEventToolStarted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        tool_args=args,
+                    ))
+
                 tool_messages = self.execute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                    agent_response.events.append(AgentEventToolCompleted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=m.tool_call_id,
+                        content=m.content,
+                    ))
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
+
+        agent_response.events.append(AgentEventCompleted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        ))
 
         agent_response.finish_reason = "stop"
 
@@ -408,7 +492,11 @@ class Agent:
         messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
-        agent_response = AgentResponse()
+        agent_response = AgentResponse(agent_id=self.id)
+        agent_response.events.append(AgentEventStarted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        ))
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
@@ -418,6 +506,12 @@ class Agent:
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
             agent_response.reasoning_content = reasoning_agent_response.reasoning_content
             agent_response.usage.add(reasoning_agent_response.usage)
+            if reasoning_agent_response.reasoning_content:
+                agent_response.events.append(AgentEventThinking(
+                    agent_id=self.id,
+                    run_id=agent_response.run_id,
+                    content=reasoning_agent_response.reasoning_content,
+                ))
 
         num_turns_available = self.max_turns
 
@@ -430,6 +524,13 @@ class Agent:
 
             # usage
             agent_response.usage.add(response.usage)
+
+            if response.content:
+                agent_response.events.append(AgentEventContent(
+                    agent_id=self.id,
+                    run_id=agent_response.run_id,
+                    content=response.content,
+                ))
 
             tool_calls = [t.to_message_dict() for t in response.tool_calls]
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
@@ -452,14 +553,37 @@ class Agent:
 
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
+                for tool_call in response.tool_calls:
+                    args = tool_call.arguments
+                    if not isinstance(args, dict):
+                        args = json.loads(args)
+                    agent_response.events.append(AgentEventToolStarted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        tool_args=args,
+                    ))
+
                 tool_messages = await self.aexecute_tool_calls(tool_calls=response.tool_calls)
                 for m in tool_messages:
                     agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                    agent_response.events.append(AgentEventToolCompleted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=m.tool_call_id,
+                        content=m.content,
+                    ))
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
+
+        agent_response.events.append(AgentEventCompleted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        ))
 
         agent_response.finish_reason = "stop"
 
@@ -474,7 +598,13 @@ class Agent:
         messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
-        agent_response = AgentResponse()
+        agent_response = AgentResponse(agent_id=self.id)
+        event = AgentEventStarted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        )
+        agent_response.events.append(event)
+        yield event
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
@@ -484,6 +614,13 @@ class Agent:
             reasoning_response = self.reason(messages_for_reasoning_model)
             agent_response.reasoning_content = reasoning_response.reasoning_content
             agent_response.usage.add(reasoning_response.usage)
+            event = AgentEventThinking(
+                agent_id=self.id,
+                run_id=agent_response.run_id,
+                content=reasoning_response.reasoning_content
+            )
+            agent_response.events.append(event)
+            yield event
 
         num_turns_available = self.max_turns
 
@@ -494,21 +631,29 @@ class Agent:
 
             full_content = ""
             final_tool_calls: List[ToolCall] = []
+            turn_usage = RequestUsage()
 
             for chunk in self.llm.stream(input=messages_for_model):
                 if chunk.usage:
-                    agent_response.usage.add(chunk.usage)
+                    turn_usage += chunk.usage
 
                 agent_response.content = None
 
                 if chunk.content:
                     agent_response.content = chunk.content
                     full_content += chunk.content
+                    event = AgentEventContent(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        content=chunk.content
+                    )
+                    agent_response.events.append(event)
+                    yield event
 
                 if chunk.tool_calls:
                     final_tool_calls = chunk.tool_calls
 
-                yield agent_response
+            agent_response.usage.add(turn_usage)
 
             tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
@@ -520,11 +665,35 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
+
+                for tool_call in final_tool_calls:
+                    args = tool_call.arguments
+                    if not isinstance(args, dict):
+                        args = json.loads(args)
+                    event = AgentEventToolStarted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        tool_args=args,
+                    )
+                    agent_response.events.append(event)
+                    yield event
+
                 tool_messages = self.execute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
                     agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                    event = AgentEventToolCompleted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=m.tool_call_id,
+                        content=m.content
+                    )
+                    agent_response.events.append(event)
+                    yield event
+
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -535,6 +704,13 @@ class Agent:
             except Exception as e:
                 logger.error(f"Failed to parse JSON response: {e}")
                 agent_response.parsed = {"error": f"Parse error: {str(e)}"}
+
+        event = AgentEventCompleted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        )
+        agent_response.events.append(event)
+        yield event
 
         agent_response.finish_reason = "stop"
 
@@ -549,7 +725,13 @@ class Agent:
         messages = self.llm.input_to_message_list(input)
         task = messages[-1].content
 
-        agent_response = AgentResponse()
+        agent_response = AgentResponse(agent_id=self.id)
+        event = AgentEventStarted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        )
+        agent_response.events.append(event)
+        yield event
 
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.add_messages(messages)
@@ -559,6 +741,13 @@ class Agent:
             reasoning_response = await self.areason(messages_for_reasoning_model)
             agent_response.reasoning_content = reasoning_response.reasoning_content
             agent_response.usage.add(reasoning_response.usage)
+            event = AgentEventThinking(
+                agent_id=self.id,
+                run_id=agent_response.run_id,
+                content=reasoning_response.reasoning_content
+            )
+            agent_response.events.append(event)
+            yield event
 
         num_turns_available = self.max_turns
 
@@ -569,21 +758,29 @@ class Agent:
 
             full_content = ""
             final_tool_calls: List[ToolCall] = []
+            turn_usage = RequestUsage()
 
             async for chunk in self.llm.astream(input=messages_for_model):
                 if chunk.usage:
-                    agent_response.usage.add(chunk.usage)
+                    turn_usage += chunk.usage
 
                 agent_response.content = None
 
                 if chunk.content:
                     agent_response.content = chunk.content
                     full_content += chunk.content
+                    event = AgentEventContent(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        content=chunk.content
+                    )
+                    agent_response.events.append(event)
+                    yield event
 
                 if chunk.tool_calls:
                     final_tool_calls = chunk.tool_calls
 
-                yield agent_response
+            agent_response.usage.add(turn_usage)
 
             tool_calls_dicts = [t.to_message_dict() for t in final_tool_calls]
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
@@ -595,11 +792,35 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
+
+                for tool_call in final_tool_calls:
+                    args = tool_call.arguments
+                    if not isinstance(args, dict):
+                        args = json.loads(args)
+                    event = AgentEventToolStarted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        tool_args=args,
+                    )
+                    agent_response.events.append(event)
+                    yield event
+
                 tool_messages = await self.aexecute_tool_calls(tool_calls=final_tool_calls)
                 for m in tool_messages:
                     agent_response.usage.tool_calls += 1
                     self.history.add_message(m)
                     agent_response.messages.append(m)
+                    event = AgentEventToolCompleted(
+                        agent_id=self.id,
+                        run_id=agent_response.run_id,
+                        tool_call_id=m.tool_call_id,
+                        content=m.content
+                    )
+                    agent_response.events.append(event)
+                    yield event
+
 
             if self.tool_choice == "required":
                 self.tool_choice = "auto"
@@ -610,6 +831,13 @@ class Agent:
             except Exception as e:
                 logger.error(f"Failed to parse JSON response: {e}")
                 agent_response.parsed = {"error": f"Parse error: {str(e)}"}
+
+        event = AgentEventCompleted(
+            agent_id=self.id,
+            run_id=agent_response.run_id,
+        )
+        agent_response.events.append(event)
+        yield event
 
         agent_response.finish_reason = "stop"
 
