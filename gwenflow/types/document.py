@@ -6,6 +6,13 @@ from typing import Any
 
 
 class DocumentCreationMode(str, enum.Enum):
+    """Granularity at which Readers split source files into Documents.
+
+    A single PDF can become one Document (whole-file), one per page, or one per
+    detected element (paragraph, table, figure). Choice impacts retrieval
+    precision vs. context size at query time.
+    """
+
     ONE_DOC_PER_FILE = "one-doc-per-file"
     ONE_DOC_PER_PAGE = "one-doc-per-page"
     ONE_DOC_PER_ELEMENT = "one-doc-per-element"
@@ -13,6 +20,14 @@ class DocumentCreationMode(str, enum.Enum):
 
 @dataclass(kw_only=True)
 class Document:
+    """A retrievable unit of text with metadata, used by the RAG pipeline.
+
+    Produced by Readers (PDF, DOCX, etc.) and indexed by vector stores. `id`
+    defaults to an MD5 of `content` so the same chunk re-ingested keeps a
+    stable identity. `embedding` is populated by the embedding model; `score`
+    is set when the document comes back from a retriever ranked by similarity.
+    """
+
     id: str | None = None
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)

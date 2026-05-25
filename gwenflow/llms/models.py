@@ -55,7 +55,7 @@ MODELS: dict[str, ModelInfo] = {
     "gemini-1.5-flash": {"context_window": 1048576, "reasoning": False},
     # --- DEEPSEEK ---
     "deepseek-chat": {"context_window": 128000, "reasoning": False},
-    "deepseek-r1": {"context_window": 128000, "reasoning": True},
+    "deepseek-reasoner": {"context_window": 128000, "reasoning": True},
     # --- META ---
     "llama-3.1-70b-versatile": {"context_window": 131072, "reasoning": False},
     "llama-3.1-8b-instant": {"context_window": 131072, "reasoning": False},

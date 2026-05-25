@@ -1,8 +1,9 @@
 import json
 import os
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -13,8 +14,148 @@ from gwenflow.llms.base import ChatBase
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.tools import Tool
-from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
+from gwenflow.types import (
+    AudioContent,
+    Message,
+    ModelResponse,
+    RequestUsage,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+)
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+
+def _split_think_tags(content: str) -> Tuple[Optional[str], str]:
+    """Pull <think>...</think> blocks out of a full string.
+
+    Returns (thinking_or_None, remaining_text). Used as a fallback for local
+    models (Gemma 3, Qwen3, DeepSeek-R1 distills) whose servers emit reasoning
+    inline rather than in a dedicated `reasoning_content` field.
+    """
+    blocks = _THINK_BLOCK_RE.findall(content)
+    if not blocks:
+        return None, content
+    remaining = _THINK_BLOCK_RE.sub("", content).strip()
+    thinking = "\n\n".join(b.strip() for b in blocks)
+    return thinking, remaining
+
+
+class _ThinkTagStreamExtractor:
+    """Streaming state machine that splits <think>...</think> from text chunks.
+
+    Tags can straddle chunk boundaries, so we keep a small tail buffer
+    (len(tag) - 1 chars) before emitting, to avoid mis-classifying a partial tag.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, text: str) -> List[Tuple[str, str]]:
+        self._buf += text
+        out: List[Tuple[str, str]] = []
+        while self._buf:
+            if self._in_think:
+                idx = self._buf.find(_THINK_CLOSE)
+                if idx == -1:
+                    safe = len(self._buf) - (len(_THINK_CLOSE) - 1)
+                    if safe > 0:
+                        out.append(("thinking", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+                if idx > 0:
+                    out.append(("thinking", self._buf[:idx]))
+                self._buf = self._buf[idx + len(_THINK_CLOSE) :]
+                self._in_think = False
+            else:
+                idx = self._buf.find(_THINK_OPEN)
+                if idx == -1:
+                    safe = len(self._buf) - (len(_THINK_OPEN) - 1)
+                    if safe > 0:
+                        out.append(("text", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+                if idx > 0:
+                    out.append(("text", self._buf[:idx]))
+                self._buf = self._buf[idx + len(_THINK_OPEN) :]
+                self._in_think = True
+        return out
+
+    def flush(self) -> List[Tuple[str, str]]:
+        if not self._buf:
+            return []
+        kind = "thinking" if self._in_think else "text"
+        out = [(kind, self._buf)]
+        self._buf = ""
+        return out
+
+
+def _audio_delta_to_part(audio: Any) -> Optional[AudioContent]:
+    """Build an AudioContent from a streaming `delta.audio` chunk (gpt-4o-audio).
+
+    Returns None when the delta carries no payload. The chunk shape is roughly
+    {id?, data?, transcript?, expires_at?}; we surface the base64 data and/or
+    transcript fragment and stash id/expires_at in `extra` so downstream
+    consumers can correlate chunks belonging to the same audio response.
+    """
+    if audio is None:
+        return None
+    data = getattr(audio, "data", None) or ""
+    transcript = getattr(audio, "transcript", None)
+    if not data and not transcript:
+        return None
+    extra: Dict[str, Any] = {}
+    for attr in ("id", "expires_at"):
+        val = getattr(audio, attr, None)
+        if val is not None:
+            extra[attr] = val
+    return AudioContent(data=data, transcript=transcript, extra=extra)
+
+
+def response_to_openai_dict(response: ModelResponse) -> Dict[str, Any]:
+    """Serialize a ModelResponse to an OpenAI ChatCompletion-shaped dict.
+
+    Thinking goes into `message.reasoning` (the field used by gpt-5 / o-series
+    via Chat Completions). For the DeepSeek `reasoning_content` variant, use
+    `response_to_deepseek_dict` from `gwenflow.llms.deepseek`.
+    """
+    message: Dict[str, Any] = {"role": "assistant", "content": response.text}
+
+    if response.thinking is not None:
+        message["reasoning"] = response.thinking
+
+    if response.tool_calls:
+        message["tool_calls"] = [tc.to_message_dict() for tc in response.tool_calls]
+
+    completion: Dict[str, Any] = {
+        "id": response.id,
+        "object": "chat.completion",
+        "created": int(response.created_at.timestamp()),
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": response.finish_reason,
+            }
+        ],
+    }
+
+    if response.usage is not None:
+        usage_dict: Dict[str, Any] = {
+            "prompt_tokens": response.usage.input_tokens,
+            "completion_tokens": response.usage.output_tokens,
+            "total_tokens": response.usage.total_tokens,
+        }
+        if response.usage.details:
+            usage_dict["completion_tokens_details"] = response.usage.details
+        completion["usage"] = usage_dict
+
+    return completion
 
 
 @dataclass(kw_only=True)
@@ -35,6 +176,15 @@ class ChatOpenAI(ChatBase):
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
+
+    # reasoning / thinking
+    reasoning_effort: Optional[str] = None
+    """For gpt-5 / o-series reasoning models: 'minimal' | 'low' | 'medium' | 'high'."""
+
+    extract_think_tags: bool = False
+    """If True, extract inline <think>...</think> blocks from content into thinking parts.
+    Use for local models served via OpenAI-compatible APIs (Gemma 3, Qwen3,
+    DeepSeek-R1 distills) when the server doesn't expose a `reasoning_content` field."""
 
     # clients
     client: Optional[OpenAI] = None
@@ -86,6 +236,7 @@ class ChatOpenAI(ChatBase):
             "seed": self.seed,
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
+            "reasoning_effort": self.reasoning_effort,
         }
 
         if self.tools and self.tool_type == "fncall":
@@ -166,11 +317,47 @@ class ChatOpenAI(ChatBase):
     def _parse_response(self, completion: ChatCompletion) -> ModelResponse:
         parts = []
         for block in completion.choices:
-            if block.message.content:
-                parts.append(TextContent(content=block.message.content))
-            if hasattr(block.message, "reasoning_content"):
-                parts.append(ThinkingContent(content=block.message.content))
-            tool_calls = block.message.tool_calls
+            msg = block.message
+
+            # Native reasoning fields, in priority order:
+            #   - reasoning_content: DeepSeek-R1, Mistral Magistral, vLLM/Ollama
+            #     servers with --reasoning-parser
+            #   - reasoning: OpenAI gpt-5 / o-series via Chat Completions,
+            #     OpenRouter passthrough
+            reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
+
+            content = msg.content
+
+            # Fallback for local models that emit <think>...</think> inline
+            if self.extract_think_tags and content:
+                tag_thinking, content = _split_think_tags(content)
+                if tag_thinking and not reasoning:
+                    reasoning = tag_thinking
+
+            if reasoning:
+                parts.append(ThinkingContent(content=reasoning))
+            if content:
+                parts.append(TextContent(content=content))
+
+            # Audio output (gpt-4o-audio-preview): `message.audio` carries
+            # base64 audio data + optional transcript + provider id/expiry in extra.
+            audio = getattr(msg, "audio", None)
+            if audio is not None and getattr(audio, "data", None):
+                extra: Dict[str, Any] = {}
+                for attr in ("id", "expires_at"):
+                    val = getattr(audio, attr, None)
+                    if val is not None:
+                        extra[attr] = val
+                parts.append(
+                    AudioContent(
+                        data=audio.data,
+                        format=getattr(audio, "format", "wav") or "wav",
+                        transcript=getattr(audio, "transcript", None),
+                        extra=extra,
+                    )
+                )
+
+            tool_calls = msg.tool_calls
             if tool_calls is not None and len(tool_calls) > 0:
                 try:
                     tool_calls = [
@@ -232,6 +419,7 @@ class ChatOpenAI(ChatBase):
             )
 
             _full_tool_calls = []
+            think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             for chunk in completion:
                 response = ModelResponse()
@@ -239,8 +427,26 @@ class ChatOpenAI(ChatBase):
                 if chunk.choices:
                     delta: ChoiceDelta = chunk.choices[0].delta
 
-                    if hasattr(delta, "content") and delta.content:
-                        response.parts.append(TextContent(content=delta.content))
+                    reasoning_delta = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if reasoning_delta:
+                        response.parts.append(ThinkingContent(content=reasoning_delta))
+
+                    content_delta = getattr(delta, "content", None)
+                    if content_delta:
+                        if think_extractor is not None:
+                            for kind, segment in think_extractor.feed(content_delta):
+                                if not segment:
+                                    continue
+                                if kind == "thinking":
+                                    response.parts.append(ThinkingContent(content=segment))
+                                else:
+                                    response.parts.append(TextContent(content=segment))
+                        else:
+                            response.parts.append(TextContent(content=content_delta))
+
+                    audio_part = _audio_delta_to_part(getattr(delta, "audio", None))
+                    if audio_part is not None:
+                        response.parts.append(audio_part)
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tc in delta.tool_calls or []:
@@ -257,7 +463,12 @@ class ChatOpenAI(ChatBase):
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
 
-                    if response.content or response.thinking:
+                    has_streamable = (
+                        response.content
+                        or response.thinking
+                        or any(isinstance(p, AudioContent) for p in response.parts)
+                    )
+                    if has_streamable:
                         yield response
                     elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
                         yield response
@@ -283,6 +494,7 @@ class ChatOpenAI(ChatBase):
             )
 
             _full_tool_calls = []
+            think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             async for chunk in completion:
                 response = ModelResponse()
@@ -290,8 +502,26 @@ class ChatOpenAI(ChatBase):
                 if chunk.choices:
                     delta: ChoiceDelta = chunk.choices[0].delta
 
-                    if hasattr(delta, "content") and delta.content:
-                        response.parts.append(TextContent(content=delta.content))
+                    reasoning_delta = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if reasoning_delta:
+                        response.parts.append(ThinkingContent(content=reasoning_delta))
+
+                    content_delta = getattr(delta, "content", None)
+                    if content_delta:
+                        if think_extractor is not None:
+                            for kind, segment in think_extractor.feed(content_delta):
+                                if not segment:
+                                    continue
+                                if kind == "thinking":
+                                    response.parts.append(ThinkingContent(content=segment))
+                                else:
+                                    response.parts.append(TextContent(content=segment))
+                        else:
+                            response.parts.append(TextContent(content=content_delta))
+
+                    audio_part = _audio_delta_to_part(getattr(delta, "audio", None))
+                    if audio_part is not None:
+                        response.parts.append(audio_part)
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tc in delta.tool_calls or []:
@@ -308,7 +538,12 @@ class ChatOpenAI(ChatBase):
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
 
-                    if response.content or response.thinking:
+                    has_streamable = (
+                        response.content
+                        or response.thinking
+                        or any(isinstance(p, AudioContent) for p in response.parts)
+                    )
+                    if has_streamable:
                         yield response
                     elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
                         yield response
