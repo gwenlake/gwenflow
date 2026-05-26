@@ -48,12 +48,78 @@ print(response.text)
 Swap providers with a single import — the agent API is identical across all of them.
 
 ```python
-from gwenflow import ChatOpenAI, ChatAnthropic, ChatOllama
+from gwenflow import (
+    ChatOpenAI, ChatAnthropic, ChatGoogle, ChatMistral,
+    ChatDeepSeek, ChatOllama, ChatAzureOpenAI, ChatGwenlake,
+)
 
-openai_llm   = ChatOpenAI(model="gpt-5-mini")
+openai_llm    = ChatOpenAI(model="gpt-5-mini")
 anthropic_llm = ChatAnthropic(model="claude-sonnet-4-6")
-local_llm    = ChatOllama(model="llama3.2")
+google_llm    = ChatGoogle(model="gemini-2.5-flash")
+mistral_llm   = ChatMistral(model="mistral-small-2603")
+local_llm     = ChatOllama(model="llama3.2", base_url="http://localhost:11434/v1")
 ```
+
+Anthropic, Mistral, and Google use their native SDKs (`anthropic`, `mistralai`, `google-genai`). OpenAI, Azure, DeepSeek, Ollama, and Gwenlake share the OpenAI Chat-Completions wire format.
+
+## Reasoning / Thinking
+
+Models that expose their internal reasoning (OpenAI gpt-5/o-series, Anthropic extended thinking, Mistral Magistral, Google Gemini 2.5, DeepSeek-R1, local models via Ollama) all surface it the same way: `response.thinking` and `AgentEventThinking` events on the stream.
+
+```python
+from gwenflow import ChatAnthropic, ChatGoogle, ChatOpenAI
+from gwenflow.llms.openai_response import ResponseOpenAI
+
+# OpenAI Responses API
+llm = ResponseOpenAI(model="gpt-5-mini", reasoning_effort="medium", reasoning_summary="auto")
+
+# Anthropic extended thinking
+llm = ChatAnthropic(model="claude-opus-4-5", thinking={"type": "enabled", "budget_tokens": 1024})
+
+# Google Gemini 2.5
+llm = ChatGoogle(model="gemini-2.5-flash", thinking={"include_thoughts": True, "thinking_budget": 1024})
+
+response = llm.invoke("If a train leaves Paris at 9:00 going 120 km/h ...")
+print("Reasoning:", response.thinking)
+print("Answer:", response.text)
+```
+
+For local models that emit `<think>...</think>` inline (qwen3, deepseek-r1 distills, gemma3), `ChatOllama` extracts them automatically into `ThinkingContent` parts.
+
+## Multi-modal Input
+
+Send images, audio, or PDFs alongside text in a single `Message`. The same `Message` works across providers — each adapter translates to the right wire format (`image_url` for OpenAI, `image` block for Anthropic, `inline_data` for Google, etc.).
+
+```python
+from gwenflow import ChatOpenAI, ChatAnthropic
+from gwenflow.types import Message, TextContent, ImageContent, AudioContent, FileContent
+
+# Image from URL, file, or raw bytes
+msg = Message(role="user", content=[
+    TextContent(content="What's in this image?"),
+    ImageContent.from_url("https://example.com/cat.jpg"),
+    # Or: ImageContent.from_path("/tmp/photo.jpg")
+    # Or: ImageContent.from_bytes(png_bytes, media_type="image/png")
+])
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+response = llm.invoke([msg])
+print(response.text)
+
+# Audio (gpt-4o-audio-preview, Gemini 2.5)
+audio_msg = Message(role="user", content=[
+    TextContent(content="Transcribe this clip."),
+    AudioContent.from_path("/tmp/recording.wav"),
+])
+
+# PDF / documents (gpt-4o, Claude, Gemini)
+pdf_msg = Message(role="user", content=[
+    TextContent(content="Summarise this report."),
+    FileContent.from_path("/tmp/report.pdf"),
+])
+```
+
+Audio output from `gpt-4o-audio-preview` is surfaced via `response.audio` (a base64 `AudioContent` with the transcript when available).
 
 ## Agents
 
@@ -213,6 +279,37 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Skills
+
+Skills are reusable bundles of domain-specific instructions, optionally with companion Python scripts and resource files. The agent loads the compact skill list into its system prompt and only fetches the full instructions on demand via a `load_skill` tool — keeping token usage low when you have dozens of skills.
+
+Layout on disk:
+
+```
+my_skills/
+├── weather/
+│   ├── SKILL.md        # YAML frontmatter + markdown instructions
+│   ├── scripts/        # optional — Python functions auto-wrapped as Tools
+│   │   └── tools.py
+│   └── resources/      # optional — files readable via read_skill_resource
+└── ...
+```
+
+```python
+from gwenflow import Agent, ChatOpenAI
+from gwenflow.skills import SkillsDirectory
+
+skills = SkillsDirectory("./my_skills")
+agent = Agent(
+    name="Assistant",
+    llm=ChatOpenAI(model="gpt-5-mini"),
+    skills=skills.skills,
+)
+print(agent.run("What's the weather like in Paris?").content)
+```
+
+The agent automatically gets three management tools: `list_skills`, `load_skill`, and `read_skill_resource`. Any Python function defined in a skill's `scripts/` directory (with a docstring and type annotations) is auto-registered as a callable Tool.
 
 ## Multi-Agent Orchestration
 

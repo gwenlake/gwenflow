@@ -2,7 +2,21 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from gwenflow.llms.openai import ChatOpenAI
+from gwenflow.llms.openai import ChatOpenAI, response_to_openai_dict
+from gwenflow.types import ModelResponse
+
+
+def response_to_deepseek_dict(response: ModelResponse) -> Dict[str, Any]:
+    """Serialize a ModelResponse to a DeepSeek ChatCompletion-shaped dict.
+
+    DeepSeek's API is OpenAI-compatible but exposes reasoning under
+    `reasoning_content` (not `reasoning`).
+    """
+    completion = response_to_openai_dict(response)
+    message = completion["choices"][0]["message"]
+    if "reasoning" in message:
+        message["reasoning_content"] = message.pop("reasoning")
+    return completion
 
 
 @dataclass(kw_only=True)

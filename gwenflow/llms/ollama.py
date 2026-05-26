@@ -8,6 +8,10 @@ from gwenflow.llms.openai import ChatOpenAI
 class ChatOllama(ChatOpenAI):
     base_url: str
 
+    # Local models (Gemma 3, Qwen3, DeepSeek-R1 distills) typically emit
+    # reasoning inline as <think>...</think> rather than in a dedicated field.
+    extract_think_tags: bool = True
+
     def _get_client_params(self) -> Dict[str, Any]:
         client_params = {
             "base_url": self.base_url,

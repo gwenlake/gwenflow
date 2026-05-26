@@ -1,14 +1,42 @@
 from gwenflow.types.document import Document
-from gwenflow.types.message import Message, TextContent, ThinkingContent, ToolCall
-from gwenflow.types.response import AgentResponse, ModelResponse, ToolResponse, AgentResponseEvent, AgentEventStarted, AgentEventCompleted, AgentEventError, AgentEventCancelled, AgentEventContent, AgentEventThinking, AgentEventToolStarted, AgentEventToolCompleted
+from gwenflow.types.message import (
+    AudioContent,
+    FileContent,
+    ImageContent,
+    Message,
+    MessageContent,
+    ResponsePart,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+)
+from gwenflow.types.response import (
+    AgentEventCancelled,
+    AgentEventCompleted,
+    AgentEventContent,
+    AgentEventError,
+    AgentEventStarted,
+    AgentEventThinking,
+    AgentEventToolCompleted,
+    AgentEventToolStarted,
+    AgentResponse,
+    AgentResponseEvent,
+    ModelResponse,
+    ToolResponse,
+)
 from gwenflow.types.usage import AgentUsage, RequestUsage
 
 __all__ = [
     "Document",
     "TextContent",
     "ThinkingContent",
+    "ImageContent",
+    "AudioContent",
+    "FileContent",
     "ToolCall",
     "Message",
+    "MessageContent",
+    "ResponsePart",
     "ToolResponse",
     "ModelResponse",
     "AgentResponseEvent",

@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 from gwenflow.llms.models import MODELS
 from gwenflow.tools import Tool
-from gwenflow.types import Message, ModelResponse
+from gwenflow.types import Message, ModelResponse, ThinkingContent
 
 DEFAULT_CONTEXT_SIZE = 128000
 
@@ -43,7 +43,8 @@ class ChatBase(ABC):
 
     async def aclose(self) -> None:
         """Close the async client (if any) so its httpx connection pool is shut down
-        on the current event loop. Prevents 'Event loop is closed' warnings at teardown."""
+        on the current event loop. Prevents 'Event loop is closed' warnings at teardown.
+        """
         async_client = getattr(self, "async_client", None)
         if async_client is not None:
             await async_client.close()
@@ -54,6 +55,15 @@ class ChatBase(ABC):
 
     def get_reasoning_model(self) -> str:
         return MODELS.get(self.model, {}).get("reasoning", False)
+
+    def get_thinking_parts(self, response: ModelResponse) -> Optional[List[ThinkingContent]]:
+        """Thinking parts to attach to the assistant Message for echo-back.
+
+        Default: None. Only Anthropic extended thinking requires this — signatures
+        (carried in ThinkingContent.extra) must be replayed verbatim on subsequent
+        turns when tool use is involved.
+        """
+        return None
 
     def get_tool_names(self):
         return [tool.name for tool in self.tools]

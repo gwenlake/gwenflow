@@ -2,7 +2,7 @@ from gwenflow.llms.anthropic import ChatAnthropic
 from gwenflow.llms.azure import ChatAzureOpenAI
 from gwenflow.llms.base import ChatBase
 from gwenflow.llms.deepseek import ChatDeepSeek
-from gwenflow.llms.google import ChatGemini
+from gwenflow.llms.google import ChatGoogle
 from gwenflow.llms.gwenlake import ChatGwenlake
 from gwenflow.llms.mistral import ChatMistral
 from gwenflow.llms.ollama import ChatOllama
@@ -13,7 +13,7 @@ __all__ = [
     "ChatAnthropic",
     "ChatOpenAI",
     "ChatAzureOpenAI",
-    "ChatGemini",
+    "ChatGoogle",
     "ChatMistral",
     "ChatGwenlake",
     "ChatOllama",

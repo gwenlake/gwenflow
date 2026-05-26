@@ -63,7 +63,7 @@ class SkillsToolset:
 
     def get_tools(self) -> List["Tool"]:
         """Return the three skill management tools to register on the agent."""
-        from gwenflow.tools import FunctionTool
+        from gwenflow.tools import Tool
 
         skills = self._skills
 
@@ -97,7 +97,7 @@ class SkillsToolset:
             return f"Resource '{resource_name}' not found in skill '{skill_name}'. Available: {available}"
 
         return [
-            FunctionTool.from_function(list_skills),
-            FunctionTool.from_function(load_skill),
-            FunctionTool.from_function(read_skill_resource),
+            Tool(list_skills),
+            Tool(load_skill),
+            Tool(read_skill_resource),
         ]

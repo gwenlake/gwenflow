@@ -5,6 +5,15 @@ from dataclasses import dataclass, field
 
 @dataclass(kw_only=True)
 class RequestUsage:
+    """Token accounting for a single LLM API call.
+
+    Tracks the common input/output split plus cache hits/misses (Anthropic
+    prompt caching, OpenAI cached input) and audio-specific token counters
+    used by multi-modal models. `details` captures provider-specific fields
+    that don't fit the common shape (e.g. reasoning_tokens for OpenAI).
+    Supports `+=` so per-chunk usage from a stream accumulates naturally.
+    """
+
     input_tokens: int = 0
     """Number of input tokens."""
     cache_write_tokens: int = 0
@@ -42,6 +51,14 @@ class RequestUsage:
 
 @dataclass(kw_only=True)
 class AgentUsage(RequestUsage):
+    """Run-level accounting for an agent loop.
+
+    Adds the two counts that don't make sense at the single-request level:
+    `requests` (how many LLM calls the loop made) and `tool_calls` (how many
+    times the runtime executed a tool). Use `add()` rather than `+=` to merge
+    in a per-request `RequestUsage`, since it also bumps the request counter.
+    """
+
     requests: int = 0
     """Number of requests made to the LLM API."""
 

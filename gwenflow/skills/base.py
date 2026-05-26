@@ -79,9 +79,9 @@ class Skill:
         Each script may expose tools in one of two ways:
         - A module-level ``tools`` list of ``Tool`` instances (preferred).
         - Any module-level function that has a docstring and type annotations
-          (auto-wrapped as ``FunctionTool``).
+          (auto-wrapped via ``Tool(fn)``).
         """
-        from gwenflow.tools import FunctionTool, Tool
+        from gwenflow.tools import Tool
 
         all_tools: List[Tool] = []
 
@@ -109,7 +109,7 @@ class Skill:
                     continue
                 if fn.__doc__ and fn.__annotations__:
                     try:
-                        all_tools.append(FunctionTool.from_function(fn))
+                        all_tools.append(Tool(fn))
                     except Exception:
                         pass
 

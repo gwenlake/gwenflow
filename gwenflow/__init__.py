@@ -6,7 +6,16 @@ from gwenflow.exceptions import (
     UserError,
 )
 from gwenflow.flows import AutoFlow, Flow, FlowRunner
-from gwenflow.llms import ChatAnthropic, ChatAzureOpenAI, ChatGwenlake, ChatOllama, ChatOpenAI
+from gwenflow.llms import (
+    ChatAnthropic,
+    ChatAzureOpenAI,
+    ChatDeepSeek,
+    ChatGoogle,
+    ChatGwenlake,
+    ChatMistral,
+    ChatOllama,
+    ChatOpenAI,
+)
 from gwenflow.logger import logger, set_log_level_to_debug
 from gwenflow.readers import SimpleDirectoryReader
 from gwenflow.retriever import Retriever
@@ -25,6 +34,9 @@ __all__ = [
     "ChatOpenAI",
     "ChatAzureOpenAI",
     "ChatAnthropic",
+    "ChatGoogle",
+    "ChatMistral",
+    "ChatDeepSeek",
     "ChatOllama",
     "Document",
     "Message",
