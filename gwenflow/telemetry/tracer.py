@@ -1,52 +1,24 @@
+import contextvars
 import functools
 import inspect
 from contextlib import contextmanager
 from typing import Any
 
+from gwenflow.telemetry import _semconv as sc
+from gwenflow.telemetry._settings import is_tracing_enabled
+from gwenflow.telemetry.utils import capture_llm_usage, capture_tool_calls, record_inputs, record_outputs
 
-@functools.lru_cache(maxsize=None)
-def _get_semconv() -> tuple:
-    """Load openinference semantic conventions once and cache the result."""
-    try:
-        from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
-
-        return OpenInferenceSpanKindValues, SpanAttributes
-    except ImportError:
-        return None, None
+_telemetry_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "gwenflow_telemetry_context", default=None
+)
 
 
-def _update_stream_state(
-    chunk: Any,
-    accumulated_content: str,
-    latest_tool_calls: Any,
-) -> tuple[str, Any]:
-    if hasattr(chunk, "content") and chunk.content:
-        accumulated_content += chunk.content
-    if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-        latest_tool_calls = chunk.tool_calls
-    return accumulated_content, latest_tool_calls
-
-
-class _NoOpSpan:
-    """Returned when telemetry is not initialized — all operations are no-ops."""
-
-    def is_recording(self) -> bool:
-        return False
-
-    def set_attribute(self, *a, **kw) -> None:
-        pass
-
-    def set_status(self, *a, **kw) -> None:
-        pass
-
-    def record_exception(self, *a, **kw) -> None:
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a) -> bool:
-        return False
+def _update_stream_state(chunk: Any, content: str, tool_calls: Any) -> tuple[str, Any]:
+    if getattr(chunk, "content", None):
+        content += chunk.content
+    if getattr(chunk, "tool_calls", None):
+        tool_calls = chunk.tool_calls
+    return content, tool_calls
 
 
 class DecoratorTracer:
@@ -54,173 +26,225 @@ class DecoratorTracer:
         self.tracer_name = tracer_name
         self._tracer = None
 
-    def _ensure_tracer(self):
+    def _get_tracer(self):
         if self._tracer is None:
-            try:
-                from opentelemetry import trace
+            from opentelemetry import trace
 
-                self._tracer = trace.get_tracer(self.tracer_name)
-            except ImportError:
-                pass
+            self._tracer = trace.get_tracer(self.tracer_name)
         return self._tracer
 
-    def _resolve(self, name_attr: str, kind_name: str, name_override: str | None, instance: Any) -> tuple:
-        kind_values, _ = _get_semconv()
-        kind_val = getattr(kind_values, kind_name, None) if kind_values else None
-        name = name_override or f"{kind_name}:{getattr(instance, name_attr, 'unknown')}"
-        return name, kind_val
-
     @contextmanager
-    def _start_span(self, name, kind, instance, func, args, kwargs):
-        otel_tracer = self._ensure_tracer()
-        _, span_attributes = _get_semconv()
-
-        if otel_tracer is None:
-            yield _NoOpSpan()
-            return
-
+    def context(self, metadata: dict[str, Any] | None = None):
+        prev = _telemetry_context.get()
+        merged: dict[str, Any] = dict(prev) if prev else {}
+        if metadata:
+            merged.update(metadata)
+        _telemetry_context.set(merged)
         try:
-            from opentelemetry.trace import StatusCode
+            yield
+        finally:
+            _telemetry_context.set(prev)
 
-            from .utils import extract_user_inputs, prepare_llm_attributes
-        except ImportError:
-            yield _NoOpSpan()
+    def session(
+        self,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        attrs: dict[str, Any] = dict(metadata or {})
+        if session_id is not None:
+            attrs[sc.SESSION_ID] = str(session_id)
+        if user_id is not None:
+            attrs[sc.USER_ID] = str(user_id)
+        return self.context(metadata=attrs or None)
+
+    def _apply_context(self, span) -> None:
+        attrs = _telemetry_context.get()
+        if not attrs:
             return
+        for key, value in attrs.items():
+            span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
 
-        with otel_tracer.start_as_current_span(name) as span:
-            if span.is_recording() and span_attributes and kind:
-                span.set_attribute(span_attributes.OPENINFERENCE_SPAN_KIND, kind.value)
-                input_val = extract_user_inputs(func, (instance, *args), kwargs)
-                span.set_attribute(span_attributes.INPUT_VALUE, str(input_val))
-                if hasattr(kind, "value") and kind.value == "LLM":
-                    prepare_llm_attributes(span, instance)
-            try:
-                yield span
-            except Exception as e:
-                if span.is_recording():
-                    span.set_status(StatusCode.ERROR, str(e))
-                    span.record_exception(e)
-                raise
+    def _finalize(self, span, kind_name: str, result_for_usage: Any, content: str, tool_calls: Any) -> None:
+        if kind_name == "LLM":
+            capture_llm_usage(span, result_for_usage)
+        tc_json = capture_tool_calls(span, tool_calls)
+        record_outputs(span, content, tc_json, result_for_usage)
 
-    def _finalize_span_output(self, span, content: str, tool_calls_json: str | None, fallback_obj: Any) -> None:
-        if not span.is_recording():
-            return
-        _, span_attributes = _get_semconv()
-        if not span_attributes:
-            return
-        try:
-            from opentelemetry.trace import StatusCode
+    def _ok(self, span) -> None:
+        from opentelemetry.trace import StatusCode
 
-            from .utils import safe_serialize
-        except ImportError:
-            return
-
-        if content:
-            span.set_attribute(span_attributes.OUTPUT_VALUE, content)
-        elif tool_calls_json:
-            span.set_attribute(span_attributes.OUTPUT_VALUE, f"Tool Calls: {tool_calls_json}")
-        elif fallback_obj is not None:
-            span.set_attribute(span_attributes.OUTPUT_VALUE, safe_serialize(fallback_obj))
         span.set_status(StatusCode.OK)
 
-    def _finalize_after(self, span, kind_name: str, result: Any, content: str, tool_calls: Any) -> None:
-        if not span.is_recording():
-            return
-        try:
-            from .utils import capture_llm_usage, capture_tool_calls
-        except ImportError:
-            return
+    def _error(self, span, exc: BaseException) -> None:
+        from opentelemetry.trace import StatusCode
 
-        if kind_name == "LLM":
-            capture_llm_usage(span, result)
-        tc_json = capture_tool_calls(span, tool_calls)
-        self._finalize_span_output(span, content or "", tc_json, result)
+        span.set_status(StatusCode.ERROR, str(exc))
+        span.record_exception(exc)
 
     def _wrap_logic(self, name_attr: str, kind_name: str, name_override: str | None = None):
         def decorator(func):
+            def make_name(instance: Any) -> str:
+                return name_override or f"{kind_name}:{getattr(instance, name_attr, 'unknown')}"
+
             # 1. ASYNC GENERATOR
             if inspect.isasyncgenfunction(func):
 
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
-                    name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
-                    with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
-                        accumulated_content, latest_tool_calls, last_chunk = "", None, None
-                        try:
-                            async for chunk in func(instance, *args, **kwargs):
-                                last_chunk = chunk
-                                accumulated_content, latest_tool_calls = _update_stream_state(
-                                    chunk, accumulated_content, latest_tool_calls
-                                )
-                                yield chunk
-                            self._finalize_after(span, kind_name, last_chunk, accumulated_content, latest_tool_calls)
-                        except Exception as e:
-                            if span.is_recording():
-                                span.record_exception(e)
-                            raise
+                    if not is_tracing_enabled():
+                        async for chunk in func(instance, *args, **kwargs):
+                            yield chunk
+                        return
+
+                    from opentelemetry import context as otel_context
+                    from opentelemetry import trace
+
+                    span = self._get_tracer().start_span(make_name(instance))
+                    ctx = trace.set_span_in_context(span)
+                    token = otel_context.attach(ctx)
+                    try:
+                        self._apply_context(span)
+                        record_inputs(span, kind_name, instance, func, args, kwargs)
+                    finally:
+                        otel_context.detach(token)
+
+                    agen = func(instance, *args, **kwargs)
+                    content, tool_calls, last = "", None, None
+                    try:
+                        while True:
+                            token = otel_context.attach(ctx)
+                            try:
+                                chunk = await agen.__anext__()
+                            except StopAsyncIteration:
+                                break
+                            finally:
+                                otel_context.detach(token)
+                            last = chunk
+                            content, tool_calls = _update_stream_state(chunk, content, tool_calls)
+                            yield chunk
+                        self._finalize(span, kind_name, last, content, tool_calls)
+                        self._ok(span)
+                    except Exception as e:
+                        self._error(span, e)
+                        raise
+                    finally:
+                        span.end()
 
                 return wrapper
 
             # 2. ASYNC FUNCTION
-            elif inspect.iscoroutinefunction(func):
+            if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
-                    name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
-                    with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
+                    if not is_tracing_enabled():
+                        return await func(instance, *args, **kwargs)
+
+                    from opentelemetry import context as otel_context
+                    from opentelemetry import trace
+
+                    span = self._get_tracer().start_span(make_name(instance))
+                    token = otel_context.attach(trace.set_span_in_context(span))
+                    try:
+                        self._apply_context(span)
+                        record_inputs(span, kind_name, instance, func, args, kwargs)
                         result = await func(instance, *args, **kwargs)
-                        self._finalize_after(
+                        self._finalize(
                             span,
                             kind_name,
                             result,
                             getattr(result, "content", "") or "",
                             getattr(result, "tool_calls", None),
                         )
+                        self._ok(span)
                         return result
+                    except Exception as e:
+                        self._error(span, e)
+                        raise
+                    finally:
+                        otel_context.detach(token)
+                        span.end()
 
                 return wrapper
 
             # 3. SYNC GENERATOR
-            elif inspect.isgeneratorfunction(func):
+            if inspect.isgeneratorfunction(func):
 
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
-                    name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
-                    with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
-                        accumulated_content, latest_tool_calls, last_chunk = "", None, None
-                        try:
-                            for chunk in func(instance, *args, **kwargs):
-                                last_chunk = chunk
-                                accumulated_content, latest_tool_calls = _update_stream_state(
-                                    chunk, accumulated_content, latest_tool_calls
-                                )
-                                yield chunk
-                            self._finalize_after(span, kind_name, last_chunk, accumulated_content, latest_tool_calls)
-                        except Exception as e:
-                            if span.is_recording():
-                                span.record_exception(e)
-                            raise
+                    if not is_tracing_enabled():
+                        yield from func(instance, *args, **kwargs)
+                        return
+
+                    from opentelemetry import context as otel_context
+                    from opentelemetry import trace
+
+                    span = self._get_tracer().start_span(make_name(instance))
+                    ctx = trace.set_span_in_context(span)
+                    token = otel_context.attach(ctx)
+                    try:
+                        self._apply_context(span)
+                        record_inputs(span, kind_name, instance, func, args, kwargs)
+                    finally:
+                        otel_context.detach(token)
+
+                    gen = func(instance, *args, **kwargs)
+                    content, tool_calls, last = "", None, None
+                    try:
+                        while True:
+                            token = otel_context.attach(ctx)
+                            try:
+                                chunk = next(gen)
+                            except StopIteration:
+                                break
+                            finally:
+                                otel_context.detach(token)
+                            last = chunk
+                            content, tool_calls = _update_stream_state(chunk, content, tool_calls)
+                            yield chunk
+                        self._finalize(span, kind_name, last, content, tool_calls)
+                        self._ok(span)
+                    except Exception as e:
+                        self._error(span, e)
+                        raise
+                    finally:
+                        span.end()
 
                 return wrapper
 
             # 4. SYNC FUNCTION
-            else:
+            @functools.wraps(func)
+            def wrapper(instance, *args, **kwargs):
+                if not is_tracing_enabled():
+                    return func(instance, *args, **kwargs)
 
-                @functools.wraps(func)
-                def wrapper(instance, *args, **kwargs):
-                    name, kind_val = self._resolve(name_attr, kind_name, name_override, instance)
-                    with self._start_span(name, kind_val, instance, func, args, kwargs) as span:
-                        result = func(instance, *args, **kwargs)
-                        self._finalize_after(
-                            span,
-                            kind_name,
-                            result,
-                            getattr(result, "content", "") or "",
-                            getattr(result, "tool_calls", None),
-                        )
-                        return result
+                from opentelemetry import context as otel_context
+                from opentelemetry import trace
 
-                return wrapper
+                span = self._get_tracer().start_span(make_name(instance))
+                token = otel_context.attach(trace.set_span_in_context(span))
+                try:
+                    self._apply_context(span)
+                    record_inputs(span, kind_name, instance, func, args, kwargs)
+                    result = func(instance, *args, **kwargs)
+                    self._finalize(
+                        span,
+                        kind_name,
+                        result,
+                        getattr(result, "content", "") or "",
+                        getattr(result, "tool_calls", None),
+                    )
+                    self._ok(span)
+                    return result
+                except Exception as e:
+                    self._error(span, e)
+                    raise
+                finally:
+                    otel_context.detach(token)
+                    span.end()
+
+            return wrapper
 
         return decorator
 

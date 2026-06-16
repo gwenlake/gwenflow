@@ -1,4 +1,4 @@
-from .base import Telemetry
-from .tracer import tracer
+from gwenflow.telemetry.base import Telemetry, resolve_endpoint
+from gwenflow.telemetry.tracer import tracer
 
-__all__ = ["Telemetry", "tracer"]
+__all__ = ["Telemetry", "tracer", "resolve_endpoint"]
