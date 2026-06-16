@@ -573,13 +573,18 @@ dependencies = [
     { name = "tqdm" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "licensecheck" },
-    { name = "openai-responses" },
+[package.optional-dependencies]
+telemetry = [
     { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "gwenflow", extra = ["telemetry"] },
+    { name = "licensecheck" },
+    { name = "openai-responses" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-dotenv" },
@@ -605,6 +610,9 @@ requires-dist = [
     { name = "mistralai", specifier = ">=1.5" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "openai", specifier = "==2.15.0" },
+    { name = "openinference-semantic-conventions", marker = "extra == 'telemetry'", specifier = ">=0.1.9" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = "==14.3.3" },
@@ -612,14 +620,13 @@ requires-dist = [
     { name = "tiktoken", specifier = "==0.12.0" },
     { name = "tqdm", specifier = "==4.67.3" },
 ]
+provides-extras = ["telemetry"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "gwenflow", extras = ["telemetry"] },
     { name = "licensecheck", specifier = "==2025.1.0" },
     { name = "openai-responses", specifier = "==0.13.1" },
-    { name = "openinference-semantic-conventions", specifier = "==0.1.9" },
-    { name = "opentelemetry-exporter-otlp", specifier = "==1.20.0" },
-    { name = "opentelemetry-sdk", specifier = "==1.20.0" },
     { name = "pytest", specifier = "==8.3.3" },
     { name = "pytest-cov", specifier = "==5.0.0" },
     { name = "pytest-dotenv", specifier = "==0.5.2" },
