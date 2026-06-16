@@ -1,6 +1,7 @@
 import atexit
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 from gwenflow.logger import logger
 from gwenflow.telemetry._settings import is_otel_available, set_tracing_enabled
@@ -42,12 +43,25 @@ class Telemetry:
     protocol: str = "HTTP"
     endpoint: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    api_key: str | None = None
+    auth: Callable[[], dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
         if self.organization is None:
             self.organization = os.getenv("OTEL_SERVICE_NAME", "gwenflow")
+        if self.api_key is None:
+            self.api_key = os.getenv("GWENFLOW_TELEMETRY_API_KEY")
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
+
+    def _build_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        if self.auth is not None:
+            headers.update(self.auth() or {})
+        headers.update(self.headers)
+        return headers
 
     def _configure(self) -> None:
         if os.getenv("OTEL_SDK_DISABLED", "").strip().lower() == "true":
@@ -86,4 +100,4 @@ class Telemetry:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         else:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        return OTLPSpanExporter(endpoint=self.endpoint, headers=self.headers or None)
+        return OTLPSpanExporter(endpoint=self.endpoint, headers=self._build_headers() or None)
