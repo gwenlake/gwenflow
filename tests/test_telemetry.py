@@ -158,6 +158,66 @@ def test_telemetry_disabled_via_env(monkeypatch):
     assert is_tracing_enabled() is False
 
 
+# --- api key / auth headers -----------------------------------------------------
+
+
+def test_api_key_sets_bearer_authorization_header(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(organization="acme", api_key="secret-123")
+    assert t._build_headers() == {"Authorization": "Bearer secret-123"}
+
+
+def test_no_api_key_means_no_auth_header(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
+    t = Telemetry(organization="acme")
+    assert t._build_headers() == {}
+
+
+def test_api_key_merges_with_custom_headers(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(organization="acme", api_key="secret", headers={"x-tenant": "acme"})
+    headers = t._build_headers()
+    assert headers["x-tenant"] == "acme"
+    assert headers["Authorization"] == "Bearer secret"
+
+
+def test_explicit_authorization_header_wins_over_api_key(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(organization="acme", api_key="secret", headers={"Authorization": "Bearer custom"})
+    assert t._build_headers()["Authorization"] == "Bearer custom"
+
+
+def test_api_key_read_from_env(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.setenv("GWENFLOW_TELEMETRY_API_KEY", "env-key")
+    t = Telemetry(organization="acme")
+    assert t._build_headers() == {"Authorization": "Bearer env-key"}
+
+
+def test_auth_callable_provides_arbitrary_scheme(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
+    t = Telemetry(organization="acme", auth=lambda: {"x-api-key": "k", "x-tenant": "acme"})
+    assert t._build_headers() == {"x-api-key": "k", "x-tenant": "acme"}
+
+
+def test_auth_overrides_api_key_sugar(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(organization="acme", api_key="sugar", auth=lambda: {"Authorization": "Custom xyz"})
+    assert t._build_headers()["Authorization"] == "Custom xyz"
+
+
+def test_explicit_headers_win_over_auth(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(
+        organization="acme",
+        auth=lambda: {"Authorization": "Bearer from-auth"},
+        headers={"Authorization": "Bearer explicit"},
+    )
+    assert t._build_headers()["Authorization"] == "Bearer explicit"
+
+
 # --- no-op gate -----------------------------------------------------------------
 
 

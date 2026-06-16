@@ -478,12 +478,32 @@ Everything is driven by standard OTLP environment variables, plus a few gwenflow
 | --- | --- | --- |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint | `http://localhost:4318` |
 | `OTEL_SERVICE_NAME` | Organization name (reported as `service.name`) | `gwenflow` |
+| `GWENFLOW_TELEMETRY_API_KEY` | API key sent as `Authorization: Bearer …` | unset |
 | `OTEL_SDK_DISABLED` | Set to `true` to disable all telemetry | unset |
 | `GWENFLOW_TELEMETRY_CAPTURE_CONTENT` | Capture prompt/response content on spans | `true` |
 | `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Redact inputs / outputs only | `false` |
 | `GWENFLOW_TELEMETRY_MAX_ATTR_LENGTH` | Max characters per captured attribute | `8192` |
 
 > Prompts and responses can contain PII. Capture is on by default for rich observability; set `GWENFLOW_TELEMETRY_CAPTURE_CONTENT=false` (or the `OPENINFERENCE_HIDE_*` flags) to keep only metadata such as model, token counts and latency.
+
+**Authenticated endpoints (optional, pluggable).** Auth is off by default. To send traces to a protected collector or your own backend, pick whichever fits — all optional, merged in increasing precedence (`api_key` < `auth` < `headers`):
+
+```python
+# 1. Simplest — an API key as Authorization: Bearer <key>
+Telemetry(organization="gwenflow", endpoint="https://otlp.example.com", api_key="...")
+
+# 2. Agnostic hook — any auth scheme that can produce headers
+#    (custom API-key header, OAuth token fetched at startup, signed header, …)
+def my_auth() -> dict[str, str]:
+    return {"x-api-key": fetch_key()}  # or {"Authorization": f"Bearer {oauth_token()}"}
+
+Telemetry(organization="gwenflow", endpoint="https://otlp.example.com", auth=my_auth)
+
+# 3. Raw static headers — full manual control
+Telemetry(organization="gwenflow", headers={"x-api-key": "..."})
+```
+
+`api_key` can also come from the `GWENFLOW_TELEMETRY_API_KEY` env var. With none of these set, no auth header is sent.
 
 ## More Examples
 
