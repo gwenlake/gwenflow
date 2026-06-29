@@ -44,7 +44,7 @@ def test_construct_missing_api_key_raises(monkeypatch):
 
 
 def test_format_messages_user_text():
-    from mistralai.models import UserMessage
+    from mistralai.client.models import UserMessage
 
     llm = ChatMistral(api_key="test")
     formatted = llm._format_messages([Message(role="user", content="hello")])
@@ -53,7 +53,7 @@ def test_format_messages_user_text():
 
 
 def test_format_messages_system_role():
-    from mistralai.models import SystemMessage
+    from mistralai.client.models import SystemMessage
 
     llm = ChatMistral(api_key="test")
     formatted = llm._format_messages([Message(role="system", content="be brief")])
@@ -61,7 +61,7 @@ def test_format_messages_system_role():
 
 
 def test_format_messages_assistant_with_tool_calls():
-    from mistralai.models import AssistantMessage
+    from mistralai.client.models import AssistantMessage
 
     llm = ChatMistral(api_key="test")
     m = Message(
@@ -78,7 +78,7 @@ def test_format_messages_assistant_with_tool_calls():
 
 
 def test_format_messages_tool_role():
-    from mistralai.models import ToolMessage
+    from mistralai.client.models import ToolMessage
 
     llm = ChatMistral(api_key="test")
     m = Message(role="tool", tool_call_id="t1", content="42", name="add")
@@ -88,7 +88,7 @@ def test_format_messages_tool_role():
 
 
 def test_format_image_url_chunk():
-    from mistralai.models import ImageURLChunk
+    from mistralai.client.models import ImageURLChunk
 
     llm = ChatMistral(api_key="test")
     m = Message(role="user", content=[ImageContent.from_url("https://x/i.jpg")])
@@ -98,7 +98,7 @@ def test_format_image_url_chunk():
 
 
 def test_format_image_base64_becomes_data_uri():
-    from mistralai.models import ImageURLChunk
+    from mistralai.client.models import ImageURLChunk
 
     llm = ChatMistral(api_key="test")
     img = ImageContent.from_bytes(b"x", media_type="image/png")
@@ -112,7 +112,7 @@ def test_format_image_base64_becomes_data_uri():
 
 
 def test_assistant_thinking_parts_become_think_chunks():
-    from mistralai.models import ThinkChunk
+    from mistralai.client.models import ThinkChunk
 
     llm = ChatMistral(api_key="test")
     m = Message(
@@ -167,7 +167,7 @@ def test_parse_response_text_only():
 
 
 def test_parse_response_think_chunk_extracted():
-    from mistralai.models import TextChunk, ThinkChunk
+    from mistralai.client.models import TextChunk, ThinkChunk
 
     content = [
         ThinkChunk(thinking=[{"type": "text", "text": "let me think..."}], closed=True),
@@ -228,7 +228,7 @@ def test_invoke_calls_complete_and_returns_parsed_response():
     assert resp.text == "Hello back."
 
     # The Mistral SDK got actual SDK message objects, not raw dicts
-    from mistralai.models import UserMessage
+    from mistralai.client.models import UserMessage
 
     _, kwargs = fake_client.chat.complete.call_args
     assert isinstance(kwargs["messages"][0], UserMessage)
