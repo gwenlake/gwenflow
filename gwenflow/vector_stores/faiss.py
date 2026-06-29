@@ -75,7 +75,7 @@ class FAISS(VectorStoreBase):
         for document in documents:
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
-            data.append(document.model_dump())
+            data.append(document.to_dict())
 
         if len(documents) > 0:
             self.index.add(embeddings)
