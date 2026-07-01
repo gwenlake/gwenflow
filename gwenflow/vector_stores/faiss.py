@@ -3,6 +3,7 @@ import io
 import os
 import pickle
 from typing import Optional
+import dataclasses
 
 import numpy as np
 
@@ -22,7 +23,6 @@ from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
 from gwenflow.retriever.bm25 import BM25
-from gwenflow.retriever.fusion import reciprocal_rank_fusion
 from gwenflow.types import Document
 from gwenflow.vector_stores.base import VectorStoreBase
 
@@ -121,6 +121,20 @@ class FAISS(VectorStoreBase):
         return documents
 
     def hybrid_search(self, query: str, limit: int = 5, k: int = 60) -> list[Document]:
+        
+        def reciprocal_rank_fusion(ranked_lists: list[list[Document]], k: int = 60) -> list[Document]:
+            scores: dict[str, float] = {}
+            documents: dict[str, Document] = {}
+
+            for ranked in ranked_lists:
+                for rank, document in enumerate(ranked, start=1):
+                    scores[document.id] = scores.get(document.id, 0.0) + 1 / (k + rank)
+                    documents.setdefault(document.id, document)
+
+            fused = [dataclasses.replace(documents[document_id], score=score) for document_id, score in scores.items()]
+            fused.sort(key=lambda document: document.score, reverse=True)
+            return fused
+
         if not self.metadata:
             return []
 
