@@ -321,7 +321,7 @@ class Agent:
             try:
                 args = tool_call.arguments
                 if not isinstance(args, dict):
-                    args = json.loads(args)
+                    args = json.loads(args) if args and args.strip() else {}
                 skill_name = args.get("skill_name")
                 logger.debug(f"[SKILL CALL] Loading skill '{skill_name}'")
                 skill = next((s for s in self.skills if s.name == skill_name), None)
@@ -335,7 +335,7 @@ class Agent:
             tool = tool_map[tool_call.name]
             arguments = tool_call.arguments
             if not isinstance(arguments, dict):
-                arguments = json.loads(arguments)
+                arguments = json.loads(arguments) if arguments and arguments.strip() else {}
             logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
             tool_execution.content = tool.run(**arguments)
             if tool_execution.content:
@@ -468,7 +468,7 @@ class Agent:
                 for tool_call in response.tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -600,7 +600,7 @@ class Agent:
                 for tool_call in response.tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -736,7 +736,7 @@ class Agent:
                 for tool_call in final_tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,
@@ -873,7 +873,7 @@ class Agent:
                 for tool_call in final_tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,
