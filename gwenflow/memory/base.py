@@ -61,7 +61,7 @@ class BaseChatMemory:
         if isinstance(part, TextContent):
             return self.tokenizer_fn(part.content)
         if isinstance(part, ThinkingContent):
-            return self.tokenizer_fn(part.content)
+            return self._token_count_for_thinking(part)
         if isinstance(part, ImageContent):
             return IMAGE_TOKENS_HIGH if part.detail == "high" else IMAGE_TOKENS_LOW
         if isinstance(part, AudioContent):
@@ -80,13 +80,29 @@ class BaseChatMemory:
             return self.tokenizer_fn(json.dumps(part))
         return self.tokenizer_fn(str(part))
 
+    def _token_count_for_thinking(self, part: ThinkingContent) -> int:
+        """Estimate tokens for one thinking part, `extra` included.
+
+        Anthropic's block signature lives in `extra` and is echoed back verbatim
+        on tool-use turns — it is a large base64 blob, not free.
+        """
+        total = self.tokenizer_fn(part.content)
+        if part.extra:
+            total += self.tokenizer_fn(json.dumps(part.extra, default=str))
+        return total
+
     def _token_count_for_message(self, m: Message) -> int:
-        """Estimate tokens for an entire Message, including all fields the
-        provider will end up sending: content (string or parts), tool_calls,
-        thinking_parts, and the small per-message envelope (role/name)."""
+        """Estimate tokens for an entire Message.
+
+        Includes every field the provider will end up sending: content (string
+        or parts), tool_calls, tool_call_id, thinking_parts, and the small
+        per-message envelope (role/name).
+        """
         total = 4  # role + envelope overhead
         if m.name:
             total += self.tokenizer_fn(m.name)
+        if m.tool_call_id:
+            total += self.tokenizer_fn(m.tool_call_id)
         if isinstance(m.content, list):
             for part in m.content:
                 total += self._token_count_for_part(part)
@@ -97,7 +113,7 @@ class BaseChatMemory:
                 total += self.tokenizer_fn(json.dumps(tc, default=str))
         if m.thinking_parts:
             for tp in m.thinking_parts:
-                total += self.tokenizer_fn(tp.content)
+                total += self._token_count_for_thinking(tp)
         return total
 
     def _token_count_for_messages(self, messages: list[Message]) -> int:

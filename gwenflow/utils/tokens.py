@@ -56,11 +56,22 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
 
 
 def keep_tokens_from_text(text: str, token_limit: int, tokenizer_fn: callable) -> str:
-    num_tokens = 0
-    truncated_text = []
-    for token in text.split(" "):
-        num_tokens = tokenizer_fn(" ".join(truncated_text))
-        if num_tokens > token_limit:
-            break
-        truncated_text.append(token)
-    return " ".join(truncated_text)
+    """Return the longest word-boundary prefix of `text` fitting `token_limit`.
+
+    Binary search on the word count: tokenizing once per word is quadratic and
+    takes over 30s on a large document, which stalls every agent turn.
+    """
+    if token_limit <= 0 or not text:
+        return ""
+    if tokenizer_fn(text) <= token_limit:
+        return text
+
+    words = text.split(" ")
+    low, high = 0, len(words)  # `low` always fits, `high` never does
+    while high - low > 1:
+        mid = (low + high) // 2
+        if tokenizer_fn(" ".join(words[:mid])) <= token_limit:
+            low = mid
+        else:
+            high = mid
+    return " ".join(words[:low])

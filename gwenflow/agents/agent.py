@@ -171,6 +171,39 @@ class Agent:
             )
             return False, None, error_msg
 
+    def _tools_token_count(self) -> int:
+        """Tokens the tool schemas cost on the wire.
+
+        Every provider sends the same three fields per tool (name, description,
+        JSON-schema parameters), so a single neutral estimate covers them all.
+        These tokens never appear in the message list, so the memory buffer has
+        to be told to reserve them — a large MCP server can otherwise eat the
+        whole context margin without the buffer noticing.
+        """
+        tools = self.llm.tools or []
+        tokenizer_fn = self.history.tokenizer_fn
+        total = 0
+        for tool in tools:
+            schema = {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters,
+            }
+            total += tokenizer_fn(json.dumps(schema, default=str))
+        return total
+
+    def _prepare_history(
+        self,
+        task: str,
+        context: Optional[Union[str, Dict[str, str]]] = None,
+    ) -> None:
+        """Refresh the parts of the memory budget that are settled per run.
+
+        The system prompt and the tool schemas sent alongside every request.
+        """
+        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self.history.reserved_tokens = self._tools_token_count()
+
     def get_system_prompt(
         self,
         task: str,
@@ -386,7 +419,7 @@ class Agent:
         )
 
         # history
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         # add reasoning
@@ -524,7 +557,7 @@ class Agent:
             )
         )
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -656,7 +689,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -796,7 +829,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:

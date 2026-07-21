@@ -14,7 +14,6 @@ import pytest
 from gwenflow.memory import ChatMemoryBuffer
 from gwenflow.types import AudioContent, FileContent, ImageContent, Message, TextContent, ThinkingContent
 
-
 # ---------------------------------------------------------------------------
 # Token counting
 # ---------------------------------------------------------------------------
@@ -29,7 +28,8 @@ def test_token_count_string_content():
 
 def test_token_count_multimodal_image_does_not_count_repr():
     """Without the fix this would stringify a list to its Python repr and count
-    the class names — wildly inaccurate. We use a fixed per-image estimate."""
+    the class names — wildly inaccurate. We use a fixed per-image estimate.
+    """
     buf = ChatMemoryBuffer(token_limit=1000)
     m = Message(role="user", content=[TextContent(content="hi"), ImageContent.from_url("https://x/y.jpg")])
     n = buf._token_count_for_message(m)
@@ -71,7 +71,13 @@ def test_token_count_includes_tool_calls():
         Message(
             role="assistant",
             content="ok",
-            tool_calls=[{"id": "t1", "type": "function", "function": {"name": "get_weather", "arguments": '{"city": "Paris", "units": "metric"}'}}],
+            tool_calls=[
+                {
+                    "id": "t1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "Paris", "units": "metric"}'},
+                }
+            ],
         )
     )
     assert with_tool > plain
@@ -88,6 +94,25 @@ def test_token_count_includes_thinking_parts():
         )
     )
     assert with_thinking > plain
+
+
+def test_token_count_includes_thinking_signature():
+    """Anthropic echoes the block signature back verbatim on tool-use turns —
+    it's a big base64 blob and must be charged for, not counted as free.
+    """
+    buf = ChatMemoryBuffer(token_limit=10000)
+    thinking = ThinkingContent(content="hmm")
+    signed = ThinkingContent(content="hmm", extra={"signature": "ErUBCkYIBRgCKkDx" * 40})
+    plain = buf._token_count_for_message(Message(role="assistant", content="", thinking_parts=[thinking]))
+    with_sig = buf._token_count_for_message(Message(role="assistant", content="", thinking_parts=[signed]))
+    assert with_sig > plain + 100
+
+
+def test_token_count_includes_tool_call_id():
+    buf = ChatMemoryBuffer(token_limit=10000)
+    anonymous = buf._token_count_for_message(Message(role="assistant", content="42"))
+    tool_result = buf._token_count_for_message(Message(role="tool", tool_call_id="call_9pQ2sZk1xVn", content="42"))
+    assert tool_result > anonymous
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +154,8 @@ def test_clamp_preserves_multimodal_parts():
 
 def test_clamp_with_none_content_does_not_crash():
     """An assistant message can carry tool_calls and no content — clamping must
-    not blow up on None."""
+    not blow up on None.
+    """
     buf = ChatMemoryBuffer(token_limit=200)
     buf.add_message(Message(role="user", content="hi"))
     buf.add_message(
@@ -171,7 +197,8 @@ def test_pruning_drops_oldest():
 
 def test_pruning_does_not_start_with_orphan_tool():
     """When pruning, the kept window must never start with a `tool` message —
-    that would be an orphan response with no matching tool_call."""
+    that would be an orphan response with no matching tool_call.
+    """
     buf = ChatMemoryBuffer(token_limit=60)
     # Conversation: user → assistant(tool_call) → tool → assistant → ... repeated
     for i in range(10):
@@ -194,7 +221,8 @@ def test_pruning_does_not_start_with_orphan_tool():
 def test_pruning_bounded_with_only_assistant_and_tool():
     """Pathological input: all messages are assistant/tool, no user. The
     buggy old loop would index out of bounds. The fix should drop everything
-    and return only system (or empty)."""
+    and return only system (or empty).
+    """
     buf = ChatMemoryBuffer(token_limit=50, system_prompt="sys")
     for i in range(5):
         buf.add_message(Message(role="assistant", content=f"a{i} word " * 30))
@@ -207,6 +235,42 @@ def test_pruning_bounded_with_only_assistant_and_tool():
     else:
         # Real bound is: doesn't crash, returns a list
         assert isinstance(kept, list)
+
+
+def test_live_turn_survives_a_long_tool_loop():
+    """Regression: a tool loop that blows the budget used to prune the whole
+    window — including the user's question — leaving the model with nothing but
+    a system prompt.
+    """
+    buf = ChatMemoryBuffer(token_limit=300, system_prompt="You are a helpful agent.")
+    buf.add_message(Message(role="user", content="Analyse this market and write a report."))
+    for i in range(4):
+        buf.add_message(
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": f"t{i}", "type": "function", "function": {"name": "search", "arguments": "{}"}}],
+            )
+        )
+        buf.add_message(Message(role="tool", tool_call_id=f"t{i}", content=f"result {i} " * 40))
+
+    kept = buf.get()
+    roles = [m.role for m in kept]
+    assert "user" in roles, f"user question was pruned away: {roles}"
+    assert any("Analyse this market" in (m.content or "") for m in kept if m.role == "user")
+    # And the window still opens on a valid boundary
+    assert roles[0] == "system"
+    assert roles[1] == "user"
+
+
+def test_pruning_never_returns_system_only_when_a_user_message_exists():
+    """Whatever the budget pressure, a task must reach the model."""
+    buf = ChatMemoryBuffer(token_limit=120, system_prompt="sys")
+    for i in range(6):
+        buf.add_message(Message(role="user", content=f"question {i} " * 20))
+        buf.add_message(Message(role="assistant", content=f"answer {i} " * 20))
+    kept = buf.get()
+    assert any(m.role == "user" for m in kept)
 
 
 def test_pruning_keeps_recent_user_question_intact():
@@ -260,3 +324,74 @@ def test_empty_history_returns_only_system():
 def test_empty_history_no_system_returns_empty():
     buf = ChatMemoryBuffer(token_limit=1000)
     assert buf.get() == []
+
+
+# ---------------------------------------------------------------------------
+# Truncation helper
+# ---------------------------------------------------------------------------
+
+
+def test_keep_tokens_is_not_quadratic():
+    """Truncation must not be quadratic.
+
+    Regression: the old word-by-word loop re-tokenized the whole accumulated
+    prefix per word — 30s+ on a large document, stalling every agent turn.
+    """
+    import time
+
+    from gwenflow.utils.tokens import keep_tokens_from_text, num_tokens_from_string
+
+    text = "word " * 200_000
+    started = time.perf_counter()
+    out = keep_tokens_from_text(text, token_limit=1000, tokenizer_fn=num_tokens_from_string)
+    elapsed = time.perf_counter() - started
+
+    assert num_tokens_from_string(out) <= 1000
+    assert elapsed < 5, f"truncation took {elapsed:.1f}s"
+
+
+def test_keep_tokens_returns_text_unchanged_when_it_fits():
+    from gwenflow.utils.tokens import keep_tokens_from_text, num_tokens_from_string
+
+    text = "a short sentence"
+    assert keep_tokens_from_text(text, token_limit=1000, tokenizer_fn=num_tokens_from_string) == text
+
+
+# ---------------------------------------------------------------------------
+# Reserved tokens (tool schemas)
+# ---------------------------------------------------------------------------
+
+
+def _fill(buf, count=12):
+    for i in range(count):
+        buf.add_message(Message(role="user", content=f"question {i} " * 10))
+        buf.add_message(Message(role="assistant", content=f"answer {i} " * 10))
+
+
+def test_reserved_tokens_shrink_the_budget():
+    """Tool schemas ride along with every request but never appear in messages.
+
+    The buffer has to reserve room for them.
+    """
+    without = ChatMemoryBuffer(token_limit=1000, system_prompt="sys")
+    _fill(without)
+    with_tools = ChatMemoryBuffer(token_limit=1000, system_prompt="sys", reserved_tokens=600)
+    _fill(with_tools)
+
+    assert len(with_tools.get()) < len(without.get())
+
+
+def test_reserved_tokens_still_keep_the_user_question():
+    """Even when the schemas eat most of the context, the task must get through."""
+    buf = ChatMemoryBuffer(token_limit=1000, system_prompt="sys", reserved_tokens=950)
+    _fill(buf)
+    kept = buf.get()
+    assert any(m.role == "user" for m in kept)
+
+
+def test_reserved_tokens_larger_than_limit_does_not_crash():
+    buf = ChatMemoryBuffer(token_limit=500, system_prompt="sys", reserved_tokens=5000)
+    buf.add_message(Message(role="user", content="hello"))
+    kept = buf.get()
+    assert isinstance(kept, list)
+    assert any(m.role == "user" for m in kept)
