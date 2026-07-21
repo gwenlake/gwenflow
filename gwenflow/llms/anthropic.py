@@ -23,6 +23,33 @@ from gwenflow.types import (
 )
 from gwenflow.utils import extract_json_str
 
+# Anthropic requires `max_tokens` on every request (the other providers let us
+# omit it), so when the caller leaves it unset we fall back to the model's own
+# output ceiling instead of capping the answer at an arbitrary value.
+MAX_OUTPUT_TOKENS: Dict[str, int] = {
+    "claude-fable-5": 128000,
+    "claude-mythos-5": 128000,
+    "claude-opus-4-8": 128000,
+    "claude-opus-4-7": 128000,
+    "claude-opus-4-6": 128000,
+    "claude-opus-4-5": 64000,
+    "claude-opus-4-1": 32000,
+    "claude-sonnet-5": 128000,
+    "claude-sonnet-4-6": 128000,
+    "claude-sonnet-4-5": 64000,
+    "claude-haiku-4-5": 64000,
+    "claude-haiku-4-5-20251001": 64000,
+}
+DEFAULT_MAX_OUTPUT_TOKENS = 32000
+
+# The Anthropic SDK refuses non-streaming requests whose output budget could
+# outlive its 10-minute HTTP timeout, so those fall back lower.
+MAX_OUTPUT_TOKENS_NON_STREAMING = 16000
+MAX_OUTPUT_TOKENS_NON_STREAMING_LEGACY: Dict[str, int] = {
+    "claude-opus-4-0": 8192,
+    "claude-opus-4-1": 8192,
+}
+
 
 def response_to_anthropic_dict(response: ModelResponse) -> Dict[str, Any]:
     """Serialize a ModelResponse to an Anthropic Messages-shaped dict.
@@ -81,7 +108,7 @@ class ChatAnthropic(ChatBase):
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     stop_sequences: Optional[List[str]] = None
-    max_tokens: Optional[int] = 4096
+    max_tokens: Optional[int] = None
     response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None
 
     # extended thinking — pass e.g. {"type": "enabled", "budget_tokens": 1024}
@@ -118,10 +145,15 @@ class ChatAnthropic(ChatBase):
 
         return {k: v for k, v in client_params.items() if v is not None}
 
-    @property
-    def _model_params(self) -> Dict[str, Any]:
+    def _default_max_tokens(self, stream: bool) -> int:
+        """Output ceiling to use when the caller didn't set `max_tokens`."""
+        if not stream:
+            return MAX_OUTPUT_TOKENS_NON_STREAMING_LEGACY.get(self.model, MAX_OUTPUT_TOKENS_NON_STREAMING)
+        return MAX_OUTPUT_TOKENS.get(self.model, DEFAULT_MAX_OUTPUT_TOKENS)
+
+    def _get_model_params(self, stream: bool = False) -> Dict[str, Any]:
         model_params = {
-            "max_tokens": self.max_tokens or 4096,
+            "max_tokens": self.max_tokens or self._default_max_tokens(stream),
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
@@ -139,6 +171,11 @@ class ChatAnthropic(ChatBase):
             model_params["thinking"] = self.thinking
 
         return {k: v for k, v in model_params.items() if v is not None}
+
+    @property
+    def _model_params(self) -> Dict[str, Any]:
+        """Kept as a property: the telemetry layer reads it off the instance."""
+        return self._get_model_params()
 
     def _tool_to_anthropic(self, tool: Tool) -> Dict[str, Any]:
         return {
@@ -328,9 +365,9 @@ class ChatAnthropic(ChatBase):
 
         return model_response
 
-    def _build_request(self, messages: List[Message]) -> Dict[str, Any]:
+    def _build_request(self, messages: List[Message], stream: bool = False) -> Dict[str, Any]:
         formatted_messages = self._format_messages(messages)
-        payload = {"model": self.model, "messages": formatted_messages, **self._model_params}
+        payload = {"model": self.model, "messages": formatted_messages, **self._get_model_params(stream)}
         if self.system_prompt:
             payload["system"] = self.system_prompt
         return payload
@@ -357,7 +394,7 @@ class ChatAnthropic(ChatBase):
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
         try:
             messages_for_model = self.input_to_message_list(input)
-            request = self._build_request(messages_for_model)
+            request = self._build_request(messages_for_model, stream=True)
             _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
 
@@ -424,7 +461,7 @@ class ChatAnthropic(ChatBase):
     async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
         try:
             messages_for_model = self.input_to_message_list(input)
-            request = self._build_request(messages_for_model)
+            request = self._build_request(messages_for_model, stream=True)
             _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
 
