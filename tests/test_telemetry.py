@@ -7,6 +7,7 @@ import gwenflow.telemetry.base as base_mod
 from gwenflow.telemetry._settings import is_tracing_enabled, set_tracing_enabled
 from gwenflow.telemetry.base import Telemetry, build_resource_attributes, resolve_endpoint
 from gwenflow.telemetry.tracer import DecoratorTracer
+from gwenflow.types import Document
 
 pytest.importorskip("opentelemetry.sdk.trace")
 
@@ -24,12 +25,16 @@ class _Usage:
     total_tokens = 20
     cache_read_tokens = 3
     cache_write_tokens = 0
+    input_audio_tokens = 4
+    output_audio_tokens = 2
+    details = {"reasoning_tokens": 5}
 
 
 class _Response:
     content = "hello world"
     tool_calls: list = []
     usage = _Usage()
+    finish_reason = "stop"
 
 
 class _Chunk:
@@ -74,6 +79,53 @@ class FakeAgent:
     @T.agent(name="Agent Run")
     def run(self, input):
         return self.llm.invoke(input)
+
+
+class _AgentUsage:
+    requests = 2
+    tool_calls = 1
+
+
+class _AgentResult:
+    content = "done"
+    tool_calls = None
+    usage = _AgentUsage()
+
+
+class FakeAgentWithUsage:
+    name = "Planner"
+
+    @T.agent(name="Agent Run With Usage")
+    def run(self, input):
+        return _AgentResult()
+
+
+class FakeRetriever:
+    name = "kb"
+
+    @T.retriever(name="Retriever Search")
+    def search(self, query):
+        return [
+            Document(id="d1", content="alpha", score=0.9, metadata={"src": "wiki"}),
+            Document(id="d2", content="beta", score=0.5),
+        ]
+
+
+class FakeEmbeddings:
+    model = "emb-test"
+
+    @T.embedding(name="Embed Documents")
+    def embed_documents(self, texts):
+        return [[0.1, 0.2] for _ in texts]
+
+
+class FakeReranker:
+    model = "rr-test"
+    top_k = 3
+
+    @T.reranker(name="Rerank")
+    def rerank(self, query, documents):
+        return documents
 
 
 @pytest.fixture
@@ -137,8 +189,34 @@ def test_organization_maps_to_service_name():
     attrs = build_resource_attributes("acme-corp")
     assert attrs["service.name"] == "acme-corp"
     assert attrs["service.version"]
-    # "project" is now a per-request span attribute, not a resource attribute.
     assert "openinference.project.name" not in attrs
+
+
+def test_resource_omits_service_name_without_organization():
+    attrs = build_resource_attributes(None)
+    assert "service.name" not in attrs
+    assert attrs["service.version"]
+
+
+def test_api_key_overrides_default_organization(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    t = Telemetry(api_key="secret-123")
+    assert t.organization is None
+
+
+def test_default_organization_without_api_key(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
+    t = Telemetry()
+    assert t.organization == "gwenflow"
+
+
+def test_explicit_organization_kept_even_with_api_key(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(organization="acme", api_key="secret-123")
+    assert t.organization == "acme"
 
 
 # --- enablement / no-op ---------------------------------------------------------
@@ -147,7 +225,7 @@ def test_organization_maps_to_service_name():
 def test_telemetry_noop_when_deps_missing(monkeypatch):
     set_tracing_enabled(False)
     monkeypatch.setattr(base_mod, "is_otel_available", lambda: False)
-    Telemetry(organization="x")  # should warn and stay disabled, never raise
+    Telemetry(organization="x")
     assert is_tracing_enabled() is False
 
 
@@ -156,6 +234,38 @@ def test_telemetry_disabled_via_env(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     Telemetry(organization="x")
     assert is_tracing_enabled() is False
+
+
+def _reuse_existing_provider(monkeypatch):
+    """Force _configure() down the 'a TracerProvider already exists' branch."""
+    from opentelemetry import trace as otel_trace
+
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+    monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
+    monkeypatch.setattr(base_mod, "is_otel_available", lambda: True)
+    existing = TracerProvider()  # a genuine SDK provider, never set globally
+    monkeypatch.setattr(otel_trace, "get_tracer_provider", lambda: existing)
+
+
+def test_reuse_existing_provider_warns_when_export_config_ignored(monkeypatch):
+    _reuse_existing_provider(monkeypatch)
+    warnings: list[str] = []
+    monkeypatch.setattr(base_mod.logger, "warning", lambda msg, *a, **k: warnings.append(msg))
+
+    Telemetry(organization="acme", api_key="secret-123")
+
+    assert any("ignored" in w for w in warnings)
+
+
+def test_reuse_existing_provider_is_quiet_without_export_config(monkeypatch):
+    _reuse_existing_provider(monkeypatch)
+    warnings: list[str] = []
+    monkeypatch.setattr(base_mod.logger, "warning", lambda msg, *a, **k: warnings.append(msg))
+
+    Telemetry(organization="acme")  # no endpoint/api_key/auth/headers to drop
+
+    assert warnings == []
+    assert is_tracing_enabled() is True
 
 
 # --- api key / auth headers -----------------------------------------------------
@@ -254,6 +364,71 @@ def test_llm_span_attributes(spans):
     assert span.status.status_code == StatusCode.OK
 
 
+def test_llm_span_captures_finish_reason_and_detailed_tokens(spans):
+    FakeLLM().invoke("hi")
+    attrs = dict(spans.get_finished_spans()[0].attributes)
+    assert attrs["llm.finish_reason"] == "stop"
+    assert attrs["llm.token_count.prompt_details.audio"] == 4
+    assert attrs["llm.token_count.completion_details.audio"] == 2
+    assert attrs["llm.token_count.completion_details.reasoning"] == 5
+
+
+def test_agent_span_captures_run_counts(spans):
+    FakeAgentWithUsage().run("go")
+    attrs = dict(spans.get_finished_spans()[0].attributes)
+    assert attrs["gwenflow.agent.llm_requests"] == 2
+    assert attrs["gwenflow.agent.tool_calls"] == 1
+
+
+# --- RAG span kinds (retriever / embedding / reranker) --------------------------
+
+
+def test_retriever_span_captures_documents(spans):
+    FakeRetriever().search("what is rag?")
+    (span,) = spans.get_finished_spans()
+    attrs = dict(span.attributes)
+    assert span.name == "Retriever Search"
+    assert attrs["openinference.span.kind"] == "RETRIEVER"
+    assert attrs["input.value"] == "what is rag?"
+    assert attrs["retrieval.documents.0.document.id"] == "d1"
+    assert attrs["retrieval.documents.0.document.content"] == "alpha"
+    assert attrs["retrieval.documents.0.document.score"] == 0.9
+    assert attrs["retrieval.documents.1.document.id"] == "d2"
+    assert span.status.status_code == StatusCode.OK
+
+
+def test_retriever_redacts_document_content_but_keeps_ids(spans, monkeypatch):
+    monkeypatch.setenv("GWENFLOW_TELEMETRY_CAPTURE_CONTENT", "false")
+    FakeRetriever().search("q")
+    attrs = dict(spans.get_finished_spans()[0].attributes)
+    assert attrs["retrieval.documents.0.document.content"] == "__REDACTED__"
+    assert attrs["retrieval.documents.0.document.id"] == "d1"
+    assert attrs["retrieval.documents.0.document.score"] == 0.9
+
+
+def test_embedding_span(spans):
+    FakeEmbeddings().embed_documents(["a", "b"])
+    (span,) = spans.get_finished_spans()
+    attrs = dict(span.attributes)
+    assert span.name == "Embed Documents"
+    assert attrs["openinference.span.kind"] == "EMBEDDING"
+    assert attrs["embedding.model_name"] == "emb-test"
+    # Raw vectors are never emitted as an output.
+    assert "output.value" not in attrs
+
+
+def test_reranker_span(spans):
+    docs = [Document(content="a"), Document(content="b")]
+    FakeReranker().rerank("q", docs)
+    (span,) = spans.get_finished_spans()
+    attrs = dict(span.attributes)
+    assert span.name == "Rerank"
+    assert attrs["openinference.span.kind"] == "RERANKER"
+    assert attrs["reranking.model_name"] == "rr-test"
+    assert attrs["reranking.top_k"] == 3
+    assert attrs["reranking.output_documents.0.document.content"] == "a"
+
+
 def test_agent_wraps_llm_with_correct_nesting(spans):
     FakeAgent().run("find the score")
     finished = spans.get_finished_spans()
@@ -261,7 +436,6 @@ def test_agent_wraps_llm_with_correct_nesting(spans):
     assert set(by_name) == {"Agent Run", "LLM Invoke"}
     agent_span, llm_span = by_name["Agent Run"], by_name["LLM Invoke"]
     assert dict(agent_span.attributes)["gwenflow.agent.name"] == "Researcher"
-    # LLM span is a child of the agent span, sharing one trace.
     assert llm_span.parent is not None
     assert llm_span.parent.span_id == agent_span.context.span_id
     assert llm_span.context.trace_id == agent_span.context.trace_id
@@ -323,8 +497,8 @@ def test_session_cleanup_never_raises_across_contexts():
 
     cm = T.session("s1", user_id="u1")
     child_ctx = contextvars.copy_context()
-    child_ctx.run(cm.__enter__)  # `set` happens in the child context
-    cm.__exit__(None, None, None)  # cleanup in the parent context must not raise
+    child_ctx.run(cm.__enter__)
+    cm.__exit__(None, None, None)
     assert _telemetry_context.get() is None
 
 
@@ -339,9 +513,9 @@ def test_session_survives_generator_aclose():
     async def run():
         gen = stream()
         assert await gen.__anext__() == 0
-        assert _telemetry_context.get()["session.id"] == "thread-123"  # active while suspended
-        await gen.aclose()  # simulate client disconnect — must not raise
-        assert _telemetry_context.get() is None  # restored
+        assert _telemetry_context.get()["session.id"] == "thread-123"
+        await gen.aclose()
+        assert _telemetry_context.get() is None
 
     asyncio.run(run())
 
@@ -362,7 +536,6 @@ def test_session_nesting_restores_outer():
 
 
 def test_context_is_pure_metadata(spans):
-    # context() makes no assumptions: every attribute key is whatever you pass.
     with T.context(metadata={"session.id": "thread-1", "project.id": "acme", "project.name": "ACME Corp"}):
         FakeLLM().invoke("hi")
     attrs = dict(spans.get_finished_spans()[0].attributes)
@@ -372,7 +545,6 @@ def test_context_is_pure_metadata(spans):
 
 
 def test_context_metadata_merges_when_nested(spans):
-    # Outer block sets the project; inner sets the session — a span sees both.
     with T.context(metadata={"project.id": "acme"}):
         with T.context(metadata={"session.id": "thread-9"}):
             FakeLLM().invoke("hi")
@@ -382,7 +554,6 @@ def test_context_metadata_merges_when_nested(spans):
 
 
 def test_session_sugar_maps_to_openinference_keys(spans):
-    # session() is optional sugar over context() for the session/user conventions.
     with T.session("thread-1", user_id="user-1", metadata={"project.id": "acme"}):
         FakeLLM().invoke("hi")
     attrs = dict(spans.get_finished_spans()[0].attributes)
@@ -401,7 +572,6 @@ def test_capture_disabled_redacts_io(spans, monkeypatch):
     attrs = dict(span.attributes)
     assert attrs["input.value"] == "__REDACTED__"
     assert attrs["output.value"] == "__REDACTED__"
-    # Non-sensitive metadata is still captured.
     assert attrs["llm.model_name"] == "gpt-test"
     assert attrs["llm.token_count.total"] == 20
 

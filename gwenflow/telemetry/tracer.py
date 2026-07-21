@@ -6,7 +6,15 @@ from typing import Any
 
 from gwenflow.telemetry import _semconv as sc
 from gwenflow.telemetry._settings import is_tracing_enabled
-from gwenflow.telemetry.utils import capture_llm_usage, capture_tool_calls, record_inputs, record_outputs
+from gwenflow.telemetry.utils import (
+    capture_agent_usage,
+    capture_finish_reason,
+    capture_llm_usage,
+    capture_tool_calls,
+    record_documents,
+    record_inputs,
+    record_outputs,
+)
 
 _telemetry_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "gwenflow_telemetry_context", default=None
@@ -68,6 +76,17 @@ class DecoratorTracer:
     def _finalize(self, span, kind_name: str, result_for_usage: Any, content: str, tool_calls: Any) -> None:
         if kind_name == "LLM":
             capture_llm_usage(span, result_for_usage)
+            capture_finish_reason(span, result_for_usage)
+        elif kind_name == "AGENT":
+            capture_agent_usage(span, result_for_usage)
+        elif kind_name == "RETRIEVER":
+            record_documents(span, sc.RETRIEVAL_DOCUMENTS, result_for_usage)
+            return
+        elif kind_name == "RERANKER":
+            record_documents(span, sc.RERANKING_OUTPUT_DOCUMENTS, result_for_usage)
+            return
+        elif kind_name == "EMBEDDING":
+            return
         tc_json = capture_tool_calls(span, tool_calls)
         record_outputs(span, content, tc_json, result_for_usage)
 
@@ -259,6 +278,15 @@ class DecoratorTracer:
 
     def flow(self, name: str | None = None):
         return self._wrap_logic("name", "CHAIN", name)
+
+    def retriever(self, name: str | None = None):
+        return self._wrap_logic("name", "RETRIEVER", name)
+
+    def embedding(self, name: str | None = None):
+        return self._wrap_logic("model", "EMBEDDING", name)
+
+    def reranker(self, name: str | None = None):
+        return self._wrap_logic("model", "RERANKER", name)
 
 
 tracer = DecoratorTracer()

@@ -76,12 +76,46 @@ def record_inputs(span, kind_name: str, instance: Any, func: Callable, args: tup
         tool_name = _find_tool_name(args, kwargs)
         if tool_name:
             span.set_attribute(sc.TOOL_NAME, tool_name)
+    elif kind_name == "EMBEDDING":
+        model = getattr(instance, "model", None)
+        if model:
+            span.set_attribute(sc.EMBEDDING_MODEL_NAME, str(model))
+    elif kind_name == "RERANKER":
+        model = getattr(instance, "model", None)
+        if model:
+            span.set_attribute(sc.RERANKING_MODEL_NAME, str(model))
+        top_k = getattr(instance, "top_k", None)
+        if isinstance(top_k, int):
+            span.set_attribute(sc.RERANKING_TOP_K, top_k)
+
+
+_PROVIDER_BY_CLASS = {
+    "ChatOpenAI": "openai",
+    "ChatAzureOpenAI": "azure_openai",
+    "ChatGwenlake": "gwenlake",
+    "ChatDeepSeek": "deepseek",
+    "ChatOllama": "ollama",
+    "ChatAnthropic": "anthropic",
+    "ChatMistral": "mistral",
+    "ChatGoogle": "google",
+}
+
+
+def _resolve_provider(instance: Any) -> str | None:
+    for klass in type(instance).__mro__:
+        provider = _PROVIDER_BY_CLASS.get(klass.__name__)
+        if provider:
+            return provider
+    return None
 
 
 def _prepare_llm_attributes(span, instance: Any) -> None:
     model = getattr(instance, "model", None)
     if model is not None:
         span.set_attribute(sc.LLM_MODEL_NAME, str(model))
+    provider = _resolve_provider(instance)
+    if provider:
+        span.set_attribute(sc.LLM_PROVIDER, provider)
     params = getattr(instance, "_model_params", None)
     if params:
         span.set_attribute(sc.LLM_INVOCATION_PARAMETERS, truncate(json.dumps(params, default=str)))
@@ -96,11 +130,70 @@ def capture_llm_usage(span, result: Any) -> None:
     _set_int(span, sc.LLM_TOKEN_COUNT_TOTAL, getattr(usage, "total_tokens", None))
     _set_int(span, sc.LLM_TOKEN_COUNT_PROMPT_CACHE_READ, getattr(usage, "cache_read_tokens", None))
     _set_int(span, sc.LLM_TOKEN_COUNT_PROMPT_CACHE_WRITE, getattr(usage, "cache_write_tokens", None))
+    _set_int(span, sc.LLM_TOKEN_COUNT_PROMPT_AUDIO, getattr(usage, "input_audio_tokens", None))
+    _set_int(span, sc.LLM_TOKEN_COUNT_COMPLETION_AUDIO, getattr(usage, "output_audio_tokens", None))
+    details = getattr(usage, "details", None)
+    if isinstance(details, dict):
+        _set_int(span, sc.LLM_TOKEN_COUNT_COMPLETION_REASONING, details.get("reasoning_tokens"))
+
+
+def capture_finish_reason(span, result: Any) -> None:
+    finish_reason = getattr(result, "finish_reason", None)
+    if finish_reason:
+        span.set_attribute(sc.LLM_FINISH_REASON, str(finish_reason))
+
+
+def capture_agent_usage(span, result: Any) -> None:
+    usage = getattr(result, "usage", None)
+    if not usage:
+        return
+    _set_int(span, sc.AGENT_LLM_REQUESTS, getattr(usage, "requests", None))
+    _set_int(span, sc.AGENT_TOOL_CALLS, getattr(usage, "tool_calls", None))
 
 
 def _set_int(span, key: str, value: Any) -> None:
     if isinstance(value, int) and value > 0:
         span.set_attribute(key, value)
+
+
+def _document_fields(doc: Any) -> dict:
+    if hasattr(doc, "to_dict") and callable(doc.to_dict):
+        try:
+            return doc.to_dict()
+        except Exception:
+            pass
+    if isinstance(doc, dict):
+        return doc
+    return {"content": safe_serialize(doc)}
+
+
+def record_documents(span, prefix: str, documents: Any) -> None:
+    """Emit OpenInference document attributes for a retriever / reranker result.
+
+    Content is redacted when output capture is off; id / score stay as they are
+    non-sensitive routing metadata.
+    """
+    if not documents:
+        return
+    capture = should_capture_outputs()
+    try:
+        for i, doc in enumerate(documents):
+            fields = _document_fields(doc)
+            base = f"{prefix}.{i}.document"
+            doc_id = fields.get("id")
+            if doc_id is not None:
+                span.set_attribute(f"{base}.id", str(doc_id))
+            score = fields.get("score")
+            if isinstance(score, (int, float)):
+                span.set_attribute(f"{base}.score", float(score))
+            content = fields.get("content")
+            if content is not None:
+                span.set_attribute(f"{base}.content", truncate(str(content)) if capture else REDACTED)
+            metadata = fields.get("metadata")
+            if capture and metadata:
+                span.set_attribute(f"{base}.metadata", truncate(json.dumps(metadata, default=str)))
+    except Exception:
+        pass
 
 
 def capture_tool_calls(span, tool_calls: Any) -> str | None:
@@ -140,4 +233,7 @@ _SPAN_KINDS = {
     "AGENT": sc.SPAN_KIND_AGENT,
     "TOOL": sc.SPAN_KIND_TOOL,
     "CHAIN": sc.SPAN_KIND_CHAIN,
+    "RETRIEVER": sc.SPAN_KIND_RETRIEVER,
+    "EMBEDDING": sc.SPAN_KIND_EMBEDDING,
+    "RERANKER": sc.SPAN_KIND_RERANKER,
 }

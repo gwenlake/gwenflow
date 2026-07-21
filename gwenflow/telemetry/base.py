@@ -10,11 +10,11 @@ from gwenflow.version import __version__
 _HTTP_TRACES_PATH = "/v1/traces"
 
 
-def build_resource_attributes(organization: str) -> dict[str, str]:
-    return {
-        "service.name": organization,
-        "service.version": __version__,
-    }
+def build_resource_attributes(organization: str | None) -> dict[str, str]:
+    attributes = {"service.version": __version__}
+    if organization:
+        attributes["service.name"] = organization
+    return attributes
 
 
 def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
@@ -47,10 +47,13 @@ class Telemetry:
     auth: Callable[[], dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
-        if self.organization is None:
-            self.organization = os.getenv("OTEL_SERVICE_NAME", "gwenflow")
         if self.api_key is None:
             self.api_key = os.getenv("GWENFLOW_TELEMETRY_API_KEY")
+        if self.organization is None:
+            self.organization = os.getenv("OTEL_SERVICE_NAME")
+            if self.organization is None and self.api_key is None:
+                self.organization = "gwenflow"
+        self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
 
@@ -81,7 +84,14 @@ class Telemetry:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         if isinstance(trace.get_tracer_provider(), TracerProvider):
-            logger.debug("A TracerProvider is already configured; reusing it for gwenflow telemetry.")
+            if self._has_export_config:
+                logger.warning(
+                    "A TracerProvider is already configured; gwenflow reuses it and the "
+                    "endpoint/api_key/auth/headers passed to Telemetry() are ignored. "
+                    "Configure the export on the existing provider, or call Telemetry() only once."
+                )
+            else:
+                logger.debug("A TracerProvider is already configured; reusing it for gwenflow telemetry.")
             set_tracing_enabled(True)
             return
 
