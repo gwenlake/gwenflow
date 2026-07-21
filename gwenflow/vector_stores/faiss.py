@@ -3,6 +3,7 @@ import io
 import os
 import pickle
 from typing import Optional
+import dataclasses
 
 import numpy as np
 
@@ -21,6 +22,7 @@ except ImportError as exc:
 from gwenflow.embeddings import Embeddings, GwenlakeEmbeddings
 from gwenflow.logger import logger
 from gwenflow.reranker import Reranker
+from gwenflow.retriever.bm25 import BM25
 from gwenflow.types import Document
 from gwenflow.vector_stores.base import VectorStoreBase
 
@@ -75,14 +77,19 @@ class FAISS(VectorStoreBase):
         for document in documents:
             if document.id is None:
                 document.id = hashlib.md5(document.content.encode(), usedforsecurity=False).hexdigest()
-            data.append(document.model_dump())
+            data.append(document.to_dict())
 
         if len(documents) > 0:
             self.index.add(embeddings)
             self.metadata.extend(data)
             self.save()
 
-    def search(self, query: str, limit: int = 5) -> list[Document]:
+    def _document_from_metadata(self, entry: dict) -> Document:
+        entry = entry.copy()
+        entry.pop("embedding", None)
+        return Document(**entry)
+
+    def _vector_search(self, query: str, limit: int) -> list[Document]:
         if not self.index:
             logger.error("Error no index.")
             return []
@@ -99,16 +106,47 @@ class FAISS(VectorStoreBase):
         for idx, score in zip(I[0], D[0], strict=False):
             if idx == -1:
                 continue
-            document = self.metadata[idx].copy()
-            document.pop("embedding")
-            document = Document(**document)
+            document = self._document_from_metadata(self.metadata[idx])
             document.score = score
             documents.append(document)
+
+        return documents
+
+    def search(self, query: str, limit: int = 5) -> list[Document]:
+        documents = self._vector_search(query, limit=limit)
 
         if self.reranker:
             documents = self.reranker.rerank(query=query, documents=documents)
 
         return documents
+
+    def hybrid_search(self, query: str, limit: int = 5, k: int = 60) -> list[Document]:
+        
+        def reciprocal_rank_fusion(ranked_lists: list[list[Document]], k: int = 60) -> list[Document]:
+            scores: dict[str, float] = {}
+            documents: dict[str, Document] = {}
+
+            for ranked in ranked_lists:
+                for rank, document in enumerate(ranked, start=1):
+                    scores[document.id] = scores.get(document.id, 0.0) + 1 / (k + rank)
+                    documents.setdefault(document.id, document)
+
+            fused = [dataclasses.replace(documents[document_id], score=score) for document_id, score in scores.items()]
+            fused.sort(key=lambda document: document.score, reverse=True)
+            return fused
+
+        if not self.metadata:
+            return []
+
+        documents = [self._document_from_metadata(entry) for entry in self.metadata]
+        bm25_ranked = BM25(documents).rank(query)
+        vector_ranked = self._vector_search(query, limit=len(self.metadata))
+        fused = reciprocal_rank_fusion([bm25_ranked, vector_ranked], k=k)
+
+        if self.reranker:
+            fused = self.reranker.rerank(query=query, documents=fused)
+
+        return fused[:limit]
 
     def save(self):
         try:

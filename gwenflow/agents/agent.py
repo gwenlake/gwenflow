@@ -171,6 +171,39 @@ class Agent:
             )
             return False, None, error_msg
 
+    def _tools_token_count(self) -> int:
+        """Tokens the tool schemas cost on the wire.
+
+        Every provider sends the same three fields per tool (name, description,
+        JSON-schema parameters), so a single neutral estimate covers them all.
+        These tokens never appear in the message list, so the memory buffer has
+        to be told to reserve them — a large MCP server can otherwise eat the
+        whole context margin without the buffer noticing.
+        """
+        tools = self.llm.tools or []
+        tokenizer_fn = self.history.tokenizer_fn
+        total = 0
+        for tool in tools:
+            schema = {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters,
+            }
+            total += tokenizer_fn(json.dumps(schema, default=str))
+        return total
+
+    def _prepare_history(
+        self,
+        task: str,
+        context: Optional[Union[str, Dict[str, str]]] = None,
+    ) -> None:
+        """Refresh the parts of the memory budget that are settled per run.
+
+        The system prompt and the tool schemas sent alongside every request.
+        """
+        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self.history.reserved_tokens = self._tools_token_count()
+
     def get_system_prompt(
         self,
         task: str,
@@ -321,7 +354,7 @@ class Agent:
             try:
                 args = tool_call.arguments
                 if not isinstance(args, dict):
-                    args = json.loads(args)
+                    args = json.loads(args) if args and args.strip() else {}
                 skill_name = args.get("skill_name")
                 logger.debug(f"[SKILL CALL] Loading skill '{skill_name}'")
                 skill = next((s for s in self.skills if s.name == skill_name), None)
@@ -335,7 +368,7 @@ class Agent:
             tool = tool_map[tool_call.name]
             arguments = tool_call.arguments
             if not isinstance(arguments, dict):
-                arguments = json.loads(arguments)
+                arguments = json.loads(arguments) if arguments and arguments.strip() else {}
             logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
             tool_execution.content = tool.run(**arguments)
             if tool_execution.content:
@@ -386,7 +419,7 @@ class Agent:
         )
 
         # history
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         # add reasoning
@@ -468,7 +501,7 @@ class Agent:
                 for tool_call in response.tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -524,7 +557,7 @@ class Agent:
             )
         )
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -600,7 +633,7 @@ class Agent:
                 for tool_call in response.tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -656,7 +689,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -736,7 +769,7 @@ class Agent:
                 for tool_call in final_tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,
@@ -796,7 +829,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._prepare_history(task=task, context=context)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -873,7 +906,7 @@ class Agent:
                 for tool_call in final_tool_calls:
                     args = tool_call.arguments
                     if not isinstance(args, dict):
-                        args = json.loads(args)
+                        args = json.loads(args) if args and args.strip() else {}
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,

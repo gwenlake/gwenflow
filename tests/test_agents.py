@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from gwenflow.agents.agent import Agent
+from gwenflow.llms.base import ChatBase
 from gwenflow.tools import BaseTool
 from gwenflow.types import ModelResponse, RequestUsage, TextContent, ToolCall
 
@@ -284,3 +285,149 @@ def test_agent_run_real_api():
     assert result.content is not None
     assert result.finish_reason == "stop"
     assert result.usage.input_tokens > 0
+
+
+# ---------------------------------------------------------------------------
+# Memory budget: tool schemas
+# ---------------------------------------------------------------------------
+
+
+def test_tools_token_count_reserves_schema_budget():
+    agent = Agent(name="a", instructions="Be terse.", llm=_mock_llm([]), tools=[AddTool()])
+    assert agent._tools_token_count() > 0
+
+
+def test_tools_token_count_is_zero_without_tools():
+    agent = Agent(name="a", instructions="Be terse.", llm=_mock_llm([]))
+    assert agent._tools_token_count() == 0
+
+
+def test_prepare_history_sets_reserved_tokens():
+    agent = Agent(name="a", instructions="Be terse.", llm=_mock_llm([]), tools=[AddTool()])
+    assert agent.history.reserved_tokens == 0
+    agent._prepare_history(task="do something")
+    assert agent.history.reserved_tokens == agent._tools_token_count() > 0
+    assert agent.history.system_prompt
+
+
+# ---------------------------------------------------------------------------
+# Memory budget: end-to-end tool loop
+# ---------------------------------------------------------------------------
+
+
+@dataclass(kw_only=True)
+class BigSearchTool(BaseTool):
+    name: str = "search"
+    description: str = "Search the web for a query and return results."
+
+    def _run(self, query: str) -> str:
+        """Search the web.
+
+        Args:
+            query: what to look for.
+        """
+        return f"RESULTS for {query}: " + "lorem ipsum dolor sit amet " * 60
+
+
+def _capturing_llm(context_size, tool_turns):
+    """LLM that requests a tool call `tool_turns` times, recording each prompt."""
+    captured = []
+
+    def invoke(input=None, **kwargs):
+        captured.append(input)
+        n = len(captured)
+        if n <= tool_turns:
+            return ModelResponse(
+                parts=[ToolCall(id=f"call_{n}", name="search", arguments='{"query": "market ' + str(n) + '"}')],
+                finish_reason="tool_calls",
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextContent(content="final report")],
+            finish_reason="stop",
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    llm = _mock_llm([])
+    llm.get_context_size.return_value = context_size
+    llm.invoke.side_effect = invoke
+    # A bare MagicMock returns an empty iterable here, so nothing would ever
+    # reach memory and the test would pass vacuously.
+    llm.input_to_message_list.side_effect = ChatBase.input_to_message_list.__get__(llm)
+    llm.get_thinking_parts.return_value = None
+    return llm, captured
+
+
+def test_tool_loop_never_sends_a_task_less_prompt():
+    """Every turn must carry the task, however long the tool loop runs.
+
+    Regression: once a tool loop overflowed the budget, every later turn was
+    sent to the model with nothing but a system prompt — the agent silently
+    kept running with no task and no tool results.
+    """
+    task = "Analyse the French cloud market and write a report."
+    llm, captured = _capturing_llm(context_size=1200, tool_turns=6)
+    agent = Agent(name="analyst", instructions="Be terse.", llm=llm, tools=[BigSearchTool()])
+
+    agent.run(task)
+
+    assert len(captured) == 7
+    for turn, messages in enumerate(captured, 1):
+        roles = [m["role"] for m in messages]
+        non_system = [r for r in roles if r != "system"]
+        assert non_system, f"turn {turn} was sent with only a system prompt: {roles}"
+        assert non_system[0] != "tool", f"turn {turn} opens on an orphan tool response: {roles}"
+        assert any(
+            task[:20] in str(m.get("content") or "") for m in messages
+        ), f"turn {turn} lost the user task: {roles}"
+
+
+def test_tool_loop_window_stays_bounded():
+    """The window must still slide — keeping everything would defeat the buffer."""
+    llm, captured = _capturing_llm(context_size=1200, tool_turns=6)
+    agent = Agent(name="analyst", instructions="Be terse.", llm=llm, tools=[BigSearchTool()])
+
+    agent.run("Analyse the French cloud market.")
+
+    # Without pruning the last turn would carry 1 user + 6*(assistant+tool) = 13 messages
+    assert len(captured[-1]) < 13
+
+
+def test_streaming_tool_loop_never_sends_a_task_less_prompt():
+    """Same regression on the streaming path.
+
+    The run didn't crash, it just started talking to a model that had been
+    given no task.
+    """
+    task = "Analyse the French cloud market and write a report."
+    captured = []
+
+    def stream(input=None, **kwargs):
+        captured.append(input)
+        n = len(captured)
+        if n <= 6:
+            yield ModelResponse(
+                parts=[ToolCall(id=f"call_{n}", name="search", arguments='{"query": "market ' + str(n) + '"}')],
+                finish_reason="tool_calls",
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            for word in ["final ", "report"]:
+                yield ModelResponse(parts=[TextContent(content=word)], usage=RequestUsage(output_tokens=1))
+
+    llm = _mock_llm([])
+    llm.get_context_size.return_value = 1200
+    llm.stream.side_effect = stream
+    llm.input_to_message_list.side_effect = ChatBase.input_to_message_list.__get__(llm)
+    llm.get_thinking_parts.return_value = None
+
+    agent = Agent(name="analyst", instructions="Be terse.", llm=llm, tools=[BigSearchTool()])
+    streamed = "".join(
+        e.content for e in agent.run_stream(task) if type(e).__name__ == "AgentEventContent" and e.content
+    )
+
+    assert streamed == "final report"
+    for turn, messages in enumerate(captured, 1):
+        non_system = [m["role"] for m in messages if m["role"] != "system"]
+        assert non_system, f"turn {turn} was streamed with only a system prompt"
+        assert any(task[:20] in str(m.get("content") or "") for m in messages), f"turn {turn} lost the user task"

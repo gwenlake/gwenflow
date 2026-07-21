@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "1.0.0"
+version = "1.0.7"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -17,7 +17,7 @@ dependencies = [
     "rich==14.3.3",
     "anthropic>=0.49",
     "openai==2.15.0",
-    "mistralai>=1.5",
+    "mistralai>=2.0",
     "google-genai>=1.0",
     "boto3==1.42.56",
     "mcp==1.25.0",

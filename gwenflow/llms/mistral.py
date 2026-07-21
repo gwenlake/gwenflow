@@ -11,8 +11,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
-from mistralai import Mistral as MistralClient
-from mistralai.models import (
+from mistralai.client import Mistral as MistralClient
+from mistralai.client.models import (
     AssistantMessage,
     DocumentURLChunk,
     ImageURLChunk,
