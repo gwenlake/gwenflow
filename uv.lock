@@ -533,7 +533,7 @@ wheels = [
 
 [[package]]
 name = "gwenflow"
-version = "1.0.2"
+version = "1.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
