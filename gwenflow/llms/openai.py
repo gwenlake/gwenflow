@@ -176,6 +176,7 @@ class ChatOpenAI(ChatBase):
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
+    prompt_cache_key: Optional[str] = None
 
     # reasoning / thinking
     reasoning_effort: Optional[str] = None
@@ -237,6 +238,7 @@ class ChatOpenAI(ChatBase):
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
             "reasoning_effort": self.reasoning_effort,
+            "prompt_cache_key": self.prompt_cache_key,
         }
 
         if self.tools and self.tool_type == "fncall":
@@ -308,9 +310,14 @@ class ChatOpenAI(ChatBase):
         if hasattr(completion.usage, "completion_tokens_details"):
             if completion.usage.completion_tokens_details:
                 details = completion.usage.completion_tokens_details.model_dump()
+        cache_read_tokens = 0
+        prompt_details = getattr(completion.usage, "prompt_tokens_details", None)
+        if prompt_details is not None:
+            cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
         return RequestUsage(
             input_tokens=completion.usage.prompt_tokens,
             output_tokens=completion.usage.completion_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
 
@@ -319,16 +326,10 @@ class ChatOpenAI(ChatBase):
         for block in completion.choices:
             msg = block.message
 
-            # Native reasoning fields, in priority order:
-            #   - reasoning_content: DeepSeek-R1, Mistral Magistral, vLLM/Ollama
-            #     servers with --reasoning-parser
-            #   - reasoning: OpenAI gpt-5 / o-series via Chat Completions,
-            #     OpenRouter passthrough
             reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
 
             content = msg.content
 
-            # Fallback for local models that emit <think>...</think> inline
             if self.extract_think_tags and content:
                 tag_thinking, content = _split_think_tags(content)
                 if tag_thinking and not reasoning:
@@ -339,8 +340,6 @@ class ChatOpenAI(ChatBase):
             if content:
                 parts.append(TextContent(content=content))
 
-            # Audio output (gpt-4o-audio-preview): `message.audio` carries
-            # base64 audio data + optional transcript + provider id/expiry in extra.
             audio = getattr(msg, "audio", None)
             if audio is not None and getattr(audio, "data", None):
                 extra: Dict[str, Any] = {}
