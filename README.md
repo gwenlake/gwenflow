@@ -428,6 +428,48 @@ runner = FlowRunner("flows/news_summary.yaml")
 runner.run()
 ```
 
+## Telemetry & Observability
+
+Gwenflow ships with optional, standards-based tracing built on [OpenTelemetry](https://opentelemetry.io/) and the [OpenInference](https://github.com/Arize-ai/openinference) semantic conventions, so traces flow into **any** OTLP-compatible backend (Jaeger, Grafana Tempo, Arize Phoenix, Langfuse, Honeycomb, …).
+
+It is **off by default and zero-overhead** until you enable it: when the telemetry packages aren't installed (or no `Telemetry()` is configured), every agent / LLM / tool / flow call is a transparent pass-through.
+
+Install the extra and turn it on:
+
+```bash
+uv add "gwenflow[telemetry]"
+```
+
+```python
+from gwenflow import Agent, ChatOpenAI, Telemetry
+
+# One line enables OTLP export. Defaults to http://localhost:4318 (OTLP/HTTP).
+Telemetry(organization="gwenflow")
+
+agent = Agent(name="Researcher", llm=ChatOpenAI(model="gpt-4o-mini"))
+agent.run("What is the capital of France?")
+```
+
+Traces are organized so a backend can drill down from a whole organization to a single operation — **organization → project → session → trace → span**:
+
+- **Organization** — `Telemetry(organization=...)`, reported as the standard OTel resource attribute `service.name` (used natively by Jaeger, Phoenix Arize). Fixed per process.
+- **Per-request attributes** — attach anything to every span in a block with `tracer.context(metadata={...})`: a project, an environment, a session, … Nothing is privileged or required.
+- **Trace** — one top-level call (`agent.run`, `flow.run`); spans nest automatically into an agentic tree (`Flow → Agent → LLM / Tool`) capturing model, token usage, latency, tool calls and status.
+
+```python
+from gwenflow.telemetry import tracer
+
+# Fully flexible — every key is yours; nothing is assumed or required.
+with tracer.context(metadata={"project.id": "support-bot", "session.id": "conversation-123"}):
+    agent.run("...")
+
+# Opt-in for the OpenInference session.id / user.id conventions (all args optional):
+with tracer.session("conversation-123", user_id="user-42", metadata={"project.id": "support-bot"}):
+    agent.run("...")
+```
+
+`metadata` keys are plain span attributes (blocks nest, inner keys win), so they stay compatible with any backend: your own tooling can build an `organization → project → session → trace → span` hierarchy from them, Jaeger shows them as filterable tags, and OpenInference tools (Phoenix Arize) recognise `session.id` / `user.id` if you choose to use those conventional keys. `session.id` is not a core OTLP concept — it is offered as opt-in, never imposed. (Resource-level fixed attributes can also be added via the standard `OTEL_RESOURCE_ATTRIBUTES` env var.)
+
 ## More Examples
 
 Explore practical implementations and advanced scenarios in the [`examples/`](https://github.com/gwenlake/gwenflow/tree/main/examples) directory.

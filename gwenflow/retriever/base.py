@@ -6,6 +6,7 @@ from gwenflow.embeddings import GwenlakeEmbeddings
 from gwenflow.logger import logger
 from gwenflow.parsers.text_splitters import TokenTextSplitter
 from gwenflow.reranker import GwenlakeReranker
+from gwenflow.telemetry import tracer
 from gwenflow.types.document import Document
 from gwenflow.vector_stores.base import VectorStoreBase
 
@@ -37,6 +38,7 @@ class Retriever:
             except Exception as e:
                 logger.error(f"Error creating retriever: {e}")
 
+    @tracer.retriever(name="Retriever Search")
     def search(self, query: str, filters: dict = None) -> list[Document]:
         try:
             if not self.vector_db:

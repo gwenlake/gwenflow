@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "1.0.7"
+version = "1.0.8"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -40,6 +40,13 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.optional-dependencies]
+telemetry = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+    "openinference-semantic-conventions>=0.1.9",
+]
+
 [project.scripts]
 gwenflow = "gwenflow.cli:main"
 
@@ -66,10 +73,8 @@ dev = [
     "requests-mock==1.12.1",
     "ruff==0.6.9",
     "syrupy==4.7.2",
-    "opentelemetry-sdk==1.39.1",
-    "opentelemetry-exporter-otlp==1.39.1",
-    "openinference-semantic-conventions==0.1.9",
     "licensecheck==2025.1.0",
+    "gwenflow[telemetry]",
 ]
 
 [tool.licensecheck]

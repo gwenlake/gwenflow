@@ -9,6 +9,7 @@ import yaml
 
 from gwenflow.flows.handlers import NODE_TYPE_REGISTRY
 from gwenflow.logger import logger
+from gwenflow.telemetry import tracer
 
 
 @dataclass
@@ -164,6 +165,7 @@ class FlowRunner:
 
         net.show("pipeline.html", notebook=False)
 
+    @tracer.flow(name="Flow Run")
     def run(self) -> None:
         order = list(nx.topological_sort(self.graph))
         results: dict[str, Any] = {}

@@ -7,6 +7,7 @@ import requests
 from gwenflow.api import Api, api
 from gwenflow.logger import logger
 from gwenflow.reranker.base import Reranker
+from gwenflow.telemetry import tracer
 from gwenflow.types import Document
 
 
@@ -41,6 +42,7 @@ class GwenlakeReranker(Reranker):
 
         return reranking
 
+    @tracer.reranker(name="Rerank")
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         if not documents:
             return []

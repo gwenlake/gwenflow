@@ -12,6 +12,7 @@ except ImportError as e:
 
 from gwenflow.api import Api, api
 from gwenflow.embeddings.base import Embeddings
+from gwenflow.telemetry import tracer
 
 EMBEDDING_DIMS = {
     "intfloat/e5-base-v2": 768,
@@ -58,6 +59,7 @@ class GwenlakeEmbeddings(Embeddings):
 
         return embeddings
 
+    @tracer.embedding(name="Embed Documents")
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
@@ -81,6 +83,7 @@ class GwenlakeEmbeddings(Embeddings):
             return None
         return embeddings
 
+    @tracer.embedding(name="Embed Query")
     def embed_query(self, text: str) -> List[float]:
         text = text.replace("\n", " ")
         text = re.sub(" +", " ", text)
