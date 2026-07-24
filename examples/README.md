@@ -392,6 +392,7 @@ broadening sector mix elsewhere.
 | [`demo_flow_sequential.py`](demo_flow_sequential.py), [`demo_flow_yaml.py`](demo_flow_yaml.py) | `Flow` DAG examples |
 | [`demo_telemetry.py`](demo_telemetry.py) | OpenTelemetry tracing |
 | [`demo_tools_app.py`](demo_tools_app.py) | Tool catalogue / inspector |
+| [`llm_openai_batch.py`](llm_openai_batch.py) | `ChatOpenAI` Batch API: `create_batch` / `poll_batch` / `get_batch_results` |
 
 ---
 

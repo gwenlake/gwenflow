@@ -1,3 +1,4 @@
+import json
 import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -212,3 +213,173 @@ def test_stream_real_api():
     assert len(text_chunks) > 0
     full_text = "".join(c.content for c in text_chunks)
     assert len(full_text) > 0
+
+
+# ---------------------------------------------------------------------------
+# Batch API
+# ---------------------------------------------------------------------------
+
+
+def _make_batch_completion_body(text="hello", custom_id="0"):
+    return {
+        "id": f"chatcmpl-{custom_id}",
+        "object": "chat.completion",
+        "created": 1234567890,
+        "model": "gpt-4o-mini",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+def test_build_batch_line_shape():
+    llm = ChatOpenAI(api_key="fake-key", model="gpt-4o-mini", temperature=0.5)
+    line = llm._build_batch_line("custom-1", "hello")
+
+    assert line["custom_id"] == "custom-1"
+    assert line["method"] == "POST"
+    assert line["url"] == "/v1/chat/completions"
+    assert line["body"]["model"] == "gpt-4o-mini"
+    assert line["body"]["temperature"] == 0.5
+    assert line["body"]["messages"] == [{"role": "user", "content": "hello"}]
+
+
+def test_build_batch_file_rejects_empty_inputs():
+    llm = ChatOpenAI(api_key="fake-key")
+    with pytest.raises(ValueError, match="non-empty"):
+        llm._build_batch_file([], None)
+
+
+def test_build_batch_file_rejects_mismatched_custom_ids():
+    llm = ChatOpenAI(api_key="fake-key")
+    with pytest.raises(ValueError, match="same length"):
+        llm._build_batch_file(["a", "b"], ["only-one"])
+
+
+def test_build_batch_file_rejects_duplicate_custom_ids():
+    llm = ChatOpenAI(api_key="fake-key")
+    with pytest.raises(ValueError, match="unique"):
+        llm._build_batch_file(["a", "b"], ["dup", "dup"])
+
+
+def test_create_batch_uploads_file_and_submits_job(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.files.create.return_value = SimpleNamespace(id="file-123")
+    fake_client.batches.create.return_value = SimpleNamespace(id="batch-123", status="validating")
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    batch = llm.create_batch(["hello", "world"])
+
+    assert batch.id == "batch-123"
+    fake_client.files.create.assert_called_once()
+    assert fake_client.files.create.call_args.kwargs["purpose"] == "batch"
+    fake_client.batches.create.assert_called_once_with(
+        input_file_id="file-123",
+        endpoint="/v1/chat/completions",
+        completion_window="24h",
+        metadata=None,
+    )
+
+
+def test_get_batch_results_matches_by_custom_id(monkeypatch):
+    output_lines = "\n".join(
+        [
+            json.dumps(
+                {
+                    "custom_id": "0",
+                    "response": {"status_code": 200, "body": _make_batch_completion_body("hi zero", "0")},
+                    "error": None,
+                }
+            ),
+            json.dumps(
+                {
+                    "custom_id": "1",
+                    "response": {"status_code": 200, "body": _make_batch_completion_body("hi one", "1")},
+                    "error": None,
+                }
+            ),
+            json.dumps({"custom_id": "2", "response": None, "error": {"code": "server_error", "message": "boom"}}),
+        ]
+    )
+
+    fake_client = MagicMock()
+    fake_client.batches.retrieve.return_value = SimpleNamespace(
+        status="completed", output_file_id="out-file", error_file_id=None
+    )
+    fake_client.files.content.return_value = SimpleNamespace(text=output_lines)
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    results = llm.get_batch_results("batch-123")
+
+    assert results["0"].response.content == "hi zero"
+    assert results["0"].error is None
+    assert results["1"].response.content == "hi one"
+    assert results["2"].response is None
+    assert results["2"].error == {"code": "server_error", "message": "boom"}
+
+
+def test_get_batch_results_raises_if_not_finished(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.batches.retrieve.return_value = SimpleNamespace(
+        status="in_progress", output_file_id=None, error_file_id=None
+    )
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    with pytest.raises(RuntimeError, match="not finished yet"):
+        llm.get_batch_results("batch-123")
+
+
+def test_get_batch_results_surfaces_validation_errors_on_failed_status(monkeypatch):
+    batch_error = SimpleNamespace(code="invalid_request", line=3, message="bad model name", param="model")
+    fake_client = MagicMock()
+    fake_client.batches.retrieve.return_value = SimpleNamespace(
+        status="failed",
+        output_file_id=None,
+        error_file_id=None,
+        errors=SimpleNamespace(data=[batch_error]),
+    )
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    results = llm.get_batch_results("batch-123")
+
+    assert len(results) == 1
+    item = next(iter(results.values()))
+    assert item.response is None
+    assert item.error == {"code": "invalid_request", "message": "bad model name", "param": "model", "line": 3}
+
+
+def test_poll_batch_stops_at_terminal_status(monkeypatch):
+    statuses = iter(["validating", "in_progress", "completed"])
+    fake_client = MagicMock()
+    fake_client.batches.retrieve.side_effect = lambda batch_id: SimpleNamespace(status=next(statuses))
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+    monkeypatch.setattr("gwenflow.llms.openai.time.sleep", lambda _: None)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    batch = llm.poll_batch("batch-123", poll_interval=0)
+
+    assert batch.status == "completed"
+    assert fake_client.batches.retrieve.call_count == 3
+
+
+def test_poll_batch_times_out(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.batches.retrieve.return_value = SimpleNamespace(status="in_progress")
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+    monkeypatch.setattr("gwenflow.llms.openai.time.sleep", lambda _: None)
+
+    times = iter([0.0, 0.0, 5.0])
+    monkeypatch.setattr("gwenflow.llms.openai.time.monotonic", lambda: next(times))
+
+    llm = ChatOpenAI(api_key="fake-key")
+    with pytest.raises(TimeoutError):
+        llm.poll_batch("batch-123", poll_interval=0, timeout=1.0)
