@@ -8,7 +8,7 @@ from gwenflow.llms.openai import ChatOpenAI
 @dataclass(kw_only=True)
 class ChatGwenlake(ChatOpenAI):
     model: str
-    base_url: str = "https://api.gwenlake.com/v1"
+    base_url: str = "https://integrate.api.gwenlake.com/v1"
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key

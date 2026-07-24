@@ -10,7 +10,7 @@ from gwenflow.version import __version__
 
 @dataclass(kw_only=True)
 class Api:
-    base_url: str = "https://api.gwenlake.com"
+    base_url: str = "https://integrate.api.gwenlake.com/v1"
     api_key: Optional[str] = None
     timeout: int = 300
 
