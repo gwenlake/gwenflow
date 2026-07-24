@@ -1,11 +1,15 @@
+import asyncio
 import json
 import os
 import re
+import time
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from openai import AsyncOpenAI, OpenAI
+from openai.types import Batch
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from pydantic import BaseModel
@@ -158,6 +162,16 @@ def response_to_openai_dict(response: ModelResponse) -> Dict[str, Any]:
     return completion
 
 
+_BATCH_TERMINAL_STATUSES = {"completed", "failed", "expired", "cancelled"}
+
+
+@dataclass
+class BatchResultItem:
+    custom_id: str
+    response: Optional[ModelResponse] = None
+    error: Optional[Dict[str, Any]] = None
+
+
 @dataclass(kw_only=True)
 class ChatOpenAI(ChatBase):
     model: str = "gpt-5-mini"
@@ -176,6 +190,7 @@ class ChatOpenAI(ChatBase):
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
+    prompt_cache_key: Optional[str] = None
 
     # reasoning / thinking
     reasoning_effort: Optional[str] = None
@@ -237,6 +252,7 @@ class ChatOpenAI(ChatBase):
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
             "reasoning_effort": self.reasoning_effort,
+            "prompt_cache_key": self.prompt_cache_key,
         }
 
         if self.tools and self.tool_type == "fncall":
@@ -308,9 +324,14 @@ class ChatOpenAI(ChatBase):
         if hasattr(completion.usage, "completion_tokens_details"):
             if completion.usage.completion_tokens_details:
                 details = completion.usage.completion_tokens_details.model_dump()
+        cache_read_tokens = 0
+        prompt_details = getattr(completion.usage, "prompt_tokens_details", None)
+        if prompt_details is not None:
+            cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
         return RequestUsage(
             input_tokens=completion.usage.prompt_tokens,
             output_tokens=completion.usage.completion_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
 
@@ -319,16 +340,10 @@ class ChatOpenAI(ChatBase):
         for block in completion.choices:
             msg = block.message
 
-            # Native reasoning fields, in priority order:
-            #   - reasoning_content: DeepSeek-R1, Mistral Magistral, vLLM/Ollama
-            #     servers with --reasoning-parser
-            #   - reasoning: OpenAI gpt-5 / o-series via Chat Completions,
-            #     OpenRouter passthrough
             reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
 
             content = msg.content
 
-            # Fallback for local models that emit <think>...</think> inline
             if self.extract_think_tags and content:
                 tag_thinking, content = _split_think_tags(content)
                 if tag_thinking and not reasoning:
@@ -339,8 +354,6 @@ class ChatOpenAI(ChatBase):
             if content:
                 parts.append(TextContent(content=content))
 
-            # Audio output (gpt-4o-audio-preview): `message.audio` carries
-            # base64 audio data + optional transcript + provider id/expiry in extra.
             audio = getattr(msg, "audio", None)
             if audio is not None and getattr(audio, "data", None):
                 extra: Dict[str, Any] = {}
@@ -555,3 +568,207 @@ class ChatOpenAI(ChatBase):
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
+
+    # ---------------------------------------------------------------
+    # Batch API
+    # ---------------------------------------------------------------
+
+    def _build_batch_line(
+        self, custom_id: str, input: Union[str, List[Message], List[Dict[str, str]]]
+    ) -> Dict[str, Any]:
+        messages_for_model = self.input_to_message_list(input)
+        body = {
+            "model": self.model,
+            "messages": [self._format_message(m) for m in messages_for_model],
+            **self._model_params,
+        }
+        return {
+            "custom_id": custom_id,
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": body,
+        }
+
+    def _build_batch_file(
+        self,
+        inputs: List[Union[str, List[Message], List[Dict[str, str]]]],
+        custom_ids: Optional[List[str]],
+    ) -> Tuple[str, bytes]:
+        if not inputs:
+            raise ValueError("inputs must be a non-empty list")
+
+        if custom_ids is None:
+            custom_ids = [str(i) for i in range(len(inputs))]
+        elif len(custom_ids) != len(inputs):
+            raise ValueError("custom_ids must have the same length as inputs")
+        elif len(set(custom_ids)) != len(custom_ids):
+            raise ValueError("custom_ids must be unique")
+
+        lines = [self._build_batch_line(cid, inp) for cid, inp in zip(custom_ids, inputs, strict=True)]
+        jsonl = "\n".join(json.dumps(line) for line in lines).encode("utf-8")
+        filename = f"batch_{uuid.uuid4().hex}.jsonl"
+        return filename, jsonl
+
+    def _parse_batch_output(self, content: str) -> Dict[str, BatchResultItem]:
+        results: Dict[str, BatchResultItem] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            custom_id = record["custom_id"]
+            if record.get("error"):
+                results[custom_id] = BatchResultItem(custom_id=custom_id, error=record["error"])
+                continue
+            body = (record.get("response") or {}).get("body")
+            completion = ChatCompletion.model_validate(body)
+            results[custom_id] = BatchResultItem(custom_id=custom_id, response=self._parse_response(completion))
+        return results
+
+    def _parse_batch_error_file(self, content: str) -> Dict[str, BatchResultItem]:
+        results: Dict[str, BatchResultItem] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            custom_id = record.get("custom_id")
+            if custom_id is not None:
+                results[custom_id] = BatchResultItem(custom_id=custom_id, error=record.get("error") or record)
+        return results
+
+    def create_batch(
+        self,
+        inputs: List[Union[str, List[Message], List[Dict[str, str]]]],
+        custom_ids: Optional[List[str]] = None,
+        completion_window: str = "24h",
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Batch:
+        """Upload `inputs` (one per chat completion request) and submit them as a batch job.
+
+        `custom_ids` correlates each input to its result in `get_batch_results()`;
+        defaults to the input's index as a string. Returns the created `Batch` —
+        use `batch.id` with `retrieve_batch()`/`poll_batch()`.
+        """
+        filename, jsonl = self._build_batch_file(inputs, custom_ids)
+        client = self.get_client()
+        input_file = client.files.create(file=(filename, jsonl), purpose="batch")
+        return client.batches.create(
+            input_file_id=input_file.id,
+            endpoint="/v1/chat/completions",
+            completion_window=completion_window,
+            metadata=metadata,
+        )
+
+    async def acreate_batch(
+        self,
+        inputs: List[Union[str, List[Message], List[Dict[str, str]]]],
+        custom_ids: Optional[List[str]] = None,
+        completion_window: str = "24h",
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Batch:
+        filename, jsonl = self._build_batch_file(inputs, custom_ids)
+        client = self.get_async_client()
+        input_file = await client.files.create(file=(filename, jsonl), purpose="batch")
+        return await client.batches.create(
+            input_file_id=input_file.id,
+            endpoint="/v1/chat/completions",
+            completion_window=completion_window,
+            metadata=metadata,
+        )
+
+    def retrieve_batch(self, batch_id: str) -> Batch:
+        return self.get_client().batches.retrieve(batch_id)
+
+    async def aretrieve_batch(self, batch_id: str) -> Batch:
+        return await self.get_async_client().batches.retrieve(batch_id)
+
+    def cancel_batch(self, batch_id: str) -> Batch:
+        return self.get_client().batches.cancel(batch_id)
+
+    async def acancel_batch(self, batch_id: str) -> Batch:
+        return await self.get_async_client().batches.cancel(batch_id)
+
+    def _batch_validation_errors(self, batch: Batch) -> Dict[str, BatchResultItem]:
+        """Top-level `batch.errors`.
+
+        Populated on `status == "failed"`, when the input file itself was
+        rejected before any request ran (no output/error file).
+        """
+        results: Dict[str, BatchResultItem] = {}
+        if not batch.errors or not batch.errors.data:
+            return results
+        for i, err in enumerate(batch.errors.data):
+            key = f"line:{err.line}" if err.line is not None else f"error:{i}"
+            results[key] = BatchResultItem(
+                custom_id=key,
+                error={"code": err.code, "message": err.message, "param": err.param, "line": err.line},
+            )
+        return results
+
+    def poll_batch(self, batch_id: str, poll_interval: float = 10.0, timeout: Optional[float] = None) -> Batch:
+        """Block until the batch reaches a terminal status: completed, failed, expired or cancelled.
+
+        Raises `TimeoutError` if `timeout` (seconds) elapses first.
+        """
+        start = time.monotonic()
+        while True:
+            batch = self.retrieve_batch(batch_id)
+            if batch.status in _BATCH_TERMINAL_STATUSES:
+                return batch
+            if timeout is not None and time.monotonic() - start >= timeout:
+                raise TimeoutError(f"Batch {batch_id} did not complete within {timeout}s (status={batch.status})")
+            time.sleep(poll_interval)
+
+    async def apoll_batch(self, batch_id: str, poll_interval: float = 10.0, timeout: Optional[float] = None) -> Batch:
+        start = time.monotonic()
+        while True:
+            batch = await self.aretrieve_batch(batch_id)
+            if batch.status in _BATCH_TERMINAL_STATUSES:
+                return batch
+            if timeout is not None and time.monotonic() - start >= timeout:
+                raise TimeoutError(f"Batch {batch_id} did not complete within {timeout}s (status={batch.status})")
+            await asyncio.sleep(poll_interval)
+
+    def get_batch_results(self, batch_id: str) -> Dict[str, BatchResultItem]:
+        """Fetch and parse a finished batch's results, keyed by `custom_id`.
+
+        Covers every terminal status: `completed` results come from the output
+        file; `expired`/`cancelled` batches may still carry partial output/error
+        files for whatever ran before the cutoff; `failed` batches (input file
+        rejected outright) surface `batch.errors` instead since no request ever ran.
+        Raises `RuntimeError` if the batch hasn't reached a terminal status yet —
+        call `poll_batch()`/`retrieve_batch()` first.
+        """
+        client = self.get_client()
+        batch = self.retrieve_batch(batch_id)
+        if batch.status not in _BATCH_TERMINAL_STATUSES:
+            raise RuntimeError(f"Batch {batch_id} is not finished yet (status={batch.status})")
+
+        results: Dict[str, BatchResultItem] = {}
+        if batch.output_file_id:
+            content = client.files.content(batch.output_file_id).text
+            results.update(self._parse_batch_output(content))
+        if batch.error_file_id:
+            content = client.files.content(batch.error_file_id).text
+            results.update(self._parse_batch_error_file(content))
+        if not batch.output_file_id and not batch.error_file_id:
+            results.update(self._batch_validation_errors(batch))
+        return results
+
+    async def aget_batch_results(self, batch_id: str) -> Dict[str, BatchResultItem]:
+        client = self.get_async_client()
+        batch = await self.aretrieve_batch(batch_id)
+        if batch.status not in _BATCH_TERMINAL_STATUSES:
+            raise RuntimeError(f"Batch {batch_id} is not finished yet (status={batch.status})")
+
+        results: Dict[str, BatchResultItem] = {}
+        if batch.output_file_id:
+            content = (await client.files.content(batch.output_file_id)).text
+            results.update(self._parse_batch_output(content))
+        if batch.error_file_id:
+            content = (await client.files.content(batch.error_file_id)).text
+            results.update(self._parse_batch_error_file(content))
+        if not batch.output_file_id and not batch.error_file_id:
+            results.update(self._batch_validation_errors(batch))
+        return results

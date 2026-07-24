@@ -16,7 +16,6 @@ from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 @dataclass(kw_only=True)
 class ResponseOpenAI(ChatBase):
-
     model: str = "gpt-5-mini"
 
     # model parameters
@@ -202,17 +201,21 @@ class ResponseOpenAI(ChatBase):
         input_tokens = getattr(usage, "input_tokens", 0) or 0
         output_tokens = getattr(usage, "output_tokens", 0) or 0
         details: Dict[str, int] = {}
+        cache_read_tokens = 0
         input_details = getattr(usage, "input_tokens_details", None)
         if input_details is not None:
-            cached = getattr(input_details, "cached_tokens", None)
-            if cached is not None:
-                details["cached_tokens"] = cached
+            cache_read_tokens = getattr(input_details, "cached_tokens", 0) or 0
         output_details = getattr(usage, "output_tokens_details", None)
         if output_details is not None:
             reasoning = getattr(output_details, "reasoning_tokens", None)
             if reasoning is not None:
                 details["reasoning_tokens"] = reasoning
-        return RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, details=details)
+        return RequestUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            details=details,
+        )
 
     def _parse_response(self, response: Any) -> ModelResponse:
         parts: List[Any] = []
@@ -326,9 +329,7 @@ class ResponseOpenAI(ChatBase):
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
     @tracer.llm(name="LLM Async Astream")
-    async def astream(
-        self, input: Union[str, List[Message], List[Dict[str, str]]]
-    ) -> AsyncIterator[ModelResponse]:
+    async def astream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> AsyncIterator[ModelResponse]:
         try:
             messages_for_model = self.input_to_message_list(input)
             request = self._build_request(messages_for_model)
