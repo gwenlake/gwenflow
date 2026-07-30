@@ -23,9 +23,6 @@ from gwenflow.types import (
 )
 from gwenflow.utils import extract_json_str
 
-# Anthropic requires `max_tokens` on every request (the other providers let us
-# omit it), so when the caller leaves it unset we fall back to the model's own
-# output ceiling instead of capping the answer at an arbitrary value.
 MAX_OUTPUT_TOKENS: Dict[str, int] = {
     "claude-fable-5": 128000,
     "claude-mythos-5": 128000,
@@ -42,8 +39,6 @@ MAX_OUTPUT_TOKENS: Dict[str, int] = {
 }
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
-# The Anthropic SDK refuses non-streaming requests whose output budget could
-# outlive its 10-minute HTTP timeout, so those fall back lower.
 MAX_OUTPUT_TOKENS_NON_STREAMING = 16000
 MAX_OUTPUT_TOKENS_NON_STREAMING_LEGACY: Dict[str, int] = {
     "claude-opus-4-0": 8192,
@@ -376,16 +371,12 @@ class ChatAnthropic(ChatBase):
         payload = {"model": self.model, "messages": formatted_messages, **self._get_model_params(stream)}
         if self.system_prompt:
             if self.cache_system_prompt:
-                # A breakpoint on the system block also caches the tools that
-                # render before it (order: tools -> system -> messages).
                 payload["system"] = [
                     {"type": "text", "text": self.system_prompt, "cache_control": {"type": "ephemeral"}}
                 ]
             else:
                 payload["system"] = self.system_prompt
         elif self.cache_system_prompt and payload.get("tools"):
-            # No system prompt: put the breakpoint on the last tool so the tools
-            # prefix is still cached.
             payload["tools"][-1] = {**payload["tools"][-1], "cache_control": {"type": "ephemeral"}}
         return payload
 
