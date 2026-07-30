@@ -158,16 +158,6 @@ def response_to_openai_dict(response: ModelResponse) -> Dict[str, Any]:
     return completion
 
 
-_BATCH_TERMINAL_STATUSES = {"completed", "failed", "expired", "cancelled"}
-
-
-@dataclass
-class BatchResultItem:
-    custom_id: str
-    response: Optional[ModelResponse] = None
-    error: Optional[Dict[str, Any]] = None
-
-
 @dataclass(kw_only=True)
 class ChatOpenAI(ChatBase):
     model: str = "gpt-5-mini"
