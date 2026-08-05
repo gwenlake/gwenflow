@@ -88,9 +88,9 @@ class Telemetry:
         if self.service_version is None:
             self.service_version = os.getenv("OTEL_SERVICE_VERSION")
         if self.organization is None:
-            self.organization = os.getenv("OTEL_SERVICE_NAME")
-            if self.organization is None and self.api_key is None:
-                self.organization = "gwenflow"
+            self.organization = os.getenv("GWENFLOW_ORGANIZATION")
+        if self.service_name is None and self.organization is None and self.api_key is None:
+            self.service_name = "gwenflow"
         self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
