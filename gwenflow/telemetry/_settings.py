@@ -71,6 +71,10 @@ REDACTED = "__REDACTED__"
 
 def truncate(value: str) -> str:
     limit = max_attribute_length()
-    if limit > 0 and len(value) > limit:
-        return value[:limit] + f"... [truncated {len(value) - limit} chars]"
-    return value
+    if limit <= 0 or len(value) <= limit:
+        return value
+
+    marker = f"... [truncated {len(value) - limit} chars] ..."
+    head = limit // 2
+    tail = limit - head
+    return value[:head] + marker + value[-tail:]
