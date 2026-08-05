@@ -28,18 +28,26 @@ class DocxReader(Reader):
         doc = docx.Document(file_obj)
         return "\n".join((p.text.translate(self.trans) if p.text else "") for p in doc.paragraphs)
 
+    def get_row_cells(self, row):
+        from docx.table import _Cell
+
+        try:
+            return list(row.cells)
+        except (ValueError, IndexError):
+            return [_Cell(tc, row.table) for tc in row._tr.tc_lst]
+
     def get_tables(self, file_obj):
         try:
             import docx
         except ImportError as e:
-            raise ImportError("python-docx is not installed. Please install it with `pip install python-docx`") from e
+            raise ImportError("python-docx is not installed. Please install it with `uv add python-docx`") from e
         doc = docx.Document(file_obj)
         tables = []
         for t in doc.tables:
             rows = []
             for r in t.rows:
                 cells = []
-                for c in r.cells:
+                for c in self.get_row_cells(r):
                     txt = "\n".join(p.text for p in c.paragraphs) if c.paragraphs else ""
                     txt = txt.translate(self.trans) if txt else ""
                     cells.append(txt)
@@ -53,7 +61,15 @@ class DocxReader(Reader):
             content = self.get_file_content(file)
             data = content.getvalue() if isinstance(content, io.BytesIO) else content
             text = self.get_text(io.BytesIO(data))
-            tables = self.get_tables(io.BytesIO(data))
+            try:
+                tables = self.get_tables(io.BytesIO(data))
+            except Exception as e:
+                logger.warning(f"Could not extract tables from {filename}: {e}")
+                tables = []
+            table_text = self.format_tables(tables)
+            if table_text:
+                text = f"{text.strip()}\n\n{table_text}" if text.strip() else table_text
+
             return [
                 Document(
                     id=self.key(filename),

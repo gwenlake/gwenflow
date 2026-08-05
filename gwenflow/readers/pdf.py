@@ -14,7 +14,7 @@ class PDFReader(Reader):
         try:
             import pdfplumber
         except ImportError as e:
-            raise ImportError("pdfplumber is not installed. Please install it with `pip install pdfplumber`.") from e
+            raise ImportError("pdfplumber is not installed. Please install it with `uv add pdfplumber`.") from e
 
         try:
             filename = self.get_file_name(file)
@@ -23,13 +23,18 @@ class PDFReader(Reader):
             documents = []
             with pdfplumber.open(pdf_file) as pdf:
                 for i, page in enumerate(pdf.pages):
-                    text = page.extract_text() or ""
+                    try:
+                        text = page.extract_text() or ""
+                        tables = page.extract_tables()
+                    except Exception as e:
+                        logger.warning(f"Skipping page {i + 1} of {filename}: {e}")
+                        continue
                     safe_text = text.encode("utf-8", errors="ignore").decode("utf-8")
                     documents.append(
                         Document(
                             id=self.key(f"{filename}_{i + 1}"),
                             content=safe_text,
-                            metadata={"filename": filename, "page": i + 1, "tables": page.extract_tables()},
+                            metadata={"filename": filename, "page": i + 1, "tables": tables},
                         )
                     )
         except Exception as e:

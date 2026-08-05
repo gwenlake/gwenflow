@@ -24,8 +24,7 @@ class XmlReader(Reader):
             content = self.get_file_content(file)
             tree = etree.parse(content)
             root = tree.getroot()
-            xml_text = etree.tostring(root, method="text", encoding="unicode", with_tail=False)
-            clean_text = "\n".join(line.strip() for line in xml_text.splitlines() if line.strip())
+            clean_text = "\n".join(text.strip() for text in root.itertext() if text and text.strip())
             return [
                 Document(
                     id=self.key(f"{filename}_xml"),

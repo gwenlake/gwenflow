@@ -11,7 +11,9 @@ from gwenflow.types import Document
 @dataclass
 class CSVReader(Reader):
     def __post_init__(self) -> None:
-        missing = [p for p in ("pandas", "tabulate") if not __import__("importlib").util.find_spec(p)]
+        import importlib.util
+
+        missing = [p for p in ("pandas", "tabulate") if not importlib.util.find_spec(p)]
         if missing:
             raise ImportError(
                 f"Missing required packages: {', '.join(missing)}. Install with: `uv add {' '.join(missing)}`"
