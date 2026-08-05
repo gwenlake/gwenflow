@@ -23,9 +23,6 @@ from gwenflow.types import (
 )
 from gwenflow.utils import extract_json_str
 
-# Anthropic requires `max_tokens` on every request (the other providers let us
-# omit it), so when the caller leaves it unset we fall back to the model's own
-# output ceiling instead of capping the answer at an arbitrary value.
 MAX_OUTPUT_TOKENS: Dict[str, int] = {
     "claude-fable-5": 128000,
     "claude-mythos-5": 128000,
@@ -42,8 +39,6 @@ MAX_OUTPUT_TOKENS: Dict[str, int] = {
 }
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
-# The Anthropic SDK refuses non-streaming requests whose output budget could
-# outlive its 10-minute HTTP timeout, so those fall back lower.
 MAX_OUTPUT_TOKENS_NON_STREAMING = 16000
 MAX_OUTPUT_TOKENS_NON_STREAMING_LEGACY: Dict[str, int] = {
     "claude-opus-4-0": 8192,
@@ -113,6 +108,8 @@ class ChatAnthropic(ChatBase):
 
     # extended thinking — pass e.g. {"type": "enabled", "budget_tokens": 1024}
     thinking: Optional[Dict[str, Any]] = None
+
+    cache_system_prompt: bool = False
 
     # clients
     client: Optional[anthropic.Anthropic] = None
@@ -332,9 +329,13 @@ class ChatAnthropic(ChatBase):
             return None
         input_tokens = getattr(usage, "input_tokens", 0) or 0
         output_tokens = getattr(usage, "output_tokens", 0) or 0
+        cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
         return RequestUsage(
-            input_tokens=input_tokens,
+            input_tokens=input_tokens + cache_read_tokens + cache_write_tokens,
             output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
 
     def _parse_response(self, response) -> ModelResponse:
@@ -369,7 +370,14 @@ class ChatAnthropic(ChatBase):
         formatted_messages = self._format_messages(messages)
         payload = {"model": self.model, "messages": formatted_messages, **self._get_model_params(stream)}
         if self.system_prompt:
-            payload["system"] = self.system_prompt
+            if self.cache_system_prompt:
+                payload["system"] = [
+                    {"type": "text", "text": self.system_prompt, "cache_control": {"type": "ephemeral"}}
+                ]
+            else:
+                payload["system"] = self.system_prompt
+        elif self.cache_system_prompt and payload.get("tools"):
+            payload["tools"][-1] = {**payload["tools"][-1], "cache_control": {"type": "ephemeral"}}
         return payload
 
     @tracer.llm(name="LLM Invoke")
@@ -397,6 +405,8 @@ class ChatAnthropic(ChatBase):
             request = self._build_request(messages_for_model, stream=True)
             _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
+            _cache_read_tokens = 0
+            _cache_write_tokens = 0
 
             _thinking_signatures: Dict[int, str] = {}
 
@@ -405,7 +415,10 @@ class ChatAnthropic(ChatBase):
                     response = ModelResponse()
 
                     if event.type == "message_start":
-                        _input_tokens = event.message.usage.input_tokens
+                        message_usage = event.message.usage
+                        _input_tokens = getattr(message_usage, "input_tokens", 0) or 0
+                        _cache_read_tokens = getattr(message_usage, "cache_read_input_tokens", 0) or 0
+                        _cache_write_tokens = getattr(message_usage, "cache_creation_input_tokens", 0) or 0
 
                     elif event.type == "content_block_start":
                         if event.content_block.type == "tool_use":
@@ -449,8 +462,10 @@ class ChatAnthropic(ChatBase):
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
                             response.usage = RequestUsage(
-                                input_tokens=_input_tokens,
+                                input_tokens=_input_tokens + _cache_read_tokens + _cache_write_tokens,
                                 output_tokens=output_tokens,
+                                cache_read_tokens=_cache_read_tokens,
+                                cache_write_tokens=_cache_write_tokens,
                             )
                             yield response
 
@@ -464,6 +479,8 @@ class ChatAnthropic(ChatBase):
             request = self._build_request(messages_for_model, stream=True)
             _full_tool_calls: Dict[int, ToolCall] = {}
             _input_tokens = 0
+            _cache_read_tokens = 0
+            _cache_write_tokens = 0
 
             _thinking_signatures: Dict[int, str] = {}
 
@@ -472,7 +489,10 @@ class ChatAnthropic(ChatBase):
                     response = ModelResponse()
 
                     if event.type == "message_start":
-                        _input_tokens = event.message.usage.input_tokens
+                        message_usage = event.message.usage
+                        _input_tokens = getattr(message_usage, "input_tokens", 0) or 0
+                        _cache_read_tokens = getattr(message_usage, "cache_read_input_tokens", 0) or 0
+                        _cache_write_tokens = getattr(message_usage, "cache_creation_input_tokens", 0) or 0
 
                     elif event.type == "content_block_start":
                         if event.content_block.type == "tool_use":
@@ -516,8 +536,10 @@ class ChatAnthropic(ChatBase):
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
                             response.usage = RequestUsage(
-                                input_tokens=_input_tokens,
+                                input_tokens=_input_tokens + _cache_read_tokens + _cache_write_tokens,
                                 output_tokens=output_tokens,
+                                cache_read_tokens=_cache_read_tokens,
+                                cache_write_tokens=_cache_write_tokens,
                             )
                             yield response
 
