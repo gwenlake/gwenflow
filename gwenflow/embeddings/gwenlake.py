@@ -66,21 +66,18 @@ class GwenlakeEmbeddings(Embeddings):
 
         batch_size = 100
         embeddings = []
-        try:
-            for i in range(0, len(texts), batch_size):
-                i_end = min(len(texts), i + batch_size)
-                batch = texts[i:i_end]
-                batch_processed = []
-                for text in batch:
-                    text = text.replace("\n", " ")
-                    text = re.sub(" +", " ", text)
-                    text = text.strip()
-                    if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("passage: "):
-                        text = "passage: " + text
-                    batch_processed.append(text)
-                embeddings += self._embed(batch_processed)
-        except Exception:
-            return None
+        for i in range(0, len(texts), batch_size):
+            i_end = min(len(texts), i + batch_size)
+            batch = texts[i:i_end]
+            batch_processed = []
+            for text in batch:
+                text = text.replace("\n", " ")
+                text = re.sub(" +", " ", text)
+                text = text.strip()
+                if self.model in EMBEDDING_WITH_PASSAGE and not text.startswith("passage: "):
+                    text = "passage: " + text
+                batch_processed.append(text)
+            embeddings += self._embed(batch_processed)
         return embeddings
 
     @tracer.embedding(name="Embed Query")
