@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import json
 
 import pytest
 
@@ -188,35 +189,85 @@ def test_resolve_endpoint_per_signal_env_is_verbatim(monkeypatch):
 def test_organization_maps_to_service_name():
     attrs = build_resource_attributes("acme-corp")
     assert attrs["service.name"] == "acme-corp"
-    assert attrs["service.version"]
+    assert attrs["gwenflow.organization"] == "acme-corp"
     assert "openinference.project.name" not in attrs
 
 
 def test_resource_omits_service_name_without_organization():
     attrs = build_resource_attributes(None)
     assert "service.name" not in attrs
-    assert attrs["service.version"]
+    assert "gwenflow.organization" not in attrs
 
 
-def test_api_key_overrides_default_organization(monkeypatch):
+def test_gwenflow_version_is_reported_as_the_distro_not_the_service():
+    attrs = build_resource_attributes("acme-corp")
+    assert attrs["telemetry.distro.name"] == "gwenflow"
+    assert attrs["telemetry.distro.version"]
+    assert "service.version" not in attrs
+
+
+def test_service_version_is_the_callers_own():
+    attrs = build_resource_attributes("acme-corp", service_version="2.4.1")
+    assert attrs["service.version"] == "2.4.1"
+    assert attrs["telemetry.distro.version"] != "2.4.1"
+
+
+def test_service_name_and_organization_are_separate_axes():
+    attrs = build_resource_attributes("acme-corp", service_name="acme-worker")
+    assert attrs["service.name"] == "acme-worker"
+    assert attrs["gwenflow.organization"] == "acme-corp"
+
+
+def test_api_key_overrides_the_default_identity(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("GWENFLOW_ORGANIZATION", raising=False)
     t = Telemetry(api_key="secret-123")
     assert t.organization is None
+    assert t.service_name is None
 
 
-def test_default_organization_without_api_key(monkeypatch):
+def test_default_service_name_without_api_key(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("GWENFLOW_ORGANIZATION", raising=False)
     monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
     t = Telemetry()
-    assert t.organization == "gwenflow"
+    assert t.service_name == "gwenflow"
+    assert t.organization is None
 
 
 def test_explicit_organization_kept_even_with_api_key(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     t = Telemetry(organization="acme", api_key="secret-123")
     assert t.organization == "acme"
+
+
+def test_otel_service_name_never_becomes_the_organization(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "packitoo-app")
+    monkeypatch.delenv("GWENFLOW_ORGANIZATION", raising=False)
+    t = Telemetry()
+    assert t.service_name == "packitoo-app"
+    assert t.organization is None
+
+
+def test_organization_read_from_its_own_env(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "packitoo-app")
+    monkeypatch.setenv("GWENFLOW_ORGANIZATION", "packitoo")
+    t = Telemetry()
+    assert t.service_name == "packitoo-app"
+    assert t.organization == "packitoo"
+
+
+def test_organization_alone_still_names_the_service(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("GWENFLOW_TELEMETRY_API_KEY", raising=False)
+    t = Telemetry(organization="acme")
+    assert t.service_name is None
+    assert build_resource_attributes(t.organization, t.service_name)["service.name"] == "acme"
 
 
 # --- enablement / no-op ---------------------------------------------------------
@@ -580,4 +631,162 @@ def test_truncation(spans, monkeypatch):
     monkeypatch.setenv("GWENFLOW_TELEMETRY_MAX_ATTR_LENGTH", "10")
     FakeLLM().invoke("x" * 100)
     (span,) = spans.get_finished_spans()
-    assert dict(span.attributes)["input.value"].startswith("xxxxxxxxxx... [truncated")
+    assert dict(span.attributes)["input.value"].startswith("xxxxx... [truncated")
+
+
+def test_truncation_keeps_both_ends(monkeypatch):
+    from gwenflow.telemetry._settings import truncate
+
+    monkeypatch.setenv("GWENFLOW_TELEMETRY_MAX_ATTR_LENGTH", "10")
+    out = truncate("HEAD" + "." * 100 + "TAIL")
+    assert out.startswith("HEAD.")
+    assert out.endswith(".TAIL")
+    assert "[truncated 98 chars]" in out
+
+
+def test_truncation_leaves_short_values_untouched(monkeypatch):
+    from gwenflow.telemetry._settings import truncate
+
+    monkeypatch.setenv("GWENFLOW_TELEMETRY_MAX_ATTR_LENGTH", "100")
+    assert truncate("short") == "short"
+
+
+# --- tool schemas ---------------------------------------------------------------
+
+
+def _fat_tool(name):
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": "x" * 500,
+            "parameters": {"properties": {f"p{i}": {"type": "string", "description": "y" * 100} for i in range(20)}},
+        },
+    }
+
+
+class FakeLLMWithTools:
+    model = "gpt-test"
+    _model_params = {"temperature": 0.0, "tools": [_fat_tool("api_users_tool"), _fat_tool("api_projects_tool")]}
+
+    @T.llm(name="LLM With Tools")
+    def invoke(self, input):
+        return _Response()
+
+
+def test_tool_schemas_are_replaced_by_names_and_a_hash(spans):
+    FakeLLMWithTools().invoke("hi")
+    attrs = dict(spans.get_finished_spans()[0].attributes)
+
+    params = json.loads(attrs["llm.invocation_parameters"])
+    assert params["tools"] == ["api_users_tool", "api_projects_tool"]
+    assert params["temperature"] == 0.0
+    assert attrs["gwenflow.llm.tools.count"] == 2
+    assert len(attrs["gwenflow.llm.tools.schema_hash"]) == 16
+
+
+def test_tool_schemas_no_longer_dominate_the_attribute(spans):
+    raw = len(json.dumps(FakeLLMWithTools._model_params))
+    FakeLLMWithTools().invoke("hi")
+    emitted = len(dict(spans.get_finished_spans()[0].attributes)["llm.invocation_parameters"])
+    assert raw > 4000
+    assert emitted < 200
+
+
+def test_same_toolset_hashes_the_same_across_calls(spans):
+    FakeLLMWithTools().invoke("one")
+    FakeLLMWithTools().invoke("two")
+    hashes = {dict(s.attributes)["gwenflow.llm.tools.schema_hash"] for s in spans.get_finished_spans()}
+    assert len(hashes) == 1
+
+
+def test_invocation_parameters_without_tools_are_untouched(spans):
+    FakeLLM().invoke("hi")
+    attrs = dict(spans.get_finished_spans()[0].attributes)
+    assert json.loads(attrs["llm.invocation_parameters"]) == {"temperature": 0.0}
+    assert "gwenflow.llm.tools.count" not in attrs
+
+
+# --- swallowed failures ---------------------------------------------------------
+
+
+class FakeLLMSwallowingAnError:
+    model = "gpt-test"
+    _model_params = {}
+
+    @T.llm(name="LLM Swallow")
+    def invoke(self, input):
+        """Fails downstream, reports it on the span, and still returns a value to the caller."""
+        from opentelemetry import trace as otel_trace
+
+        otel_trace.get_current_span().set_status(StatusCode.ERROR, "hipe api unreachable")
+        return _Response()
+
+
+def test_ok_does_not_overwrite_an_error_set_from_inside(spans):
+    FakeLLMSwallowingAnError().invoke("hi")
+    (span,) = spans.get_finished_spans()
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description == "hipe api unreachable"
+
+
+# --- context on every span (not just gwenflow's) --------------------------------
+
+
+@pytest.fixture
+def provider_with_context_processor():
+    from gwenflow.telemetry.base import _context_processor_providers, _install_context_processor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _install_context_processor(provider)
+    set_tracing_enabled(True)
+    try:
+        yield provider, exporter
+    finally:
+        set_tracing_enabled(False)
+        _context_processor_providers.discard(id(provider))
+        exporter.clear()
+
+
+def test_processor_stamps_context_on_a_non_gwenflow_span(provider_with_context_processor):
+    provider, exporter = provider_with_context_processor
+    tracer = provider.get_tracer("some.third.party")
+
+    with T.session("thread-1", user_id="user-1", metadata={"project.id": "acme"}):
+        with tracer.start_as_current_span("GET /api/users"):
+            pass
+
+    attrs = dict(exporter.get_finished_spans()[0].attributes)
+    assert attrs["session.id"] == "thread-1"
+    assert attrs["user.id"] == "user-1"
+    assert attrs["project.id"] == "acme"
+
+
+def test_processor_leaves_spans_outside_a_session_alone(provider_with_context_processor):
+    provider, exporter = provider_with_context_processor
+    with provider.get_tracer("some.third.party").start_as_current_span("orphan"):
+        pass
+    attrs = dict(exporter.get_finished_spans()[0].attributes)
+    assert "session.id" not in attrs
+    assert "user.id" not in attrs
+
+
+def test_processor_is_installed_once_per_provider():
+    from gwenflow.telemetry.base import _context_processor_providers, _install_context_processor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    try:
+        _install_context_processor(provider)
+        _install_context_processor(provider)
+        set_tracing_enabled(True)
+        with T.session("thread-1"):
+            with provider.get_tracer("t").start_as_current_span("s"):
+                pass
+        assert dict(exporter.get_finished_spans()[0].attributes)["session.id"] == "thread-1"
+    finally:
+        set_tracing_enabled(False)
+        _context_processor_providers.discard(id(provider))
