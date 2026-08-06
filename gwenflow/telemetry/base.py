@@ -4,17 +4,49 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from gwenflow.logger import logger
+from gwenflow.telemetry import _semconv as sc
 from gwenflow.telemetry._settings import is_otel_available, set_tracing_enabled
 from gwenflow.version import __version__
 
 _HTTP_TRACES_PATH = "/v1/traces"
 
+_context_processor_providers: set[int] = set()
 
-def build_resource_attributes(organization: str | None) -> dict[str, str]:
-    attributes = {"service.version": __version__}
+
+def build_resource_attributes(
+    organization: str | None,
+    service_name: str | None = None,
+    service_version: str | None = None,
+) -> dict[str, str]:
+    attributes = {sc.DISTRO_NAME: "gwenflow", sc.DISTRO_VERSION: __version__}
+    name = service_name or organization
+    if name:
+        attributes[sc.SERVICE_NAME] = name
     if organization:
-        attributes["service.name"] = organization
+        attributes[sc.ORGANIZATION] = organization
+    if service_version:
+        attributes[sc.SERVICE_VERSION] = service_version
     return attributes
+
+
+def _install_context_processor(provider) -> None:
+    if id(provider) in _context_processor_providers:
+        return
+
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    from gwenflow.telemetry.tracer import _telemetry_context
+
+    class ContextAttributeProcessor(SpanProcessor):
+        def on_start(self, span, parent_context=None) -> None:
+            attrs = _telemetry_context.get()
+            if not attrs:
+                return
+            for key, value in attrs.items():
+                span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
+
+    provider.add_span_processor(ContextAttributeProcessor())
+    _context_processor_providers.add(id(provider))
 
 
 def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
@@ -45,14 +77,20 @@ class Telemetry:
     headers: dict[str, str] = field(default_factory=dict)
     api_key: str | None = None
     auth: Callable[[], dict[str, str]] | None = None
+    service_name: str | None = None
+    service_version: str | None = None
 
     def __post_init__(self) -> None:
         if self.api_key is None:
             self.api_key = os.getenv("GWENFLOW_TELEMETRY_API_KEY")
+        if self.service_name is None:
+            self.service_name = os.getenv("OTEL_SERVICE_NAME")
+        if self.service_version is None:
+            self.service_version = os.getenv("OTEL_SERVICE_VERSION")
         if self.organization is None:
-            self.organization = os.getenv("OTEL_SERVICE_NAME")
-            if self.organization is None and self.api_key is None:
-                self.organization = "gwenflow"
+            self.organization = os.getenv("GWENFLOW_ORGANIZATION")
+        if self.service_name is None and self.organization is None and self.api_key is None:
+            self.service_name = "gwenflow"
         self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
@@ -83,7 +121,8 @@ class Telemetry:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        if isinstance(trace.get_tracer_provider(), TracerProvider):
+        existing = trace.get_tracer_provider()
+        if isinstance(existing, TracerProvider):
             if self._has_export_config:
                 logger.warning(
                     "A TracerProvider is already configured; gwenflow reuses it and the "
@@ -92,12 +131,16 @@ class Telemetry:
                 )
             else:
                 logger.debug("A TracerProvider is already configured; reusing it for gwenflow telemetry.")
+            _install_context_processor(existing)
             set_tracing_enabled(True)
             return
 
-        resource = Resource.create(build_resource_attributes(self.organization))
+        resource = Resource.create(
+            build_resource_attributes(self.organization, self.service_name, self.service_version)
+        )
         provider = TracerProvider(resource=resource)
         provider.add_span_processor(BatchSpanProcessor(self._build_exporter()))
+        _install_context_processor(provider)
         trace.set_tracer_provider(provider)
         atexit.register(provider.shutdown)
         set_tracing_enabled(True)
@@ -111,3 +154,23 @@ class Telemetry:
         else:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         return OTLPSpanExporter(endpoint=self.endpoint, headers=self._build_headers() or None)
+
+    @staticmethod
+    def _sdk_provider():
+        if not is_otel_available():
+            return None
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+
+        provider = trace.get_tracer_provider()
+        return provider if isinstance(provider, TracerProvider) else None
+
+    def flush(self, timeout_millis: int = 30_000) -> bool:
+        """Export everything still queued. Call it on shutdown: `atexit` does not run on SIGKILL."""
+        provider = self._sdk_provider()
+        return bool(provider.force_flush(timeout_millis)) if provider else False
+
+    def shutdown(self) -> None:
+        provider = self._sdk_provider()
+        if provider:
+            provider.shutdown()

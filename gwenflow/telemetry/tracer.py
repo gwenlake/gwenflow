@@ -93,6 +93,9 @@ class DecoratorTracer:
     def _ok(self, span) -> None:
         from opentelemetry.trace import StatusCode
 
+        status = getattr(span, "status", None)
+        if status is not None and status.status_code is StatusCode.ERROR:
+            return
         span.set_status(StatusCode.OK)
 
     def _error(self, span, exc: BaseException) -> None:

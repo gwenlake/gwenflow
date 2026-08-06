@@ -43,3 +43,12 @@ AGENT_NAME = "gwenflow.agent.name"  # for multi-agent flows
 AGENT_LLM_REQUESTS = "gwenflow.agent.llm_requests"  # LLM calls made in one run
 AGENT_TOOL_CALLS = "gwenflow.agent.tool_calls"  # tools executed in one run
 LLM_TOOL_CALLS = "llm.tool_calls"
+LLM_TOOLS_COUNT = "gwenflow.llm.tools.count"  # tools offered to the model
+LLM_TOOLS_SCHEMA_HASH = "gwenflow.llm.tools.schema_hash"  # identifies a toolset without its schema
+ORGANIZATION = "gwenflow.organization"  # tenant the service belongs to
+
+# Resource attributes
+SERVICE_NAME = "service.name"
+SERVICE_VERSION = "service.version"
+DISTRO_NAME = "telemetry.distro.name"
+DISTRO_VERSION = "telemetry.distro.version"

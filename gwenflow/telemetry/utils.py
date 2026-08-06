@@ -1,4 +1,5 @@
 import dataclasses
+import hashlib
 import inspect
 import json
 from typing import Any, Callable
@@ -109,6 +110,28 @@ def _resolve_provider(instance: Any) -> str | None:
     return None
 
 
+def _tool_name(tool: Any) -> str:
+    if isinstance(tool, dict):
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            return str(function["name"])
+        if tool.get("name"):
+            return str(tool["name"])
+    return str(getattr(tool, "name", "unknown"))
+
+
+def _compact_invocation_parameters(span, params: dict) -> dict:
+    tools = params.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return params
+
+    digest = hashlib.sha256(json.dumps(tools, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    span.set_attribute(sc.LLM_TOOLS_COUNT, len(tools))
+    span.set_attribute(sc.LLM_TOOLS_SCHEMA_HASH, digest)
+
+    return {**params, "tools": [_tool_name(tool) for tool in tools]}
+
+
 def _prepare_llm_attributes(span, instance: Any) -> None:
     model = getattr(instance, "model", None)
     if model is not None:
@@ -118,6 +141,8 @@ def _prepare_llm_attributes(span, instance: Any) -> None:
         span.set_attribute(sc.LLM_PROVIDER, provider)
     params = getattr(instance, "_model_params", None)
     if params:
+        if isinstance(params, dict):
+            params = _compact_invocation_parameters(span, params)
         span.set_attribute(sc.LLM_INVOCATION_PARAMETERS, truncate(json.dumps(params, default=str)))
 
 
