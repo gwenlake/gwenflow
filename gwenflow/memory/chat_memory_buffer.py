@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,10 +18,11 @@ class ChatMemoryBuffer(BaseChatMemory):
 
     Three-pass strategy:
       1. Pre-filter: any single message exceeding `MAX_MESSAGE_CONTENT * token_limit`
-         has its TEXT parts truncated. Multi-modal parts (image/audio/file) and
-         thinking_parts are left intact — clamping them would corrupt the wire
-         format. If a single message remains over budget after truncation, we
-         accept it and let the prune loop drop older messages.
+         has its TEXT parts truncated — on a copy, never on the stored history.
+         Multi-modal parts (image/audio/file) and thinking_parts are left intact —
+         clamping them would corrupt the wire format. If a single message remains
+         over budget after truncation, we accept it and let the prune loop drop
+         older messages.
       2. Prune: keep the longest suffix of the history that fits the budget.
       3. Anchor: the live turn — the last `user` message — is always kept, even
          when the suffix that fits no longer reaches it (a long tool loop can
@@ -30,6 +32,11 @@ class ChatMemoryBuffer(BaseChatMemory):
 
     The window never starts on a `tool` message: its `tool_calls` parent would
     have been pruned, leaving an orphan response the providers reject.
+
+    `get()` is a pure read: it never mutates the stored history and never calls
+    an LLM. Compaction of evicted messages is a separate command — `compact()` /
+    `acompact()` — that is a no-op here and is implemented by
+    `ChatSummaryMemoryBuffer`. The agent calls it before each `get()`.
     """
 
     token_limit: int | None = None
@@ -99,33 +106,55 @@ class ChatMemoryBuffer(BaseChatMemory):
         return [Message(role="system", content=self.system_prompt)] + messages
 
     # ------------------------------------------------------------------
-    # Main API
+    # Window computation (shared by get() and subclass compaction)
     # ------------------------------------------------------------------
 
-    def get(self) -> list[Message]:
+    def _budget(self) -> int:
+        """Token budget left for the conversation window.
+
+        `token_limit` minus the system prompt, the reserved (tool schema)
+        tokens, and the summary message if a subclass maintains one.
+        """
         initial_token_count = self._initial_token_count()
         if initial_token_count > self.token_limit:
             raise ValueError("Initial token count exceeds token limit")
 
-        chat_history = self.messages
-        if not chat_history:
-            return self._prepend_system([])
-
         budget = self.token_limit - initial_token_count - self.reserved_tokens
+        summary_message = self._summary_message()
+        if summary_message is not None:
+            budget -= self._token_count_for_message(summary_message)
         if budget <= 0:
             logger.warning(
-                f"System prompt and tool schemas fill the whole context "
-                f"({initial_token_count + self.reserved_tokens} of {self.token_limit} tokens): "
+                f"System prompt, tool schemas and summary fill the whole context "
+                f"({self.token_limit - budget} of {self.token_limit} tokens): "
                 f"no room left for the conversation."
             )
             budget = 0
+        return budget
 
-        # Pass 1: clamp very large individual messages (text-only effect)
+    def _clamp_history(self, chat_history: list[Message], budget: int) -> list[Message]:
+        """Pass 1: clamp very large individual messages (text-only effect).
+
+        Works on copies: the stored history is never mutated, and a
+        non-positive limit (budget exhausted) never wipes every message.
+        """
         per_message_limit = int(MAX_MESSAGE_CONTENT * budget)
-        for message in chat_history:
+        if per_message_limit <= 0:
+            return chat_history
+        for index, message in enumerate(chat_history):
             if self._token_count_for_message(message) > per_message_limit:
-                self._clamp_message_text(message, max_tokens=per_message_limit)
+                clamped = copy.deepcopy(message)
+                self._clamp_message_text(clamped, max_tokens=per_message_limit)
+                chat_history[index] = clamped
+        return chat_history
 
+    def _prune(self, chat_history: list[Message], budget: int) -> tuple[int, int | None, int]:
+        """Passes 2 and 3: locate the window.
+
+        Returns `(start, anchor, token_count)` where `start` is the first index
+        of the window and `anchor` the live-turn index (may be < start, in
+        which case the anchor message is pulled back in by the caller).
+        """
         counts = [self._token_count_for_message(m) for m in chat_history]
 
         # Pass 2: keep the longest suffix that fits the budget
@@ -154,9 +183,53 @@ class ChatMemoryBuffer(BaseChatMemory):
             token_count -= counts[start]
             start += 1
 
+        return start, anchor, token_count
+
+    # ------------------------------------------------------------------
+    # Hooks and commands for subclasses (e.g. ChatSummaryMemoryBuffer)
+    # ------------------------------------------------------------------
+
+    def _summary_message(self) -> Message | None:
+        """Message summarizing evicted history, sent first in the window.
+
+        The base buffer keeps no summary.
+        """
+        return None
+
+    def compact(self) -> None:
+        """Fold about-to-be-evicted messages into a summary.
+
+        No-op here: the base buffer simply drops evicted messages. The agent
+        calls this before each `get()`.
+        """
+
+    async def acompact(self) -> None:
+        """Async variant of `compact()`. No-op here."""
+
+    # ------------------------------------------------------------------
+    # Main API
+    # ------------------------------------------------------------------
+
+    def get(self) -> list[Message]:
+        """Compute the message window to send to the model.
+
+        A pure read: never mutates the stored history, never calls an LLM.
+        """
+        budget = self._budget()
+        summary_message = self._summary_message()
+
+        chat_history = list(self.messages)
+        if not chat_history:
+            return self._prepend_system([summary_message] if summary_message else [])
+
+        chat_history = self._clamp_history(chat_history, budget)
+        start, anchor, token_count = self._prune(chat_history, budget)
+
         kept = chat_history[start:]
         if anchor is not None and anchor < start:
             kept = [chat_history[anchor]] + kept
+        if summary_message is not None:
+            kept = [summary_message] + kept
 
         if not kept:
             logger.warning("Token limit exceeded: no message left to send.")
