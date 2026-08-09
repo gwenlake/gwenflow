@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import re
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -59,6 +60,11 @@ LLM."""
 SESSION_FORMAT_VERSION = 1
 """Version of the /save JSON format."""
 
+MAX_VALIDATION_RETRIES = 3
+"""How many times an invalid structured (`response_model`) answer is sent
+back to the model for correction before giving up (parsed=None, raw
+content kept)."""
+
 
 @dataclass
 class Agent:
@@ -102,7 +108,10 @@ class Agent:
     """Retriever for the agent."""
 
     team: List["Agent"] | None = None
-    """Team of agents."""
+    """Team of agents. Each member is exposed to the model as an
+    `ask_<name>` tool. Every handoff runs on a fresh clone of the member
+    (same configuration, empty history): delegated tasks must therefore be
+    self-contained — the member never sees the parent conversation."""
 
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
@@ -111,18 +120,41 @@ class Agent:
     """Skills that extend the agent's instructions."""
 
     total_usage: AgentUsage = field(default_factory=AgentUsage)
-    """Cumulative usage across every run of this agent (see /cost)."""
+    """Cumulative usage across every run of this agent, team delegations
+    included (see /cost)."""
 
     pricing: Optional[Dict[str, float]] = None
     """Optional price grid in dollars per MILLION tokens, e.g.
     {"input": 3.0, "output": 15.0} (optional keys: "cache_read",
     "cache_write"). When set, /cost adds an estimated dollar amount."""
 
+    delegation_usage: AgentUsage = field(default_factory=AgentUsage)
+    """Cumulative usage of team handoffs (sub-agent runs). Informational
+    breakdown for /cost: this spend is already folded into `total_usage`."""
+
+    _pending_delegation_usage: AgentUsage = field(default_factory=AgentUsage, init=False, repr=False)
+    """Delegation usage accumulated since the last drain. Guarded by
+    `_delegation_lock` because handoffs may run in parallel threads
+    (`aexecute_tool_calls`); the run loops drain it after each tool round."""
+
+    _delegation_lock: Any = field(default_factory=threading.Lock, init=False, repr=False)
+
+    _handoff_tools: List[BaseTool] = field(default_factory=list, init=False, repr=False)
+    """The subset of `tools` that wraps team members, kept separate so
+    `clone()` can rebuild them bound to the clone."""
+
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = str(uuid.uuid4())
         if self.llm is None:
             self.llm = ChatOpenAI()
+        else:
+            # The agent configures tools/tool_choice/response_format on its
+            # LLM below: take a private copy so that sharing one llm instance
+            # between several agents (orchestrator + team members) does not
+            # cross-contaminate their tool lists. The underlying HTTP client
+            # is still shared (shallow copy).
+            self.llm = copy.copy(self.llm)
         if self.history is None:
             # Dedicated summarizer: same model, but stripped of the agent's
             # tools and response_format (assigned on self.llm below) so the
@@ -140,7 +172,8 @@ class Agent:
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
         if self.team:
-            self.tools = list(self.tools) + self._build_handoff_tools()
+            self._handoff_tools = self._build_handoff_tools()
+            self.tools = list(self.tools) + self._handoff_tools
         if self.tools or self.mcp_servers:
             self.llm.tools = self.get_all_tools()
             self.llm.tool_choice = self.tool_choice
@@ -149,7 +182,14 @@ class Agent:
             self.llm.tool_choice = None
 
     def _build_handoff_tools(self) -> List[BaseTool]:
-        """Expose each team member as a callable tool the orchestrator can invoke."""
+        """Expose each team member as a callable tool the orchestrator can invoke.
+
+        Each handoff runs on a fresh `clone()` of the member: concurrent
+        delegations in one turn (parallelized by `aexecute_tool_calls`) never
+        share history or per-run state, and every task starts from a clean
+        slate. The clone's spend (LLM calls and compaction) is recorded on
+        this agent and folded into the current run's usage by the run loops.
+        """
 
         def make_handoff(member: "Agent") -> Callable[[str], str]:
             def _handoff(task: str) -> str:
@@ -158,7 +198,14 @@ class Agent:
                 Args:
                     task: The full task or question to delegate to the teammate.
                 """
-                response = member.run(task)
+                worker = member.clone()
+                response = worker.run(task)
+                self._record_delegation_usage(worker, response)
+                if response.finish_reason == "max_turns":
+                    return (
+                        f"[handoff failed] The '{member.name or 'agent'}' agent stopped "
+                        f"after reaching its max_turns limit without a final answer."
+                    )
                 return response.content or ""
 
             return _handoff
@@ -177,6 +224,67 @@ class Agent:
             desc = member.description or f"Delegate a task to the '{member.name or slug}' agent."
             tools.append(Tool(make_handoff(member), name=tool_name, description=desc))
         return tools
+
+    def clone(self) -> "Agent":
+        """A new agent with this agent's configuration and a fresh, empty history.
+
+        Configuration (prompts, tools, skills, team, retriever, pricing) is
+        shared by reference; per-run mutable state is not: the clone gets its
+        own history, its own llm copy (the run loop may downgrade
+        `tool_choice` on it), fresh usage counters, and — when it has a team —
+        handoff tools rebound to the clone so nested delegation spend is
+        recorded on the right instance. Used by handoffs; also handy to run
+        the same agent concurrently by hand.
+        """
+        worker = copy.copy(self)
+        worker.id = str(uuid.uuid4())
+        worker.llm = copy.copy(self.llm)
+        worker.history = self._fresh_history()
+        worker.total_usage = AgentUsage()
+        worker.delegation_usage = AgentUsage()
+        worker._pending_delegation_usage = AgentUsage()
+        worker._delegation_lock = threading.Lock()
+        if self.team:
+            worker._handoff_tools = worker._build_handoff_tools()
+            handoff_ids = {id(t) for t in self._handoff_tools}
+            base_tools = [t for t in self.tools if id(t) not in handoff_ids]
+            worker.tools = base_tools + worker._handoff_tools
+            worker.llm.tools = worker.get_all_tools()
+        return worker
+
+    def _fresh_history(self) -> ChatMemoryBuffer:
+        """A new, empty buffer with the same configuration as `self.history`."""
+        kwargs: Dict[str, Any] = {
+            "token_limit": self.history.token_limit,
+            "tokenizer_fn": self.history.tokenizer_fn,
+        }
+        summarizer = getattr(self.history, "llm", None)
+        if summarizer is not None:
+            kwargs["llm"] = summarizer
+        return type(self.history)(**kwargs)
+
+    def _record_delegation_usage(self, worker: "Agent", response: AgentResponse) -> None:
+        """Fold a finished handoff's spend into this agent's accounting.
+
+        Thread-safe: handoffs may run in parallel threads. The pending bucket
+        is drained into the current run's usage after each tool round; the
+        cumulative `delegation_usage` feeds the /cost breakdown.
+        """
+        usage = AgentUsage()
+        usage.add(response.usage)
+        compaction = getattr(worker.history, "usage", None)
+        if compaction is not None and compaction.requests:
+            usage.add(compaction)
+        with self._delegation_lock:
+            self._pending_delegation_usage.add(usage)
+            self.delegation_usage.add(usage)
+
+    def _drain_delegation_usage(self) -> AgentUsage:
+        """Take and reset the delegation usage accumulated by handoffs."""
+        with self._delegation_lock:
+            drained = self._pending_delegation_usage
+            self._pending_delegation_usage = AgentUsage()
+        return drained
 
     # ------------------------------------------------------------------
     # Slash commands (/help, /compact, /reset, ...)
@@ -394,6 +502,10 @@ class Agent:
         combined.add(self.total_usage)
         lines = block("Session usage:", self.total_usage)
 
+        if self.delegation_usage.requests:
+            # Breakdown only: this spend is already inside the session usage.
+            lines += block("Team delegations (included above):", self.delegation_usage)
+
         compaction_usage = getattr(self.history, "usage", None)
         if compaction_usage is not None and compaction_usage.requests:
             combined.add(compaction_usage)
@@ -437,18 +549,45 @@ class Agent:
                 text += f"</{key}>\n\n"
         return text
 
+    def _parse_tool_args(self, tool_call: ToolCall) -> Dict[str, Any]:
+        """Best-effort parse of tool-call arguments for event payloads.
+
+        Malformed JSON emitted by the model must not crash the run: the
+        failure is surfaced to the model by `run_tool` itself, so here we
+        degrade to a raw payload instead of raising.
+        """
+        args = tool_call.arguments
+        if isinstance(args, dict):
+            return args
+        if not (isinstance(args, str) and args.strip()):
+            return {}
+        try:
+            parsed = json.loads(args)
+        except (json.JSONDecodeError, TypeError):
+            return {"raw": args}
+        return parsed if isinstance(parsed, dict) else {"raw": args}
+
     def _validate_final_response(
         self, content_to_parse: str | Dict[str, Any] | List[Any] | None
     ) -> tuple[bool, Any, Optional[str]]:
-        if not (isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel)):
+        """Validate the final content against `response_model`.
+
+        Single code path shared by run/arun/run_stream/arun_stream. Pydantic
+        models are validated; plain dict schemas are parsed to JSON (fenced
+        JSON accepted via `extract_json_str`) without schema validation; no
+        `response_model` means passthrough.
+        """
+        if self.response_model is None:
             return True, content_to_parse, None
+
+        is_pydantic_model = isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel)
 
         try:
             if isinstance(content_to_parse, str):
                 content_to_parse = json.loads(extract_json_str(content_to_parse))
-
-            parsed_obj = self.response_model.model_validate(content_to_parse)
-            return True, parsed_obj, None
+            if is_pydantic_model:
+                return True, self.response_model.model_validate(content_to_parse), None
+            return True, content_to_parse, None
         except (ValidationError, json.JSONDecodeError, TypeError, ValueError) as e:
             error_msg = (
                 f"Your final response failed validation against the required schema. "
@@ -535,6 +674,32 @@ class Agent:
 
         return "\n\n".join(system_prompt_parts).strip()
 
+    def _reasoning_instructions(self) -> List[str]:
+        """Instructions for the planning sub-agent used by `reason()`.
+
+        The planner gets NO executable tools: with a team, calling a handoff
+        during planning would trigger a real delegation (side effects) before
+        the plan even exists. It receives the tool list as text instead, so
+        the plan can still reference the capabilities available.
+        """
+        instructions = [
+            "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
+            "Carefully analyze the task by spelling it out loud.",
+            "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem.",
+            "Your task is to provide a step-by-step plan, not to solve the problem yourself.",
+        ]
+        tools = self.get_all_tools()
+        if tools:
+            described = []
+            for tool in tools:
+                first_line = (tool.description or "").strip().split("\n")[0]
+                described.append(f"{tool.name}: {first_line}" if first_line else tool.name)
+            instructions.append(
+                "The agent executing your plan has access to the following tools; reference them in the plan "
+                "but do not try to call them yourself: " + "; ".join(described)
+            )
+        return instructions
+
     def reason(
         self,
         input: Union[str, List[Message], List[Dict[str, str]]],
@@ -546,16 +711,8 @@ class Agent:
 
         reasoning_agent = Agent(
             name="ReasoningAgent",
-            instructions=[
-                "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
-                "Carefully analyze the task by spelling it out loud.",
-                "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem."
-                "Work through your plan step-by-step, executing any tools as needed for each step.",
-                "Do not call any tool or try to solve the problem yourself.",
-                "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
-            ],
+            instructions=self._reasoning_instructions(),
             llm=self.reasoning_model,
-            tools=self.tools,
         )
 
         response = reasoning_agent.run(input)
@@ -586,16 +743,8 @@ class Agent:
 
         reasoning_agent = Agent(
             name="ReasoningAgent",
-            instructions=[
-                "You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
-                "Carefully analyze the task by spelling it out loud.",
-                "Then break down the problem by thinking through it step by step and develop multiple strategies to solve the problem."
-                "Work through your plan step-by-step, executing any tools as needed for each step.",
-                "Do not call any tool or try to solve the problem yourself.",
-                "Your task is to provide a plan step-by-step, not to solve the problem yourself.",
-            ],
+            instructions=self._reasoning_instructions(),
             llm=self.reasoning_model,
-            tools=self.tools,
         )
 
         response = await reasoning_agent.arun(input)
@@ -638,9 +787,7 @@ class Agent:
 
         if self.skills and tool_call.name == "load_skill":
             try:
-                args = tool_call.arguments
-                if not isinstance(args, dict):
-                    args = json.loads(args) if args and args.strip() else {}
+                args = self._parse_tool_args(tool_call)
                 skill_name = args.get("skill_name")
                 logger.debug(f"[SKILL CALL] Loading skill '{skill_name}'")
                 skill = next((s for s in self.skills if s.name == skill_name), None)
@@ -656,14 +803,22 @@ class Agent:
             if not isinstance(arguments, dict):
                 arguments = json.loads(arguments) if arguments and arguments.strip() else {}
             logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
-            tool_execution.content = tool.run(**arguments)
-            if tool_execution.content:
-                return tool_execution.to_message()
-
+            result = tool.run(**arguments)
         except Exception as e:
             logger.error(f"Error executing tool '{tool_call.name}': {e}")
+            # Include the exception detail so the model can self-correct
+            # (wrong argument name, malformed JSON, ...).
+            tool_execution.content = f"Error executing tool '{tool_call.name}': {e}"
+            return tool_execution.to_message()
 
-        tool_execution.content = f"Error executing tool '{tool_call.name}'"
+        # A falsy result ("", 0, False, [], None) is a valid tool outcome,
+        # not an error. ToolResponse.content is the *stringified* value.
+        if result is None:
+            tool_execution.content = ""
+        elif isinstance(result, str):
+            tool_execution.content = result
+        else:
+            tool_execution.content = str(result)
         return tool_execution.to_message()
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
@@ -717,18 +872,21 @@ class Agent:
             self.history.compact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             response = self.reason(messages_for_reasoning_model)
-            agent_response.reasoning_content = response.reasoning_content
-            agent_response.usage.add(response.usage)
-            if response.reasoning_content:
-                agent_response.events.append(
-                    AgentEventThinking(
-                        agent_id=self.id,
-                        run_id=agent_response.run_id,
-                        content=response.reasoning_content,
+            if response is not None:  # reason() returns None on an empty plan
+                agent_response.reasoning_content = response.reasoning_content
+                agent_response.usage.add(response.usage)
+                if response.reasoning_content:
+                    agent_response.events.append(
+                        AgentEventThinking(
+                            agent_id=self.id,
+                            run_id=agent_response.run_id,
+                            content=response.reasoning_content,
+                        )
                     )
-                )
 
         num_turns_available = self.max_turns
+        validation_retries_left = MAX_VALIDATION_RETRIES
+        completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -777,22 +935,27 @@ class Agent:
                 content_to_check = response.parsed if response.parsed else response.content
                 is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
 
-                if is_valid:
-                    agent_response.content = response.content
-                    agent_response.parsed = parsed_data
-                    agent_response.messages.append(_message)
-                    break
-                else:
+                if not is_valid and validation_retries_left > 0:
+                    validation_retries_left -= 1
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
 
+                if not is_valid:
+                    logger.error(
+                        f"Final response still fails schema validation after "
+                        f"{MAX_VALIDATION_RETRIES} retries: {error_msg}"
+                    )
+                agent_response.content = response.content
+                agent_response.parsed = parsed_data
+                agent_response.messages.append(_message)
+                completed = True
+                break
+
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
                 for tool_call in response.tool_calls:
-                    args = tool_call.arguments
-                    if not isinstance(args, dict):
-                        args = json.loads(args) if args and args.strip() else {}
+                    args = self._parse_tool_args(tool_call)
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -816,9 +979,22 @@ class Agent:
                             content=m.content,
                         )
                     )
+                if self.team:
+                    # Fold the sub-agents' spend into this run's usage.
+                    agent_response.usage.add(self._drain_delegation_usage())
 
             if self.tool_choice == "required":
+                # The LLM reads its own tool_choice at request time: downgrade
+                # it too, otherwise every turn keeps forcing a tool call and
+                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
+                self.llm.tool_choice = "auto"
+
+        if not completed:
+            # max_turns exhausted without a final answer: don't report the
+            # partial state of the last (tool-calling) turn as a normal stop.
+            agent_response.content = None
+            logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
         agent_response.events.append(
             AgentEventCompleted(
@@ -827,7 +1003,7 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop"
+        agent_response.finish_reason = "stop" if completed else "max_turns"
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -860,18 +1036,21 @@ class Agent:
             await self.history.acompact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
-            agent_response.reasoning_content = reasoning_agent_response.reasoning_content
-            agent_response.usage.add(reasoning_agent_response.usage)
-            if reasoning_agent_response.reasoning_content:
-                agent_response.events.append(
-                    AgentEventThinking(
-                        agent_id=self.id,
-                        run_id=agent_response.run_id,
-                        content=reasoning_agent_response.reasoning_content,
+            if reasoning_agent_response is not None:  # areason() returns None on an empty plan
+                agent_response.reasoning_content = reasoning_agent_response.reasoning_content
+                agent_response.usage.add(reasoning_agent_response.usage)
+                if reasoning_agent_response.reasoning_content:
+                    agent_response.events.append(
+                        AgentEventThinking(
+                            agent_id=self.id,
+                            run_id=agent_response.run_id,
+                            content=reasoning_agent_response.reasoning_content,
+                        )
                     )
-                )
 
         num_turns_available = self.max_turns
+        validation_retries_left = MAX_VALIDATION_RETRIES
+        completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -915,22 +1094,27 @@ class Agent:
                 content_to_check = response.parsed if response.parsed else response.content
                 is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
 
-                if is_valid:
-                    agent_response.content = response.content
-                    agent_response.parsed = parsed_data
-                    agent_response.messages.append(_message)
-                    break
-                else:
+                if not is_valid and validation_retries_left > 0:
+                    validation_retries_left -= 1
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
 
+                if not is_valid:
+                    logger.error(
+                        f"Final response still fails schema validation after "
+                        f"{MAX_VALIDATION_RETRIES} retries: {error_msg}"
+                    )
+                agent_response.content = response.content
+                agent_response.parsed = parsed_data
+                agent_response.messages.append(_message)
+                completed = True
+                break
+
             # handle tool calls
             if response.tool_calls and self.get_all_tools():
                 for tool_call in response.tool_calls:
-                    args = tool_call.arguments
-                    if not isinstance(args, dict):
-                        args = json.loads(args) if args and args.strip() else {}
+                    args = self._parse_tool_args(tool_call)
                     agent_response.events.append(
                         AgentEventToolStarted(
                             agent_id=self.id,
@@ -954,9 +1138,22 @@ class Agent:
                             content=m.content,
                         )
                     )
+                if self.team:
+                    # Fold the sub-agents' spend into this run's usage.
+                    agent_response.usage.add(self._drain_delegation_usage())
 
             if self.tool_choice == "required":
+                # The LLM reads its own tool_choice at request time: downgrade
+                # it too, otherwise every turn keeps forcing a tool call and
+                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
+                self.llm.tool_choice = "auto"
+
+        if not completed:
+            # max_turns exhausted without a final answer: don't report the
+            # partial state of the last (tool-calling) turn as a normal stop.
+            agent_response.content = None
+            logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
         agent_response.events.append(
             AgentEventCompleted(
@@ -965,7 +1162,7 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop"
+        agent_response.finish_reason = "stop" if completed else "max_turns"
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1002,15 +1199,18 @@ class Agent:
             self.history.compact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_response = self.reason(messages_for_reasoning_model)
-            agent_response.reasoning_content = reasoning_response.reasoning_content
-            agent_response.usage.add(reasoning_response.usage)
-            event = AgentEventThinking(
-                agent_id=self.id, run_id=agent_response.run_id, content=reasoning_response.reasoning_content
-            )
-            agent_response.events.append(event)
-            yield event
+            if reasoning_response is not None and reasoning_response.reasoning_content:
+                agent_response.reasoning_content = reasoning_response.reasoning_content
+                agent_response.usage.add(reasoning_response.usage)
+                event = AgentEventThinking(
+                    agent_id=self.id, run_id=agent_response.run_id, content=reasoning_response.reasoning_content
+                )
+                agent_response.events.append(event)
+                yield event
 
         num_turns_available = self.max_turns
+        validation_retries_left = MAX_VALIDATION_RETRIES
+        completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -1069,15 +1269,26 @@ class Agent:
             self.history.add_message(_message)
 
             if not final_tool_calls:
+                if self.response_model:
+                    is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
+                    if not is_valid and validation_retries_left > 0:
+                        validation_retries_left -= 1
+                        self.history.add_message(Message(role="user", content=error_msg))
+                        continue
+                    if not is_valid:
+                        logger.error(
+                            f"Final response still fails schema validation after "
+                            f"{MAX_VALIDATION_RETRIES} retries: {error_msg}"
+                        )
+                    agent_response.parsed = parsed_data
                 agent_response.content = full_content
                 agent_response.messages.append(_message)
+                completed = True
                 break
 
             if final_tool_calls and self.get_all_tools():
                 for tool_call in final_tool_calls:
-                    args = tool_call.arguments
-                    if not isinstance(args, dict):
-                        args = json.loads(args) if args and args.strip() else {}
+                    args = self._parse_tool_args(tool_call)
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,
@@ -1098,16 +1309,22 @@ class Agent:
                     )
                     agent_response.events.append(event)
                     yield event
+                if self.team:
+                    # Fold the sub-agents' spend into this run's usage.
+                    agent_response.usage.add(self._drain_delegation_usage())
 
             if self.tool_choice == "required":
+                # The LLM reads its own tool_choice at request time: downgrade
+                # it too, otherwise every turn keeps forcing a tool call and
+                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
+                self.llm.tool_choice = "auto"
 
-        if self.response_model:
-            try:
-                agent_response.parsed = json.loads(full_content)
-            except Exception as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                agent_response.parsed = {"error": f"Parse error: {str(e)}"}
+        if not completed:
+            # max_turns exhausted without a final answer: don't leave the last
+            # streamed delta as content nor report a normal stop.
+            agent_response.content = None
+            logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
         event = AgentEventCompleted(
             agent_id=self.id,
@@ -1116,7 +1333,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        agent_response.finish_reason = "stop"
+        agent_response.finish_reason = "stop" if completed else "max_turns"
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
@@ -1153,15 +1370,18 @@ class Agent:
             await self.history.acompact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_response = await self.areason(messages_for_reasoning_model)
-            agent_response.reasoning_content = reasoning_response.reasoning_content
-            agent_response.usage.add(reasoning_response.usage)
-            event = AgentEventThinking(
-                agent_id=self.id, run_id=agent_response.run_id, content=reasoning_response.reasoning_content
-            )
-            agent_response.events.append(event)
-            yield event
+            if reasoning_response is not None and reasoning_response.reasoning_content:
+                agent_response.reasoning_content = reasoning_response.reasoning_content
+                agent_response.usage.add(reasoning_response.usage)
+                event = AgentEventThinking(
+                    agent_id=self.id, run_id=agent_response.run_id, content=reasoning_response.reasoning_content
+                )
+                agent_response.events.append(event)
+                yield event
 
         num_turns_available = self.max_turns
+        validation_retries_left = MAX_VALIDATION_RETRIES
+        completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
@@ -1217,15 +1437,26 @@ class Agent:
             self.history.add_message(_message)
 
             if not final_tool_calls:
+                if self.response_model:
+                    is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
+                    if not is_valid and validation_retries_left > 0:
+                        validation_retries_left -= 1
+                        self.history.add_message(Message(role="user", content=error_msg))
+                        continue
+                    if not is_valid:
+                        logger.error(
+                            f"Final response still fails schema validation after "
+                            f"{MAX_VALIDATION_RETRIES} retries: {error_msg}"
+                        )
+                    agent_response.parsed = parsed_data
                 agent_response.content = full_content
                 agent_response.messages.append(_message)
+                completed = True
                 break
 
             if final_tool_calls and self.get_all_tools():
                 for tool_call in final_tool_calls:
-                    args = tool_call.arguments
-                    if not isinstance(args, dict):
-                        args = json.loads(args) if args and args.strip() else {}
+                    args = self._parse_tool_args(tool_call)
                     event = AgentEventToolStarted(
                         agent_id=self.id,
                         run_id=agent_response.run_id,
@@ -1246,16 +1477,22 @@ class Agent:
                     )
                     agent_response.events.append(event)
                     yield event
+                if self.team:
+                    # Fold the sub-agents' spend into this run's usage.
+                    agent_response.usage.add(self._drain_delegation_usage())
 
             if self.tool_choice == "required":
+                # The LLM reads its own tool_choice at request time: downgrade
+                # it too, otherwise every turn keeps forcing a tool call and
+                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
+                self.llm.tool_choice = "auto"
 
-        if self.response_model:
-            try:
-                agent_response.parsed = json.loads(full_content)
-            except Exception as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                agent_response.parsed = {"error": f"Parse error: {str(e)}"}
+        if not completed:
+            # max_turns exhausted without a final answer: don't leave the last
+            # streamed delta as content nor report a normal stop.
+            agent_response.content = None
+            logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
         event = AgentEventCompleted(
             agent_id=self.id,
@@ -1264,7 +1501,7 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        agent_response.finish_reason = "stop"
+        agent_response.finish_reason = "stop" if completed else "max_turns"
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
