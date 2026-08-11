@@ -243,7 +243,8 @@ def test_agent_run_respects_max_turns():
     agent = Agent(tools=[AddTool()], llm=llm, max_turns=3)
     result = agent.run("loop forever")
 
-    assert result.finish_reason == "stop"
+    assert result.finish_reason == "max_turns"
+    assert result.content is None
     assert llm.invoke.call_count <= 3
 
 

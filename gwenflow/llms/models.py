@@ -39,19 +39,33 @@ MODELS: dict[str, ModelInfo] = {
     # not an API model id: use o3-mini with reasoning_effort="high"
     "o3-mini-high": {"context_window": 200000, "reasoning": True},
     "o4-mini": {"context_window": 200000, "reasoning": True},
-    # --- ANTHROPIC ---
-    "claude-fable-5": {"context_window": 1000000, "reasoning": True},
-    "claude-mythos-5": {"context_window": 1000000, "reasoning": True},
+    # --- ANTHROPIC (verified 2026-08-08) ---
+    "claude-fable-5": {"context_window": 1000000, "reasoning": True},  # thinking always on
+    "claude-mythos-5": {"context_window": 1000000, "reasoning": True},  # Project Glasswing only
+    "claude-mythos-preview": {"context_window": 1000000, "reasoning": True},  # -> claude-mythos-5
+    "claude-opus-5": {"context_window": 1000000, "reasoning": True},  # thinking on by default
     "claude-opus-4-8": {"context_window": 1000000, "reasoning": True},
     "claude-opus-4-7": {"context_window": 1000000, "reasoning": True},
     "claude-opus-4-6": {"context_window": 1000000, "reasoning": True},
     "claude-opus-4-5": {"context_window": 200000, "reasoning": True},
-    "claude-opus-4-1": {"context_window": 200000, "reasoning": True},
-    "claude-sonnet-5": {"context_window": 1000000, "reasoning": True},
+    "claude-opus-4-5-20251101": {"context_window": 200000, "reasoning": True},
+    "claude-opus-4-1": {"context_window": 200000, "reasoning": True},  # retired 2026-08-05
+    "claude-opus-4-1-20250805": {"context_window": 200000, "reasoning": True},
+    "claude-opus-4-0": {"context_window": 200000, "reasoning": True},  # deprecated
+    "claude-opus-4-20250514": {"context_window": 200000, "reasoning": True},
+    "claude-sonnet-5": {"context_window": 1000000, "reasoning": True},  # thinking on by default
     "claude-sonnet-4-6": {"context_window": 1000000, "reasoning": True},
-    "claude-sonnet-4-5": {"context_window": 200000, "reasoning": False},
-    "claude-haiku-4-5": {"context_window": 200000, "reasoning": False},
-    "claude-haiku-4-5-20251001": {"context_window": 200000, "reasoning": False},
+    "claude-sonnet-4-5": {"context_window": 200000, "reasoning": True},  # 1M via beta header
+    "claude-sonnet-4-5-20250929": {"context_window": 200000, "reasoning": True},
+    "claude-sonnet-4-0": {"context_window": 200000, "reasoning": True},  # deprecated
+    "claude-sonnet-4-20250514": {"context_window": 200000, "reasoning": True},
+    "claude-haiku-4-5": {"context_window": 200000, "reasoning": True},
+    "claude-haiku-4-5-20251001": {"context_window": 200000, "reasoning": True},
+    "claude-3-7-sonnet-20250219": {"context_window": 200000, "reasoning": True},  # retired 2026-02-19
+    "claude-3-5-sonnet-20241022": {"context_window": 200000, "reasoning": False},  # retired 2025-10-28
+    "claude-3-5-haiku-20241022": {"context_window": 200000, "reasoning": False},  # retired 2026-02-19
+    "claude-3-opus-20240229": {"context_window": 200000, "reasoning": False},  # retired 2026-01-05
+    "claude-3-haiku-20240307": {"context_window": 200000, "reasoning": False},  # retired 2026-04-19
     # --- GOOGLE ---
     "gemini-3.5-flash": {"context_window": 1048576, "reasoning": True},
     "gemini-3.1-pro": {"context_window": 1048576, "reasoning": True},
