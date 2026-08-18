@@ -213,7 +213,7 @@ class MCPServerSse(_SessionMCPServer):
         return _MCPTool(
             _mcp_name=mcp_tool.name,
             _mcp_description=mcp_tool.description or "",
-            _mcp_parameters=mcp_tool.inputSchema,
+            _mcp_parameters=mcp_tool.input_schema,
             function=_run,
         )
 
@@ -263,6 +263,6 @@ class MCPServerStdio(_SessionMCPServer):
         return _MCPTool(
             _mcp_name=mcp_tool.name,
             _mcp_description=mcp_tool.description or "",
-            _mcp_parameters=mcp_tool.inputSchema,
+            _mcp_parameters=mcp_tool.input_schema,
             function=_run,
         )
