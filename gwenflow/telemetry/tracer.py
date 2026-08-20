@@ -4,6 +4,7 @@ import inspect
 from contextlib import contextmanager
 from typing import Any
 
+from gwenflow.logger import logger
 from gwenflow.telemetry import _semconv as sc
 from gwenflow.telemetry._settings import is_tracing_enabled
 from gwenflow.telemetry.utils import (
@@ -19,6 +20,8 @@ from gwenflow.telemetry.utils import (
 _telemetry_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "gwenflow_telemetry_context", default=None
 )
+
+_UNSET = object()
 
 
 def _update_stream_state(chunk: Any, content: str, tool_calls: Any) -> tuple[str, Any]:
@@ -67,11 +70,49 @@ class DecoratorTracer:
         return self.context(metadata=attrs or None)
 
     def _apply_context(self, span) -> None:
+        """Stamp the session/user context onto a span gwenflow itself created.
+
+        This duplicates what `ContextAttributeProcessor` (see `telemetry/base.py`)
+        does on span start, and that is deliberate: the processor only exists when
+        the provider went through `Telemetry()`. Callers who wire up their own
+        TracerProvider still get context on gwenflow spans thanks to this call.
+        Setting the same attribute twice with the same value is a no-op.
+        """
         attrs = _telemetry_context.get()
         if not attrs:
             return
         for key, value in attrs.items():
             span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
+
+    def _record_start(self, span, kind_name: str, instance: Any, func: Any, args: tuple, kwargs: dict) -> None:
+        """Record inputs without ever breaking the call being traced.
+
+        Runs before the wrapped function, so an exception here (an unserializable
+        `_model_params`, a property that raises) would otherwise fail the real
+        LLM/agent/tool call instead of just losing its trace.
+        """
+        try:
+            self._apply_context(span)
+            record_inputs(span, kind_name, instance, func, args, kwargs)
+        except Exception as e:
+            logger.debug(f"Telemetry failed to record span inputs: {e}")
+
+    def _record_finish(
+        self, span, kind_name: str, result: Any, content: Any = _UNSET, tool_calls: Any = _UNSET
+    ) -> None:
+        """Record outputs without ever masking a call that already succeeded.
+
+        Streaming callers pass the accumulated `content`/`tool_calls`; the others
+        let this read them off the result.
+        """
+        try:
+            if content is _UNSET:
+                content = getattr(result, "content", "") or ""
+            if tool_calls is _UNSET:
+                tool_calls = getattr(result, "tool_calls", None)
+            self._finalize(span, kind_name, result, content, tool_calls)
+        except Exception as e:
+            logger.debug(f"Telemetry failed to record span outputs: {e}")
 
     def _finalize(self, span, kind_name: str, result_for_usage: Any, content: str, tool_calls: Any) -> None:
         if kind_name == "LLM":
@@ -126,8 +167,7 @@ class DecoratorTracer:
                     ctx = trace.set_span_in_context(span)
                     token = otel_context.attach(ctx)
                     try:
-                        self._apply_context(span)
-                        record_inputs(span, kind_name, instance, func, args, kwargs)
+                        self._record_start(span, kind_name, instance, func, args, kwargs)
                     finally:
                         otel_context.detach(token)
 
@@ -145,7 +185,7 @@ class DecoratorTracer:
                             last = chunk
                             content, tool_calls = _update_stream_state(chunk, content, tool_calls)
                             yield chunk
-                        self._finalize(span, kind_name, last, content, tool_calls)
+                        self._record_finish(span, kind_name, last, content, tool_calls)
                         self._ok(span)
                     except Exception as e:
                         self._error(span, e)
@@ -169,16 +209,9 @@ class DecoratorTracer:
                     span = self._get_tracer().start_span(make_name(instance))
                     token = otel_context.attach(trace.set_span_in_context(span))
                     try:
-                        self._apply_context(span)
-                        record_inputs(span, kind_name, instance, func, args, kwargs)
+                        self._record_start(span, kind_name, instance, func, args, kwargs)
                         result = await func(instance, *args, **kwargs)
-                        self._finalize(
-                            span,
-                            kind_name,
-                            result,
-                            getattr(result, "content", "") or "",
-                            getattr(result, "tool_calls", None),
-                        )
+                        self._record_finish(span, kind_name, result)
                         self._ok(span)
                         return result
                     except Exception as e:
@@ -206,8 +239,7 @@ class DecoratorTracer:
                     ctx = trace.set_span_in_context(span)
                     token = otel_context.attach(ctx)
                     try:
-                        self._apply_context(span)
-                        record_inputs(span, kind_name, instance, func, args, kwargs)
+                        self._record_start(span, kind_name, instance, func, args, kwargs)
                     finally:
                         otel_context.detach(token)
 
@@ -225,7 +257,7 @@ class DecoratorTracer:
                             last = chunk
                             content, tool_calls = _update_stream_state(chunk, content, tool_calls)
                             yield chunk
-                        self._finalize(span, kind_name, last, content, tool_calls)
+                        self._record_finish(span, kind_name, last, content, tool_calls)
                         self._ok(span)
                     except Exception as e:
                         self._error(span, e)
@@ -247,16 +279,9 @@ class DecoratorTracer:
                 span = self._get_tracer().start_span(make_name(instance))
                 token = otel_context.attach(trace.set_span_in_context(span))
                 try:
-                    self._apply_context(span)
-                    record_inputs(span, kind_name, instance, func, args, kwargs)
+                    self._record_start(span, kind_name, instance, func, args, kwargs)
                     result = func(instance, *args, **kwargs)
-                    self._finalize(
-                        span,
-                        kind_name,
-                        result,
-                        getattr(result, "content", "") or "",
-                        getattr(result, "tool_calls", None),
-                    )
+                    self._record_finish(span, kind_name, result)
                     self._ok(span)
                     return result
                 except Exception as e:

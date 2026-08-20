@@ -15,10 +15,6 @@ def is_otel_available() -> bool:
     return _has_module("opentelemetry.sdk.trace") and _has_module("opentelemetry.exporter.otlp")
 
 
-def is_openinference_available() -> bool:
-    return _has_module("openinference.semconv.trace")
-
-
 def is_tracing_enabled() -> bool:
     return _tracing_enabled
 

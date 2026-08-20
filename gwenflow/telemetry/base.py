@@ -1,5 +1,5 @@
-import atexit
 import os
+import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -11,6 +11,7 @@ from gwenflow.version import __version__
 _HTTP_TRACES_PATH = "/v1/traces"
 
 _context_processor_providers: set[int] = set()
+_context_processor_lock = threading.Lock()
 
 
 def build_resource_attributes(
@@ -30,6 +31,11 @@ def build_resource_attributes(
 
 
 def _install_context_processor(provider) -> None:
+    with _context_processor_lock:
+        _install_context_processor_locked(provider)
+
+
+def _install_context_processor_locked(provider) -> None:
     if id(provider) in _context_processor_providers:
         return
 
@@ -44,6 +50,13 @@ def _install_context_processor(provider) -> None:
                 return
             for key, value in attrs.items():
                 span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:
+            # No export to flush here; the base SpanProcessor implementation
+            # returns None, which would make TracerProvider.force_flush()
+            # (a logical AND across all processors) report failure even when
+            # the real exporter (e.g. BatchSpanProcessor) succeeded.
+            return True
 
     provider.add_span_processor(ContextAttributeProcessor())
     _context_processor_providers.add(id(provider))
@@ -142,7 +155,8 @@ class Telemetry:
         provider.add_span_processor(BatchSpanProcessor(self._build_exporter()))
         _install_context_processor(provider)
         trace.set_tracer_provider(provider)
-        atexit.register(provider.shutdown)
+        # No atexit.register here: TracerProvider(shutdown_on_exit=True), the
+        # default, already registers its own shutdown handler.
         set_tracing_enabled(True)
         logger.debug(
             f"Telemetry enabled (organization={self.organization}, protocol={self.protocol}, endpoint={self.endpoint})."
