@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextvars
 import json
 
@@ -6,7 +7,12 @@ import pytest
 
 import gwenflow.telemetry.base as base_mod
 from gwenflow.telemetry._settings import is_tracing_enabled, set_tracing_enabled
-from gwenflow.telemetry.base import Telemetry, build_resource_attributes, resolve_endpoint
+from gwenflow.telemetry.base import (
+    Telemetry,
+    build_authorization,
+    build_resource_attributes,
+    resolve_endpoint,
+)
 from gwenflow.telemetry.tracer import DecoratorTracer
 from gwenflow.types import Document
 
@@ -168,8 +174,9 @@ def test_resolve_endpoint_http_default():
     assert resolve_endpoint("HTTP", None) == "http://localhost:4318/v1/traces"
 
 
-def test_resolve_endpoint_grpc_default():
-    assert resolve_endpoint("GRPC", None) == "localhost:4317"
+def test_resolve_endpoint_grpc_default_carries_a_scheme():
+    """Without one the exporter reads scheme="localhost" and opens a TLS channel."""
+    assert resolve_endpoint("GRPC", None) == "http://localhost:4317"
 
 
 def test_resolve_endpoint_reads_base_env(monkeypatch):
@@ -181,6 +188,61 @@ def test_resolve_endpoint_reads_base_env(monkeypatch):
 def test_resolve_endpoint_per_signal_env_is_verbatim(monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4318/custom")
     assert resolve_endpoint("HTTP", None) == "http://collector:4318/custom"
+
+
+# --- authorization --------------------------------------------------------------
+
+
+def test_single_api_key_is_a_bearer_token():
+    assert build_authorization("secret-123") == "Bearer secret-123"
+
+
+def test_key_pair_is_basic_auth():
+    """Langfuse (public/secret) and Grafana Cloud (instance id/token) reject Bearer."""
+    assert build_authorization(("pk-lf-1", "sk-lf-2")) == "Basic " + base64.b64encode(b"pk-lf-1:sk-lf-2").decode()
+
+
+def test_api_key_pair_reaches_the_export_headers(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(api_key=("pk-lf-1", "sk-lf-2"))
+    assert t._build_headers()["Authorization"].startswith("Basic ")
+
+
+def test_explicit_headers_still_win_over_api_key(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    t = Telemetry(api_key="secret-123", headers={"Authorization": "Basic zzz"})
+    assert t._build_headers()["Authorization"] == "Basic zzz"
+
+
+# --- grpc channel ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "endpoint,insecure,expects_tls",
+    [
+        (None, None, False),  # local default must stay plaintext
+        ("http://localhost:4317", None, False),
+        ("https://collector.example.com:443", None, True),
+        ("http://localhost:4317", False, True),  # explicit override wins
+    ],
+)
+def test_grpc_channel_security(monkeypatch, endpoint, insecure, expects_tls):
+    pytest.importorskip("opentelemetry.exporter.otlp.proto.grpc.trace_exporter")
+    import opentelemetry.exporter.otlp.proto.grpc.exporter as grpc_exporter
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+
+    used = []
+    for name in ("insecure_channel", "secure_channel"):
+        original = getattr(grpc_exporter, name)
+        monkeypatch.setattr(
+            grpc_exporter, name, lambda *a, _n=name, _o=original, **k: (used.append(_n), _o(*a, **k))[1]
+        )
+
+    Telemetry(protocol="GRPC", endpoint=endpoint, insecure=insecure)._build_exporter()
+    assert used == ["secure_channel" if expects_tls else "insecure_channel"]
 
 
 # --- resource / organization ----------------------------------------------------

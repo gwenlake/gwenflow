@@ -1,3 +1,4 @@
+import base64
 import os
 import threading
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from gwenflow.telemetry._settings import is_otel_available, set_tracing_enabled
 from gwenflow.version import __version__
 
 _HTTP_TRACES_PATH = "/v1/traces"
+_GRPC_DEFAULT_ENDPOINT = "http://localhost:4317"
 
 _context_processor_providers: set[int] = set()
 _context_processor_lock = threading.Lock()
@@ -62,6 +64,13 @@ def _install_context_processor_locked(provider) -> None:
     _context_processor_providers.add(id(provider))
 
 
+def build_authorization(api_key: str | tuple[str, str]) -> str:
+    if isinstance(api_key, str):
+        return f"Bearer {api_key}"
+    key_id, secret = api_key
+    return "Basic " + base64.b64encode(f"{key_id}:{secret}".encode()).decode()
+
+
 def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
     proto = protocol.upper()
 
@@ -71,7 +80,7 @@ def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
             return signal
 
     if proto == "GRPC":
-        return endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or "localhost:4317"
+        return endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or _GRPC_DEFAULT_ENDPOINT
 
     if not endpoint:
         endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or "http://localhost:4318"
@@ -88,10 +97,11 @@ class Telemetry:
     protocol: str = "HTTP"
     endpoint: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
-    api_key: str | None = None
+    api_key: str | tuple[str, str] | None = None
     auth: Callable[[], dict[str, str]] | None = None
     service_name: str | None = None
     service_version: str | None = None
+    insecure: bool | None = None
 
     def __post_init__(self) -> None:
         if self.api_key is None:
@@ -111,7 +121,7 @@ class Telemetry:
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["Authorization"] = build_authorization(self.api_key)
         if self.auth is not None:
             headers.update(self.auth() or {})
         headers.update(self.headers)
@@ -155,19 +165,21 @@ class Telemetry:
         provider.add_span_processor(BatchSpanProcessor(self._build_exporter()))
         _install_context_processor(provider)
         trace.set_tracer_provider(provider)
-        # No atexit.register here: TracerProvider(shutdown_on_exit=True), the
-        # default, already registers its own shutdown handler.
         set_tracing_enabled(True)
         logger.debug(
             f"Telemetry enabled (organization={self.organization}, protocol={self.protocol}, endpoint={self.endpoint})."
         )
 
     def _build_exporter(self):
+        headers = self._build_headers() or None
         if self.protocol.upper() == "GRPC":
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        else:
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        return OTLPSpanExporter(endpoint=self.endpoint, headers=self._build_headers() or None)
+
+            return OTLPSpanExporter(endpoint=self.endpoint, headers=headers, insecure=self.insecure)
+
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+        return OTLPSpanExporter(endpoint=self.endpoint, headers=headers)
 
     @staticmethod
     def _sdk_provider():
