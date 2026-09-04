@@ -54,10 +54,6 @@ def _install_context_processor_locked(provider) -> None:
                 span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
 
         def force_flush(self, timeout_millis: int = 30_000) -> bool:
-            # No export to flush here; the base SpanProcessor implementation
-            # returns None, which would make TracerProvider.force_flush()
-            # (a logical AND across all processors) report failure even when
-            # the real exporter (e.g. BatchSpanProcessor) succeeded.
             return True
 
     provider.add_span_processor(ContextAttributeProcessor())
