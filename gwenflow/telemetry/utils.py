@@ -92,6 +92,7 @@ def record_inputs(span, kind_name: str, instance: Any, func: Callable, args: tup
 
 _PROVIDER_BY_CLASS = {
     "ChatOpenAI": "openai",
+    "ResponseOpenAI": "openai",
     "ChatAzureOpenAI": "azure_openai",
     "ChatGwenlake": "gwenlake",
     "ChatDeepSeek": "deepseek",
