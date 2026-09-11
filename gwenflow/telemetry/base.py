@@ -6,7 +6,12 @@ from typing import Callable
 
 from gwenflow.logger import logger
 from gwenflow.telemetry import _semconv as sc
-from gwenflow.telemetry._settings import is_otel_available, set_tracing_enabled
+from gwenflow.telemetry._settings import (
+    is_otel_available,
+    set_report_llm_usage,
+    set_tracing_enabled,
+    should_instrument_http,
+)
 from gwenflow.version import __version__
 
 _HTTP_TRACES_PATH = "/v1/traces"
@@ -14,6 +19,8 @@ _GRPC_DEFAULT_ENDPOINT = "http://localhost:4317"
 
 _context_processor_providers: set[int] = set()
 _context_processor_lock = threading.Lock()
+
+_http_instrumented = False
 
 
 def build_resource_attributes(
@@ -43,7 +50,7 @@ def _install_context_processor_locked(provider) -> None:
 
     from opentelemetry.sdk.trace import SpanProcessor
 
-    from gwenflow.telemetry.tracer import _telemetry_context
+    from gwenflow.telemetry.tracer import _telemetry_context, attribute_value
 
     class ContextAttributeProcessor(SpanProcessor):
         def on_start(self, span, parent_context=None) -> None:
@@ -51,13 +58,75 @@ def _install_context_processor_locked(provider) -> None:
             if not attrs:
                 return
             for key, value in attrs.items():
-                span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
+                span.set_attribute(key, attribute_value(value))
 
         def force_flush(self, timeout_millis: int = 30_000) -> bool:
             return True
 
     provider.add_span_processor(ContextAttributeProcessor())
     _context_processor_providers.add(id(provider))
+
+
+def instrument_http_clients() -> bool:
+    """Carry the current span to the services this process calls.
+
+    A model call served by a remote endpoint produces two spans: the one
+    gwenflow opens here, and whatever the service at the other end opens for
+    the same call. They belong to the same trace only if the request says which
+    span it was made from — the W3C `traceparent` header — and something has to
+    put it there. That is all this does: instrument the HTTP client the model
+    SDKs use, so every outgoing request carries the current context.
+
+    This is a process-wide patch, so it traces outgoing HTTP this library knows
+    nothing about too. `Telemetry(instrument_http=False)`, or
+    `GWENFLOW_TELEMETRY_INSTRUMENT_HTTP=false`, leaves the client alone.
+
+    Returns whether the instrumentation is in place. A missing package is not
+    an error: it costs the link between the two traces, nothing else.
+    """
+    global _http_instrumented
+
+    if _http_instrumented:
+        return True
+
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    except ImportError:
+        logger.debug(
+            "opentelemetry-instrumentation-httpx is not installed; outgoing requests carry no "
+            "trace context, so a service called from here cannot attach its spans to this trace. "
+            'Install it with: pip install "gwenflow[telemetry]"'
+        )
+        return False
+
+    # Without the opt-in the instrumentation still emits the long-superseded
+    # HTTP attribute names.
+    os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
+
+    try:
+        HTTPXClientInstrumentor().instrument()
+    except Exception as e:
+        logger.debug(f"Could not instrument httpx, outgoing requests carry no trace context: {e}")
+        return False
+
+    _http_instrumented = True
+    return True
+
+
+def uninstrument_http_clients() -> None:
+    """Undo `instrument_http_clients`."""
+    global _http_instrumented
+
+    if not _http_instrumented:
+        return
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+        HTTPXClientInstrumentor().uninstrument()
+    except Exception as e:
+        logger.debug(f"Could not uninstrument httpx: {e}")
+    finally:
+        _http_instrumented = False
 
 
 def build_authorization(api_key: str | tuple[str, str]) -> str:
@@ -98,6 +167,8 @@ class Telemetry:
     service_name: str | None = None
     service_version: str | None = None
     insecure: bool | None = None
+    report_llm_usage: bool | None = None
+    instrument_http: bool | None = None
 
     def __post_init__(self) -> None:
         if self.api_key is None:
@@ -110,6 +181,11 @@ class Telemetry:
             self.organization = os.getenv("GWENFLOW_ORGANIZATION")
         if self.service_name is None and self.organization is None and self.api_key is None:
             self.service_name = "gwenflow"
+        if self.report_llm_usage is not None:
+            # Before `_configure`, and outside it: whether this process reports
+            # token counts is a fact about who serves its calls, not about
+            # whether there is an exporter to send them to.
+            set_report_llm_usage(self.report_llm_usage)
         self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
@@ -151,7 +227,7 @@ class Telemetry:
             else:
                 logger.debug("A TracerProvider is already configured; reusing it for gwenflow telemetry.")
             _install_context_processor(existing)
-            set_tracing_enabled(True)
+            self._enable()
             return
 
         resource = Resource.create(
@@ -161,10 +237,16 @@ class Telemetry:
         provider.add_span_processor(BatchSpanProcessor(self._build_exporter()))
         _install_context_processor(provider)
         trace.set_tracer_provider(provider)
-        set_tracing_enabled(True)
+        self._enable()
         logger.debug(
             f"Telemetry enabled (organization={self.organization}, protocol={self.protocol}, endpoint={self.endpoint})."
         )
+
+    def _enable(self) -> None:
+        set_tracing_enabled(True)
+        wanted = self.instrument_http if self.instrument_http is not None else should_instrument_http()
+        if wanted:
+            instrument_http_clients()
 
     def _build_exporter(self):
         headers = self._build_headers() or None

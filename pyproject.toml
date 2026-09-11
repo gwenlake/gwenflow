@@ -1,6 +1,6 @@
 [project]
 name = "gwenflow"
-version = "1.2.2"
+version = "1.2.3"
 description = "A framework for orchestrating applications powered by autonomous AI agents and LLMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -45,6 +45,7 @@ telemetry = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "openinference-semantic-conventions>=0.1.9",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
 ]
 readers = [
     "python-docx>=1.2.0",

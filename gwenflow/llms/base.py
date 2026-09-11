@@ -25,6 +25,8 @@ class ChatBase(ABC):
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     tool_type: str = "fncall"
 
+    provider: Optional[str] = None
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
@@ -42,9 +44,6 @@ class ChatBase(ABC):
         pass
 
     async def aclose(self) -> None:
-        """Close the async client (if any) so its httpx connection pool is shut down
-        on the current event loop. Prevents 'Event loop is closed' warnings at teardown.
-        """
         async_client = getattr(self, "async_client", None)
         if async_client is not None:
             await async_client.close()
