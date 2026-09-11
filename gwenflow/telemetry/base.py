@@ -68,22 +68,6 @@ def _install_context_processor_locked(provider) -> None:
 
 
 def instrument_http_clients() -> bool:
-    """Carry the current span to the services this process calls.
-
-    A model call served by a remote endpoint produces two spans: the one
-    gwenflow opens here, and whatever the service at the other end opens for
-    the same call. They belong to the same trace only if the request says which
-    span it was made from — the W3C `traceparent` header — and something has to
-    put it there. That is all this does: instrument the HTTP client the model
-    SDKs use, so every outgoing request carries the current context.
-
-    This is a process-wide patch, so it traces outgoing HTTP this library knows
-    nothing about too. `Telemetry(instrument_http=False)`, or
-    `GWENFLOW_TELEMETRY_INSTRUMENT_HTTP=false`, leaves the client alone.
-
-    Returns whether the instrumentation is in place. A missing package is not
-    an error: it costs the link between the two traces, nothing else.
-    """
     global _http_instrumented
 
     if _http_instrumented:
@@ -99,8 +83,6 @@ def instrument_http_clients() -> bool:
         )
         return False
 
-    # Without the opt-in the instrumentation still emits the long-superseded
-    # HTTP attribute names.
     os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
 
     try:
@@ -182,9 +164,6 @@ class Telemetry:
         if self.service_name is None and self.organization is None and self.api_key is None:
             self.service_name = "gwenflow"
         if self.report_llm_usage is not None:
-            # Before `_configure`, and outside it: whether this process reports
-            # token counts is a fact about who serves its calls, not about
-            # whether there is an exporter to send them to.
             set_report_llm_usage(self.report_llm_usage)
         self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
