@@ -18,6 +18,7 @@ class ChatOllama(ChatOpenAI):
             "api_key": self.api_key,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
+            "default_headers": self.default_headers,
         }
 
         client_params = {k: v for k, v in client_params.items() if v is not None}

@@ -137,7 +137,7 @@ def _prepare_llm_attributes(span, instance: Any) -> None:
     model = getattr(instance, "model", None)
     if model is not None:
         span.set_attribute(sc.LLM_MODEL_NAME, str(model))
-    provider = _resolve_provider(instance)
+    provider = getattr(instance, "provider", None) or _resolve_provider(instance)
     if provider:
         span.set_attribute(sc.LLM_PROVIDER, provider)
     params = getattr(instance, "_model_params", None)

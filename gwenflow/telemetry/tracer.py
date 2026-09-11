@@ -1,12 +1,13 @@
 import contextvars
 import functools
 import inspect
+import json
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Callable
 
 from gwenflow.logger import logger
 from gwenflow.telemetry import _semconv as sc
-from gwenflow.telemetry._settings import is_tracing_enabled
+from gwenflow.telemetry._settings import is_tracing_enabled, should_report_llm_usage
 from gwenflow.telemetry.utils import (
     capture_agent_usage,
     capture_finish_reason,
@@ -22,6 +23,70 @@ _telemetry_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.
 )
 
 _UNSET = object()
+
+_BAGGAGE_VALUE_MAX_CHARS = 1024
+
+
+def attribute_value(value: Any) -> Any:
+    if isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, (list, tuple)) and all(isinstance(v, (str, bool, int, float)) for v in value):
+        return list(value)
+    return json.dumps(value, default=str)
+
+
+def _baggage_value(value: Any) -> str | None:
+    if isinstance(value, str):
+        encoded = value
+    elif isinstance(value, (bool, int, float)):
+        encoded = str(value)
+    else:
+        encoded = json.dumps(value, default=str)
+    if not encoded or len(encoded) > _BAGGAGE_VALUE_MAX_CHARS:
+        return None
+    return encoded
+
+
+def _attach_baggage(metadata: dict[str, Any] | None) -> Callable[[], None]:
+    if not metadata:
+        return lambda: None
+    try:
+        from opentelemetry import baggage
+        from opentelemetry import context as otel_context
+    except ImportError:
+        return lambda: None
+
+    ctx = otel_context.get_current()
+    for key, value in metadata.items():
+        encoded = _baggage_value(value)
+        if encoded is None:
+            logger.debug(f"Telemetry context '{key}' is not carried as baggage (empty or over the size limit).")
+            continue
+        ctx = baggage.set_baggage(key, encoded, context=ctx)
+    token = otel_context.attach(ctx)
+
+    def restore() -> None:
+        if otel_context.get_current() is ctx:
+            otel_context.detach(token)
+
+    return restore
+
+
+def _suppress_key() -> object:
+    try:
+        from opentelemetry.context import _SUPPRESS_INSTRUMENTATION_KEY
+
+        return _SUPPRESS_INSTRUMENTATION_KEY
+    except ImportError:
+        return "suppress_instrumentation"
+
+
+def _suppressed() -> bool:
+    try:
+        from opentelemetry import context as otel_context
+    except ImportError:
+        return False
+    return bool(otel_context.get_value(_suppress_key()))
 
 
 def _update_stream_state(chunk: Any, content: str, tool_calls: Any) -> tuple[str, Any]:
@@ -51,10 +116,27 @@ class DecoratorTracer:
         if metadata:
             merged.update(metadata)
         _telemetry_context.set(merged)
+        restore_baggage = _attach_baggage(metadata)
         try:
             yield
         finally:
             _telemetry_context.set(prev)
+            restore_baggage()
+
+    @contextmanager
+    def suppress(self):
+        try:
+            from opentelemetry import context as otel_context
+        except ImportError:
+            yield
+            return
+        ctx = otel_context.set_value(_suppress_key(), True)
+        token = otel_context.attach(ctx)
+        try:
+            yield
+        finally:
+            if otel_context.get_current() is ctx:
+                otel_context.detach(token)
 
     def session(
         self,
@@ -70,27 +152,13 @@ class DecoratorTracer:
         return self.context(metadata=attrs or None)
 
     def _apply_context(self, span) -> None:
-        """Stamp the session/user context onto a span gwenflow itself created.
-
-        This duplicates what `ContextAttributeProcessor` (see `telemetry/base.py`)
-        does on span start, and that is deliberate: the processor only exists when
-        the provider went through `Telemetry()`. Callers who wire up their own
-        TracerProvider still get context on gwenflow spans thanks to this call.
-        Setting the same attribute twice with the same value is a no-op.
-        """
         attrs = _telemetry_context.get()
         if not attrs:
             return
         for key, value in attrs.items():
-            span.set_attribute(key, value if isinstance(value, (str, bool, int, float)) else str(value))
+            span.set_attribute(key, attribute_value(value))
 
     def _record_start(self, span, kind_name: str, instance: Any, func: Any, args: tuple, kwargs: dict) -> None:
-        """Record inputs without ever breaking the call being traced.
-
-        Runs before the wrapped function, so an exception here (an unserializable
-        `_model_params`, a property that raises) would otherwise fail the real
-        LLM/agent/tool call instead of just losing its trace.
-        """
         try:
             self._apply_context(span)
             record_inputs(span, kind_name, instance, func, args, kwargs)
@@ -116,7 +184,8 @@ class DecoratorTracer:
 
     def _finalize(self, span, kind_name: str, result_for_usage: Any, content: str, tool_calls: Any) -> None:
         if kind_name == "LLM":
-            capture_llm_usage(span, result_for_usage)
+            if should_report_llm_usage():
+                capture_llm_usage(span, result_for_usage)
             capture_finish_reason(span, result_for_usage)
         elif kind_name == "AGENT":
             capture_agent_usage(span, result_for_usage)
@@ -155,7 +224,7 @@ class DecoratorTracer:
 
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
-                    if not is_tracing_enabled():
+                    if not is_tracing_enabled() or _suppressed():
                         async for chunk in func(instance, *args, **kwargs):
                             yield chunk
                         return
@@ -200,7 +269,7 @@ class DecoratorTracer:
 
                 @functools.wraps(func)
                 async def wrapper(instance, *args, **kwargs):
-                    if not is_tracing_enabled():
+                    if not is_tracing_enabled() or _suppressed():
                         return await func(instance, *args, **kwargs)
 
                     from opentelemetry import context as otel_context
@@ -228,7 +297,7 @@ class DecoratorTracer:
 
                 @functools.wraps(func)
                 def wrapper(instance, *args, **kwargs):
-                    if not is_tracing_enabled():
+                    if not is_tracing_enabled() or _suppressed():
                         yield from func(instance, *args, **kwargs)
                         return
 
@@ -270,7 +339,7 @@ class DecoratorTracer:
             # 4. SYNC FUNCTION
             @functools.wraps(func)
             def wrapper(instance, *args, **kwargs):
-                if not is_tracing_enabled():
+                if not is_tracing_enabled() or _suppressed():
                     return func(instance, *args, **kwargs)
 
                 from opentelemetry import context as otel_context
