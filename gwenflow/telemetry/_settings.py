@@ -74,6 +74,21 @@ def should_instrument_http() -> bool:
     return _env_bool("GWENFLOW_TELEMETRY_INSTRUMENT_HTTP", True)
 
 
+_propagate_baggage: bool | None = None
+
+
+def should_propagate_baggage() -> bool:
+    if _propagate_baggage is not None:
+        return _propagate_baggage
+    return _env_bool("GWENFLOW_TELEMETRY_PROPAGATE_BAGGAGE", False)
+
+
+def set_propagate_baggage(value: bool | None) -> None:
+    """`None` hands the decision back to the environment."""
+    global _propagate_baggage
+    _propagate_baggage = value
+
+
 def _capture_content() -> bool:
     return _env_bool("GWENFLOW_TELEMETRY_CAPTURE_CONTENT", True)
 

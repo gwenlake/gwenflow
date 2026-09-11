@@ -573,7 +573,6 @@ readers = [
     { name = "tabulate" },
 ]
 telemetry = [
-    { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-httpx" },
     { name = "opentelemetry-sdk" },
@@ -610,7 +609,6 @@ requires-dist = [
     { name = "mistralai", specifier = ">=2.0" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "openai", specifier = "==2.15.0" },
-    { name = "openinference-semantic-conventions", marker = "extra == 'telemetry'", specifier = ">=0.1.9" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'telemetry'", specifier = ">=0.41b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
@@ -672,8 +670,8 @@ name = "httpcore2"
 version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/30/7d/ee6787efd5fe675d7cfd5eb149e40ccb5bdfc7e7c9252edcf7825c38986f/httpcore2-2.11.0.tar.gz", hash = "sha256:82e6fc95d784e6ee22ebd4b2cb57df53a2efb13ad6a11260a236ecebbc5f50c7", size = 67532, upload-time = "2026-08-18T08:03:53.008Z" }
 wheels = [
@@ -1198,15 +1196,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/62/d4/19bf1411dbd8eaa84316b14197424018a051874c2a1271582bec67a6fd70/openai_responses-0.13.1.tar.gz", hash = "sha256:d0bc5f02e9fd355fed5d25794fa1aed548da23c5e8d7175bd8d37ab75482ee05", size = 25214, upload-time = "2025-12-02T21:37:41.637Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/08/98/50c755503a55550f170d0211297bc8791b8bf10bf04cb16b4b95ca71d1e3/openai_responses-0.13.1-py3-none-any.whl", hash = "sha256:b5fc7fb15f546b551757864c1dfaeb01b8a4fc0c353961bd6d0d45ff26389721", size = 51887, upload-time = "2025-12-02T21:37:40.15Z" },
-]
-
-[[package]]
-name = "openinference-semantic-conventions"
-version = "0.1.9"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/bd/dba562cd41c4a2ef70acaace7aa2e389f00991f85b42b5f20a12ff890037/openinference_semantic_conventions-0.1.9.tar.gz", hash = "sha256:5d32bf820561f6deed479f56ea780706d2afca6616f5960564fd4c2447ae7c0b", size = 7505, upload-time = "2024-06-26T04:57:21.075Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/fc/7a0d37c6062eef94e6e870113c46094feb1992e98b647ea1bb5423f732fd/openinference_semantic_conventions-0.1.9-py3-none-any.whl", hash = "sha256:0b0350f4d37d88aead8cce6488327bcbb1243e637c6491e44d104040912611c7", size = 8737, upload-time = "2024-06-26T04:57:19.64Z" },
 ]
 
 [[package]]
@@ -2427,8 +2416,8 @@ name = "uvicorn"
 version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "sys_platform != 'emscripten'" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/ad/4a96c425be6fb67e0621e62d86c402b4a17ab2be7f7c055d9bd2f638b9e2/uvicorn-0.42.0.tar.gz", hash = "sha256:9b1f190ce15a2dd22e7758651d9b6d12df09a13d51ba5bf4fc33c383a48e1775", size = 85393, upload-time = "2026-03-16T06:19:50.077Z" }
 wheels = [

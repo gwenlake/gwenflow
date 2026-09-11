@@ -7,7 +7,11 @@ from typing import Any, Callable
 
 from gwenflow.logger import logger
 from gwenflow.telemetry import _semconv as sc
-from gwenflow.telemetry._settings import is_tracing_enabled, should_report_llm_usage
+from gwenflow.telemetry._settings import (
+    is_tracing_enabled,
+    should_propagate_baggage,
+    should_report_llm_usage,
+)
 from gwenflow.telemetry.utils import (
     capture_agent_usage,
     capture_finish_reason,
@@ -48,7 +52,7 @@ def _baggage_value(value: Any) -> str | None:
 
 
 def _attach_baggage(metadata: dict[str, Any] | None) -> Callable[[], None]:
-    if not metadata:
+    if not metadata or not should_propagate_baggage():
         return lambda: None
     try:
         from opentelemetry import baggage

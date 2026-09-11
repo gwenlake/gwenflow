@@ -8,6 +8,7 @@ from gwenflow.logger import logger
 from gwenflow.telemetry import _semconv as sc
 from gwenflow.telemetry._settings import (
     is_otel_available,
+    set_propagate_baggage,
     set_report_llm_usage,
     set_tracing_enabled,
     should_instrument_http,
@@ -83,10 +84,13 @@ def instrument_http_clients() -> bool:
         )
         return False
 
-    os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
+    instrumentor = HTTPXClientInstrumentor()
+    if instrumentor.is_instrumented_by_opentelemetry:
+        logger.debug("httpx is already instrumented; gwenflow reuses that instrumentation and leaves it as it is.")
+        return True
 
     try:
-        HTTPXClientInstrumentor().instrument()
+        instrumentor.instrument()
     except Exception as e:
         logger.debug(f"Could not instrument httpx, outgoing requests carry no trace context: {e}")
         return False
@@ -96,7 +100,7 @@ def instrument_http_clients() -> bool:
 
 
 def uninstrument_http_clients() -> None:
-    """Undo `instrument_http_clients`."""
+    """Undo `instrument_http_clients` — only what gwenflow itself instrumented."""
     global _http_instrumented
 
     if not _http_instrumented:
@@ -116,6 +120,24 @@ def build_authorization(api_key: str | tuple[str, str]) -> str:
         return f"Bearer {api_key}"
     key_id, secret = api_key
     return "Basic " + base64.b64encode(f"{key_id}:{secret}".encode()).decode()
+
+
+def resolve_protocol(protocol: str | None) -> str:
+    if protocol:
+        return protocol.upper()
+
+    for var in ("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_PROTOCOL"):
+        raw = (os.getenv(var) or "").strip().lower()
+        if not raw:
+            continue
+        if raw == "grpc":
+            return "GRPC"
+        if raw == "http/protobuf":
+            return "HTTP"
+        logger.warning(f"{var}={raw} is not a protocol gwenflow exports in; falling back to http/protobuf.")
+        return "HTTP"
+
+    return "HTTP"
 
 
 def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
@@ -141,7 +163,7 @@ def resolve_endpoint(protocol: str, endpoint: str | None) -> str:
 @dataclass
 class Telemetry:
     organization: str | None = None
-    protocol: str = "HTTP"
+    protocol: str | None = None
     endpoint: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     api_key: str | tuple[str, str] | None = None
@@ -151,6 +173,7 @@ class Telemetry:
     insecure: bool | None = None
     report_llm_usage: bool | None = None
     instrument_http: bool | None = None
+    propagate_baggage: bool | None = None
 
     def __post_init__(self) -> None:
         if self.api_key is None:
@@ -165,7 +188,10 @@ class Telemetry:
             self.service_name = "gwenflow"
         if self.report_llm_usage is not None:
             set_report_llm_usage(self.report_llm_usage)
+        if self.propagate_baggage is not None:
+            set_propagate_baggage(self.propagate_baggage)
         self._has_export_config = bool(self.endpoint or self.api_key or self.auth or self.headers)
+        self.protocol = resolve_protocol(self.protocol)
         self.endpoint = resolve_endpoint(self.protocol, self.endpoint)
         self._configure()
 
