@@ -38,6 +38,7 @@ class ChatDeepSeek(ChatOpenAI):
             "base_url": self.base_url,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
+            "default_headers": self.default_headers,
         }
 
         client_params = {k: v for k, v in client_params.items() if v is not None}

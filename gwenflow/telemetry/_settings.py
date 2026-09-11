@@ -11,19 +11,6 @@ def _has_module(name: str) -> bool:
         return False
 
 
-def is_otel_available() -> bool:
-    return _has_module("opentelemetry.sdk.trace") and _has_module("opentelemetry.exporter.otlp")
-
-
-def is_tracing_enabled() -> bool:
-    return _tracing_enabled
-
-
-def set_tracing_enabled(value: bool) -> None:
-    global _tracing_enabled
-    _tracing_enabled = value
-
-
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
 
@@ -38,6 +25,68 @@ def _env_bool(name: str, default: bool) -> bool:
     if value in _FALSE:
         return False
     return default
+
+
+def is_otel_available() -> bool:
+    return _has_module("opentelemetry.sdk.trace") and _has_module("opentelemetry.exporter.otlp")
+
+
+def is_tracing_enabled() -> bool:
+    return _tracing_enabled
+
+
+def set_tracing_enabled(value: bool) -> None:
+    global _tracing_enabled
+    _tracing_enabled = value
+
+
+_report_llm_usage: bool | None = None
+
+
+def should_report_llm_usage() -> bool:
+    """Whether this process is the one that measures its own LLM calls.
+
+    Set it False when the calls are served by a remote endpoint that emits a
+    span for them as well — a gateway, a proxy, an inference service. The call
+    is then described by two spans, gwenflow's and the server's, and both would
+    carry `llm.token_count.*` for the same tokens. Any backend that aggregates
+    that attribute across spans reads it twice: twice the tokens, twice the
+    cost, twice whatever it derives from them.
+
+    Which of the two should report is not a question this library can answer —
+    it depends on which end you trust to know what actually served the call, so
+    it is left to whoever wires the two together. Everything else about the
+    span is unaffected: it still says a model was called, with what, for how
+    long, and how it ended.
+    """
+    if _report_llm_usage is not None:
+        return _report_llm_usage
+    return _env_bool("GWENFLOW_TELEMETRY_REPORT_LLM_USAGE", True)
+
+
+def set_report_llm_usage(value: bool | None) -> None:
+    """`None` hands the decision back to the environment."""
+    global _report_llm_usage
+    _report_llm_usage = value
+
+
+def should_instrument_http() -> bool:
+    return _env_bool("GWENFLOW_TELEMETRY_INSTRUMENT_HTTP", True)
+
+
+_propagate_baggage: bool | None = None
+
+
+def should_propagate_baggage() -> bool:
+    if _propagate_baggage is not None:
+        return _propagate_baggage
+    return _env_bool("GWENFLOW_TELEMETRY_PROPAGATE_BAGGAGE", False)
+
+
+def set_propagate_baggage(value: bool | None) -> None:
+    """`None` hands the decision back to the environment."""
+    global _propagate_baggage
+    _propagate_baggage = value
 
 
 def _capture_content() -> bool:

@@ -197,6 +197,7 @@ class ChatOpenAI(ChatBase):
     base_url: Optional[str] = None
     timeout: Optional[Union[float, int]] = None
     max_retries: Optional[int] = None
+    default_headers: Optional[Dict[str, str]] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         api_key = self.api_key
@@ -217,6 +218,7 @@ class ChatOpenAI(ChatBase):
             "base_url": self.base_url,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
+            "default_headers": self.default_headers,
         }
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
