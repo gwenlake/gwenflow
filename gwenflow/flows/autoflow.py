@@ -1,7 +1,5 @@
 import json
 
-import networkx as nx
-
 from gwenflow.agents import Agent
 from gwenflow.logger import logger
 from gwenflow.utils.json import parse_json_markdown
@@ -127,6 +125,10 @@ class AutoFlow:
                 "task": entry.get("task", ""),
                 "depends_on": entry.get("depends_on") or [],
             }
+
+        # Imported here rather than at module level: networkx costs ~11 MiB of
+        # RSS and is only needed once an autoflow actually runs.
+        import networkx as nx
 
         graph = nx.DiGraph()
         for name in agents:

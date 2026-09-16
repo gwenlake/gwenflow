@@ -1,3 +1,4 @@
+import asyncio
 import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -99,6 +100,166 @@ def test_invoke_raises_on_api_error(monkeypatch):
     llm = ChatOpenAI(api_key="fake-key")
     with pytest.raises(RuntimeError, match="Error in calling openai API"):
         llm.invoke("hello")
+
+
+# ---------------------------------------------------------------------------
+# Streaming tool calls
+# ---------------------------------------------------------------------------
+
+
+def _tool_call_delta(tool_id=None, name=None, arguments=None, index=0, function_unset=False):
+    function = None if function_unset else SimpleNamespace(name=name, arguments=arguments)
+    return SimpleNamespace(id=tool_id, index=index, type="function", function=function)
+
+
+def _stream_chunk(tool_calls, finish_reason=None):
+    delta = SimpleNamespace(content=None, tool_calls=tool_calls, audio=None, reasoning_content=None)
+    choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+    return SimpleNamespace(choices=[choice], usage=None)
+
+
+def _vllm_tool_call_chunks():
+    """Deltas as vLLM emits them: the call opens with name/arguments unset, where OpenAI sends ""."""
+    return [
+        _stream_chunk([_tool_call_delta(tool_id="chatcmpl-tool-8382", name="search_medias", arguments=None)]),
+        _stream_chunk([_tool_call_delta(arguments='{"query": "')]),
+        _stream_chunk([_tool_call_delta(arguments='paris"}')]),
+        _stream_chunk(None, finish_reason="tool_calls"),
+    ]
+
+
+def _streamed_tool_calls(responses):
+    return [part for part in responses[-1].parts if getattr(part, "kind", None) == "tool-call"]
+
+
+def _last_tool_call(responses):
+    tool_calls = _streamed_tool_calls(responses)
+    assert len(tool_calls) == 1
+    return tool_calls[0]
+
+
+def _stream_tool_calls(monkeypatch, chunks):
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = iter(chunks)
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+    return _streamed_tool_calls(list(ChatOpenAI(api_key="fake-key").stream("hello")))
+
+
+def test_stream_keeps_tool_calls_apart_when_server_sends_no_id(monkeypatch):
+    """Some OpenAI-compatible servers never send an id; `index` is what separates the calls."""
+    tool_calls = _stream_tool_calls(
+        monkeypatch,
+        [
+            _stream_chunk([_tool_call_delta(tool_id="", name="tool_a", arguments='{"a": 1}', index=0)]),
+            _stream_chunk([_tool_call_delta(tool_id="", name="tool_b", arguments='{"b": 2}', index=1)]),
+            _stream_chunk(None, finish_reason="tool_calls"),
+        ],
+    )
+
+    assert [(tc.name, tc.arguments) for tc in tool_calls] == [("tool_a", '{"a": 1}'), ("tool_b", '{"b": 2}')]
+
+
+def test_stream_does_not_duplicate_a_name_repeated_on_every_delta(monkeypatch):
+    """Some servers repeat id and name on each fragment instead of only the first."""
+    tool_calls = _stream_tool_calls(
+        monkeypatch,
+        [
+            _stream_chunk([_tool_call_delta(tool_id="call_9", name="search_medias", arguments='{"query": "')]),
+            _stream_chunk([_tool_call_delta(tool_id="call_9", name="search_medias", arguments='paris"}')]),
+            _stream_chunk(None, finish_reason="tool_calls"),
+        ],
+    )
+
+    assert [(tc.name, tc.arguments) for tc in tool_calls] == [("search_medias", '{"query": "paris"}')]
+
+
+def test_stream_interleaves_parallel_tool_calls_by_index(monkeypatch):
+    tool_calls = _stream_tool_calls(
+        monkeypatch,
+        [
+            _stream_chunk([_tool_call_delta(tool_id="call_a", name="tool_a", arguments="", index=0)]),
+            _stream_chunk([_tool_call_delta(tool_id="call_b", name="tool_b", arguments="", index=1)]),
+            _stream_chunk(
+                [_tool_call_delta(arguments='{"a": ', index=0), _tool_call_delta(arguments='{"b": ', index=1)]
+            ),
+            _stream_chunk([_tool_call_delta(arguments="1}", index=0), _tool_call_delta(arguments="2}", index=1)]),
+            _stream_chunk(None, finish_reason="tool_calls"),
+        ],
+    )
+
+    assert [(tc.id, tc.name, tc.arguments) for tc in tool_calls] == [
+        ("call_a", "tool_a", '{"a": 1}'),
+        ("call_b", "tool_b", '{"b": 2}'),
+    ]
+
+
+def test_stream_reassembles_a_name_split_across_deltas(monkeypatch):
+    tool_calls = _stream_tool_calls(
+        monkeypatch,
+        [
+            _stream_chunk([_tool_call_delta(tool_id="call_7", name="search_", arguments="")]),
+            _stream_chunk([_tool_call_delta(name="medias", arguments='{"query": 1}')]),
+            _stream_chunk(None, finish_reason="tool_calls"),
+        ],
+    )
+
+    assert [(tc.name, tc.arguments) for tc in tool_calls] == [("search_medias", '{"query": 1}')]
+
+
+def test_stream_accumulates_tool_call_opened_without_arguments(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = iter(_vllm_tool_call_chunks())
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    tool_call = _last_tool_call(list(llm.stream("hello")))
+
+    assert tool_call.id == "chatcmpl-tool-8382"
+    assert tool_call.name == "search_medias"
+    assert tool_call.arguments == '{"query": "paris"}'
+
+
+def test_stream_tolerates_tool_call_delta_without_function(monkeypatch):
+    """`ChoiceDeltaToolCall.function` is Optional in the SDK, so a delta may omit it."""
+    chunks = [
+        _stream_chunk([_tool_call_delta(tool_id="chatcmpl-tool-8382", function_unset=True)]),
+        _stream_chunk([_tool_call_delta(name="search_medias", arguments='{"query": "paris"}')]),
+        _stream_chunk(None, finish_reason="tool_calls"),
+    ]
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = iter(chunks)
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+    tool_call = _last_tool_call(list(llm.stream("hello")))
+
+    assert tool_call.id == "chatcmpl-tool-8382"
+    assert tool_call.name == "search_medias"
+    assert tool_call.arguments == '{"query": "paris"}'
+
+
+def test_astream_accumulates_tool_call_opened_without_arguments(monkeypatch):
+    async def fake_create(*args, **kwargs):
+        async def iterator():
+            for chunk in _vllm_tool_call_chunks():
+                yield chunk
+
+        return iterator()
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = fake_create
+    monkeypatch.setattr(ChatOpenAI, "get_async_client", lambda self: fake_client)
+
+    llm = ChatOpenAI(api_key="fake-key")
+
+    async def collect():
+        return [response async for response in llm.astream("hello")]
+
+    tool_call = _last_tool_call(asyncio.run(collect()))
+
+    assert tool_call.id == "chatcmpl-tool-8382"
+    assert tool_call.name == "search_medias"
+    assert tool_call.arguments == '{"query": "paris"}'
 
 
 # ---------------------------------------------------------------------------

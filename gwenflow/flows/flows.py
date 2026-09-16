@@ -2,14 +2,19 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import networkx as nx
 import yaml
 
 from gwenflow.flows.handlers import NODE_TYPE_REGISTRY
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
+
+if TYPE_CHECKING:
+    import networkx as nx
+
+# networkx costs ~11 MiB of RSS and is only needed once a flow actually runs,
+# so it is imported inside the methods below rather than at module level.
 
 
 @dataclass
@@ -103,7 +108,9 @@ class FlowRunner:
         self.flow = Flow.from_file(Path(flow_path))
         self.graph = self._build_graph()
 
-    def _build_graph(self) -> nx.DiGraph:
+    def _build_graph(self) -> "nx.DiGraph":
+        import networkx as nx
+
         graph = nx.DiGraph()
         for node in self.flow.nodes:
             graph.add_node(node.id, data=node)
@@ -127,6 +134,8 @@ class FlowRunner:
         return handler(node.parameters, input_data)
 
     def plot(self, filename="pipeline_graph"):
+        import networkx as nx
+
         p = nx.drawing.nx_pydot.to_pydot(self.graph)
         for node in p.get_nodes():
             node.set_shape("box")
@@ -167,6 +176,8 @@ class FlowRunner:
 
     @tracer.flow(name="Flow Run")
     def run(self) -> None:
+        import networkx as nx
+
         order = list(nx.topological_sort(self.graph))
         results: dict[str, Any] = {}
         for node_id in order:

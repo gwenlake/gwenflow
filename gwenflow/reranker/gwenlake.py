@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import List, Optional
 
-import requests
+import httpx
 
 from gwenflow.api import Api, api
 from gwenflow.logger import logger
@@ -26,7 +26,7 @@ class GwenlakeReranker(Reranker):
         try:
             payload = {"query": query, "input": input, "model": self.model}
             response = self._api.client.post("/v1/rerank", json=payload)
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             raise ValueError(f"Error raised by inference endpoint: {e}") from e
 
         if response.status_code != 200:
