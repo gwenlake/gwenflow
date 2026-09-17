@@ -4,6 +4,39 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] — 2026-09-16
+
+### Fixed
+
+- **Streamed tool calls against non-OpenAI servers.** `ChatOpenAI.stream()` /
+  `astream()` accumulated delta fragments onto a `ToolCall` built from the first
+  fragment and matched fragments by `id`. vLLM (and other OpenAI-compatible
+  servers) opens a tool call with `arguments=None` where OpenAI sends `""`, so
+  the next fragment raised `TypeError: unsupported operand type(s) for +=:
+  'NoneType' and 'str'` — surfaced as `RuntimeError: Error in calling openai
+  API: ...`. Every request that triggered a tool failed. Fragments are now keyed
+  by `index`, which is what the streaming protocol uses to tell parallel calls
+  apart. This also fixes three related cases: a fragment with no `function`
+  object (it is `Optional` in the SDK), a server that never sends an `id` (two
+  calls were silently merged into one), and a server that repeats `id`+`name` on
+  every fragment (the name was duplicated).
+- **Dead `except` clauses in the Gwenlake embeddings and reranker.** Both caught
+  `requests.exceptions.RequestException` around a call made with an
+  `httpx.Client`, so a network failure propagated raw instead of becoming the
+  intended `ValueError`. The exception wrapped by tenacity's `RetryError`
+  therefore changes from `ConnectError` to `ValueError`.
+
+### Changed
+
+- **`import gwenflow` no longer loads every vendor SDK**, dropping resident
+  memory from ~148 MiB to ~56 MiB per process. Backends, tools, readers and
+  `CodingAgent` resolve lazily (PEP 562); `networkx` and the S3 helpers are
+  imported where they are used. No dependency was removed and no public name
+  moved — `from gwenflow import ChatAnthropic` works exactly as before, the SDK
+  simply loads on first access. Note that `from gwenflow import *` resolves
+  every name in `__all__` and therefore forfeits the saving; use explicit
+  imports.
+
 ## [1.0.0] — 2026-05-25
 
 First stable release. The API surface is now committed and any breaking change

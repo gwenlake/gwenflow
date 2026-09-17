@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import List, Optional
 
-import requests
+import httpx
 
 try:
     from tenacity import retry, stop_after_attempt, wait_fixed
@@ -43,7 +43,7 @@ class GwenlakeEmbeddings(Embeddings):
         try:
             payload = {"input": input, "model": self.model}
             response = self._api.client.post("/v1/embeddings", json=payload)
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             raise ValueError(f"Error raised by inference endpoint: {e}") from e
 
         if response.status_code != 200:

@@ -7,7 +7,6 @@ from typing import Any, List, Union
 import requests
 
 from gwenflow.types import Document
-from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_uri_to_bucket_key
 
 
 @dataclass
@@ -32,6 +31,10 @@ class Reader:
         filename = str(file)
 
         if filename.startswith("s3://"):
+            # Imported here rather than at module level: this pulls boto3 (~8 MiB
+            # of RSS), which is dead weight for a reader that never touches S3.
+            from gwenflow.utils.aws import aws_s3_read_file, aws_s3_read_text_file, aws_s3_uri_to_bucket_key
+
             bucket, key = aws_s3_uri_to_bucket_key(file)
             if text_mode:
                 return aws_s3_read_text_file(bucket, key)

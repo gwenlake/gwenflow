@@ -7,8 +7,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from gwenflow.logger import logger
-from gwenflow.readers import PDFReader
 from gwenflow.readers.base import Reader
+from gwenflow.readers.pdf import PDFReader
 from gwenflow.types import Document
 
 try:

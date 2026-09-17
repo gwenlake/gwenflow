@@ -117,6 +117,50 @@ def _audio_delta_to_part(audio: Any) -> Optional[AudioContent]:
     return AudioContent(data=data, transcript=transcript, extra=extra)
 
 
+def _accumulate_tool_call_deltas(
+    deltas: Any,
+    tool_calls: List[ToolCall],
+    by_index: Dict[int, ToolCall],
+) -> None:
+    """Merge a chunk's `delta.tool_calls` fragments into `tool_calls`, in place.
+
+    Fragments are keyed by `index`, which is what the streaming protocol uses to
+    tell parallel tool calls apart: `id` only rides on the opening fragment, and
+    some OpenAI-compatible servers never send one at all. `by_index` carries that
+    mapping across chunks; `tool_calls` keeps them in arrival order.
+
+    Servers disagree on what an opening fragment contains, so nothing is assumed:
+    `function` and its fields are all Optional in the SDK, and vLLM opens a call
+    with `arguments` unset before streaming the JSON.
+    """
+    for tc in deltas or []:
+        fn = getattr(tc, "function", None)
+        delta_name = (getattr(fn, "name", None) or "") if fn else ""
+        delta_arguments = (getattr(fn, "arguments", None) or "") if fn else ""
+
+        index = getattr(tc, "index", None)
+        key = 0 if index is None else index
+        current = by_index.get(key)
+
+        # A different id on a known index means the server reused that index for
+        # another call rather than continuing the previous one.
+        if current is not None and tc.id and current.id and tc.id != current.id:
+            current = None
+
+        if current is None:
+            current = ToolCall(id=tc.id, name="", arguments="")
+            tool_calls.append(current)
+            by_index[key] = current
+        elif tc.id and not current.id:
+            current.id = tc.id
+
+        # Most servers send the name once, some repeat it on every fragment.
+        # Only concatenate a fragment that actually adds something.
+        if delta_name and delta_name != current.name:
+            current.name += delta_name
+        current.arguments += delta_arguments
+
+
 def response_to_openai_dict(response: ModelResponse) -> Dict[str, Any]:
     """Serialize a ModelResponse to an OpenAI ChatCompletion-shaped dict.
 
@@ -419,7 +463,8 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
 
-            _full_tool_calls = []
+            _full_tool_calls: List[ToolCall] = []
+            _tool_calls_by_index: Dict[int, ToolCall] = {}
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             for chunk in completion:
@@ -450,16 +495,7 @@ class ChatOpenAI(ChatBase):
                         response.parts.append(audio_part)
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tc in delta.tool_calls or []:
-                            if _full_tool_calls and (not tc.id or tc.id == _full_tool_calls[-1].id):
-                                if tc.function.name:
-                                    _full_tool_calls[-1].name += tc.function.name
-                                if tc.function.arguments:
-                                    _full_tool_calls[-1].arguments += tc.function.arguments
-                            else:
-                                _full_tool_calls.append(
-                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
-                                )
+                        _accumulate_tool_call_deltas(delta.tool_calls, _full_tool_calls, _tool_calls_by_index)
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
@@ -494,7 +530,8 @@ class ChatOpenAI(ChatBase):
                 **self._model_params,
             )
 
-            _full_tool_calls = []
+            _full_tool_calls: List[ToolCall] = []
+            _tool_calls_by_index: Dict[int, ToolCall] = {}
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             async for chunk in completion:
@@ -525,16 +562,7 @@ class ChatOpenAI(ChatBase):
                         response.parts.append(audio_part)
 
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tc in delta.tool_calls or []:
-                            if _full_tool_calls and (not tc.id or tc.id == _full_tool_calls[-1].id):
-                                if tc.function.name:
-                                    _full_tool_calls[-1].name += tc.function.name
-                                if tc.function.arguments:
-                                    _full_tool_calls[-1].arguments += tc.function.arguments
-                            else:
-                                _full_tool_calls.append(
-                                    ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
-                                )
+                        _accumulate_tool_call_deltas(delta.tool_calls, _full_tool_calls, _tool_calls_by_index)
 
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)

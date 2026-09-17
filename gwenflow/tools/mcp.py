@@ -6,17 +6,22 @@ import json
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.types import CallToolResult, JSONRPCMessage
-from mcp.types import Tool as MCPToolDef
 from typing_extensions import NotRequired, TypedDict
 
 from gwenflow.logger import logger
 from gwenflow.tools.tool import BaseTool
+
+if TYPE_CHECKING:
+    # The `mcp` SDK drags a whole Starlette/uvicorn stack in (~14 MiB of RSS) that
+    # a client-side deployment never runs. Annotations are strings here thanks to
+    # `from __future__ import annotations`, so the SDK is only imported for real
+    # where a connection is actually opened.
+    from mcp import ClientSession
+    from mcp.types import CallToolResult, JSONRPCMessage
+    from mcp.types import Tool as MCPToolDef
 
 
 @dataclass(kw_only=True)
@@ -136,6 +141,8 @@ class _SessionMCPServer(MCPServer, abc.ABC):
         pass
 
     async def connect(self) -> None:
+        from mcp import ClientSession
+
         try:
             transport = await self.exit_stack.enter_async_context(self._create_streams())
             read, write = transport
@@ -190,6 +197,8 @@ class MCPServerSse(_SessionMCPServer):
         return self._name
 
     def _create_streams(self):
+        from mcp.client.sse import sse_client
+
         return sse_client(
             url=self.params["url"],
             headers=self.params.get("headers", None),
