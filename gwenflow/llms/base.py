@@ -27,6 +27,18 @@ class ChatBase(ABC):
 
     provider: Optional[str] = None
 
+    def _forced_tool_name(self) -> Optional[str]:
+        """Name of the tool a named `tool_choice` forces, or None.
+
+        The agent forces its `final_result` tool with the OpenAI shape
+        `{"type": "function", "function": {"name": ...}}`; each provider
+        translates it into its own dialect from here.
+        """
+        choice = self.tool_choice
+        if isinstance(choice, dict) and choice.get("type") == "function":
+            return (choice.get("function") or {}).get("name") or choice.get("name")
+        return None
+
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
         pass

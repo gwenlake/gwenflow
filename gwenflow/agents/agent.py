@@ -42,10 +42,37 @@ from gwenflow.types import (
     Message,
     ModelResponse,
     RequestUsage,
+    TextContent,
     ToolCall,
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
+
+FINAL_RESULT_TOOL = "final_result"
+
+
+@dataclass(kw_only=True)
+class FinalResultTool(BaseTool):
+    """The `response_model` exposed as a tool (pydantic-ai's `final_result`).
+
+    When an agent has both tools and a `response_model`, the schema is offered
+    to the model as one more function. Calling it *is* the final answer: the
+    agent validates the arguments and ends the run instead of executing
+    anything. Tool-capable models end their tool loop with a tool call far
+    more reliably than they switch to writing raw JSON text, and no native
+    `response_format` is needed while tools are on offer (see
+    `Agent._configure_llm_for_turn`).
+    """
+
+    name: str = FINAL_RESULT_TOOL
+    description: str = (
+        "Return your final answer. Call this once you have gathered everything you need: "
+        "its arguments are the complete, final answer."
+    )
+
+    def _run(self, **kwargs: Any) -> Any:  # never executed: see Agent._answer_from_tool_calls
+        return kwargs
+
 
 AGENT_COMMANDS = {
     "/help": "Show the available commands.",
@@ -186,7 +213,7 @@ class Agent:
             self._handoff_tools = self._build_handoff_tools()
             self.tools = list(self.tools) + self._handoff_tools
         if self.tools or self.mcp_servers:
-            self.llm.tools = self.get_all_tools()
+            self.llm.tools = self._llm_tools()
             self.llm.tool_choice = self.tool_choice
         else:
             self.llm.tools = None
@@ -545,7 +572,7 @@ class Agent:
         """Decorator that registers a function as a tool on this agent instance."""
         # self.tools = list(self.tools) + [FunctionTool.from_function(func)]
         self.tools = list(self.tools) + [Tool(func)]
-        self.llm.tools = self.get_all_tools()
+        self.llm.tools = self._llm_tools()
         self.llm.tool_choice = self.tool_choice
         return func
 
@@ -577,6 +604,112 @@ class Agent:
         except (json.JSONDecodeError, TypeError):
             return {"raw": args}
         return parsed if isinstance(parsed, dict) else {"raw": args}
+
+    def _configure_llm_for_turn(self, structured: bool) -> None:
+        """Decide whether this turn asks the provider for native structured output.
+
+        Sending `response_format` (JSON schema) *and* `tools` in the same request
+        works with OpenAI, but many OpenAI-compatible servers (vLLM, DeepSeek,
+        Scaleway, Ollama...) apply the JSON grammar from the first token, which
+        makes a tool call impossible: the model answers in JSON right away and
+        hallucinates the data it should have fetched with its tools.
+
+        So, when the agent has tools, `response_format` is withheld while tools
+        are on offer. The schema is exposed as the `final_result` tool instead
+        (see `FinalResultTool`) and is also in the system prompt, so the final
+        answer normally arrives as a `final_result` call or as valid JSON
+        text. If a text answer fails validation, the retry turn
+        (`structured=True`) forces a `final_result` call through a named
+        `tool_choice`: on vLLM/Ollama-style servers a forced tool call is
+        honoured more reliably than a `response_format` grammar, and the
+        arguments go through the same validation. `response_format` is never
+        sent together with tools.
+
+        Without tools the behaviour is unchanged: native structured output on
+        every turn.
+        """
+        if self.response_model is None:
+            return
+        if not self.get_all_tools():
+            self.llm.response_format = self.response_model
+            return
+        if structured:
+            self.llm.response_format = None
+            self.llm.tool_choice = {"type": "function", "function": {"name": FINAL_RESULT_TOOL}}
+        else:
+            self.llm.response_format = None
+            self.llm.tool_choice = self.tool_choice
+
+    def _final_result_tool(self) -> FinalResultTool:
+        if isinstance(self.response_model, type) and issubclass(self.response_model, BaseModel):
+            schema = self.response_model.model_json_schema()
+        else:
+            schema = dict(self.response_model)
+        return FinalResultTool(parameters=schema)
+
+    def _llm_tools(self) -> List[BaseTool]:
+        """Tools to put on the wire.
+
+        The agent's own tools, plus `final_result` when a `response_model`
+        has to coexist with them (see `FinalResultTool`).
+        """
+        tools = self.get_all_tools()
+        if tools and self.response_model is not None:
+            tools = tools + [self._final_result_tool()]
+        return tools
+
+    def _answer_from_tool_calls(self, tool_calls: List[ToolCall]) -> Optional[str]:
+        """Return the final JSON answer when the turn's tool call *is* the answer.
+
+        Two cases qualify, both only with a `response_model`:
+
+        - a call to `final_result` (the schema exposed as a tool);
+        - a call to a tool that does not exist whose arguments validate
+          against the schema: Qwen, Llama and friends sometimes "call" the
+          schema by its own title (`Answer({...})`) instead of `final_result`.
+
+        Like pydantic-ai, a valid final result ends the run even if the same
+        turn carries other tool calls: those are not executed. Invalid
+        arguments return None so that `run_tool` can feed the validation
+        error back to the model as the tool result.
+
+        Returns the canonical JSON text to record as the assistant's final
+        content, or None when the turn is a normal tool turn.
+        """
+        if self.response_model is None or not tool_calls:
+            return None
+        known = {t.name for t in self.get_all_tools()}
+        for tool_call in tool_calls:
+            if tool_call.name in known:
+                continue
+            args = self._parse_tool_args(tool_call)
+            if "raw" in args and len(args) == 1:
+                continue
+            is_valid, parsed, _ = self._validate_final_response(args)
+            if not is_valid:
+                continue
+            skipped = [t.name for t in tool_calls if t is not tool_call]
+            if skipped:
+                logger.warning(f"Final result received: tool calls {skipped} not executed")
+            if tool_call.name != FINAL_RESULT_TOOL:
+                logger.debug(f"Tool call '{tool_call.name}' matches the response schema: treated as the final answer")
+            if isinstance(parsed, BaseModel):
+                return parsed.model_dump_json()
+            return json.dumps(parsed)
+        return None
+
+    def _absorb_answer_tool_call(self, response: ModelResponse) -> None:
+        """Rewrite in place a response whose tool call is really the final answer.
+
+        See `_answer_from_tool_calls`. The tool calls are replaced by a text
+        part so that the history records a plain assistant message (no
+        orphan tool call waiting for a tool result) and the normal
+        validation path runs.
+        """
+        answer = self._answer_from_tool_calls(response.tool_calls)
+        if answer is None:
+            return
+        response.parts = [p for p in response.parts if not isinstance(p, ToolCall)] + [TextContent(content=answer)]
 
     def _validate_final_response(
         self, content_to_parse: str | Dict[str, Any] | List[Any] | None
@@ -791,9 +924,19 @@ class Agent:
 
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
+        if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
+            # Only reached when the arguments failed validation (a valid
+            # final_result never gets here: see _absorb_answer_tool_call).
+            _, _, error_msg = self._validate_final_response(self._parse_tool_args(tool_call))
+            logger.warning(f"final_result arguments failed validation: {error_msg}")
+            tool_execution.content = error_msg or "Invalid final_result arguments"
+            return tool_execution.to_message()
+
         if tool_call.name not in tool_map.keys():
             logger.error(f"Tool {tool_call.name} does not exist")
             tool_execution.content = f"Tool {tool_call.name} does not exist"
+            if self.response_model is not None:
+                tool_execution.content += f". To give your final answer, call the `{FINAL_RESULT_TOOL}` tool."
             return tool_execution.to_message()
 
         if self.skills and tool_call.name == "load_skill":
@@ -897,10 +1040,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             # format messages
             self.history.compact()
@@ -908,6 +1053,7 @@ class Agent:
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
+            self._absorb_answer_tool_call(response)
 
             # usage
             agent_response.usage.add(response.usage)
@@ -948,6 +1094,7 @@ class Agent:
 
                 if not is_valid and validation_retries_left > 0:
                     validation_retries_left -= 1
+                    force_structured = True
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
@@ -1061,15 +1208,18 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
 
             response = await self.llm.ainvoke(input=messages_for_model)
+            self._absorb_answer_tool_call(response)
 
             # usage
             agent_response.usage.add(response.usage)
@@ -1107,6 +1257,7 @@ class Agent:
 
                 if not is_valid and validation_retries_left > 0:
                     validation_retries_left -= 1
+                    force_structured = True
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
@@ -1221,10 +1372,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             self.history.compact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -1268,6 +1421,13 @@ class Agent:
 
             agent_response.usage.add(turn_usage)
 
+            answer = self._answer_from_tool_calls(final_tool_calls)
+            if answer is not None:
+                full_content, final_tool_calls = answer, []
+                event = AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=answer)
+                agent_response.events.append(event)
+                yield event
+
             if full_thinking:
                 if agent_response.reasoning_content:
                     agent_response.reasoning_content += "\n\n" + full_thinking
@@ -1284,6 +1444,7 @@ class Agent:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:
                         validation_retries_left -= 1
+                        force_structured = True
                         self.history.add_message(Message(role="user", content=error_msg))
                         continue
                     if not is_valid:
@@ -1392,10 +1553,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -1436,6 +1599,13 @@ class Agent:
 
             agent_response.usage.add(turn_usage)
 
+            answer = self._answer_from_tool_calls(final_tool_calls)
+            if answer is not None:
+                full_content, final_tool_calls = answer, []
+                event = AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=answer)
+                agent_response.events.append(event)
+                yield event
+
             if full_thinking:
                 if agent_response.reasoning_content:
                     agent_response.reasoning_content += "\n\n" + full_thinking
@@ -1452,6 +1622,7 @@ class Agent:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:
                         validation_retries_left -= 1
+                        force_structured = True
                         self.history.add_message(Message(role="user", content=error_msg))
                         continue
                     if not is_valid:

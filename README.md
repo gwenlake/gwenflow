@@ -224,6 +224,8 @@ The agent will list files, read the relevant ones, make targeted edits, run the 
 
 Pass a Pydantic model as `response_model` and the agent returns a parsed object via `response.parsed`.
 
+When the agent also has tools, the schema is exposed to the model as one more tool, `final_result` (the same approach as pydantic-ai): the model ends its tool loop by calling it, and the agent validates the arguments and returns them as the parsed answer. Native structured output (`response_format`) is not sent while tools are on offer, because many OpenAI-compatible servers (vLLM, DeepSeek, Scaleway, Ollama...) cannot emit a tool call while a JSON grammar is active and would skip the tools and hallucinate the data. A plain-text JSON answer is accepted too, and one that fails validation is retried by forcing a `final_result` call (named `tool_choice`), so `response_format` is never sent together with tools.
+
 ```python
 from typing import List
 from pydantic import BaseModel

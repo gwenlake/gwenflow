@@ -4,6 +4,31 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] — 2026-10-12
+
+### Fixed
+
+- **Structured output + tools on OpenAI-compatible servers.** Sending
+  `response_format` (JSON schema) together with `tools` works with OpenAI, but
+  many OpenAI-compatible servers (vLLM, DeepSeek, Scaleway, Ollama...) apply the
+  JSON grammar from the first token, so the model could never emit a tool call:
+  it answered in JSON right away and hallucinated the data it should have
+  fetched. The agent now withholds `response_format` while tools are on offer
+  and instead exposes the schema as a `final_result` tool (pydantic-ai's
+  approach): calling it ends the run with the validated arguments as
+  `response.parsed`, invalid arguments are fed back to the model as the tool
+  result, and other tool calls in the same turn are not executed. A model that
+  "calls" the schema by its own title (Qwen, Llama...) is handled the same way.
+  Plain JSON text is still accepted; when it fails validation the retry turn
+  forces a `final_result` call through a named `tool_choice`, so
+  `response_format` is never sent together with tools. Agents without tools
+  are unchanged. A named `tool_choice` in the OpenAI shape
+  (`{"type": "function", "function": {"name": ...}}`) is now translated for
+  Anthropic, Google and the OpenAI Responses API; it was passed through
+  verbatim before. `ChatAnthropic` also honours string `tool_choice` values
+  (`"required"`/`"any"` → `{"type": "any"}`, `"none"` → `{"type": "none"}`)
+  instead of always sending `{"type": "auto"}`.
+
 ## [1.2.4] — 2026-09-16
 
 ### Fixed

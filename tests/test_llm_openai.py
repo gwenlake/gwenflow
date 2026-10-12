@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from gwenflow.llms.openai import ChatOpenAI
+from gwenflow.tools import Tool
 from gwenflow.types import Message
 
 # ---------------------------------------------------------------------------
@@ -373,3 +374,59 @@ def test_stream_real_api():
     assert len(text_chunks) > 0
     full_text = "".join(c.content for c in text_chunks)
     assert len(full_text) > 0
+
+
+# ---------------------------------------------------------------------------
+# Named tool_choice (OpenAI shape) translated per provider
+# ---------------------------------------------------------------------------
+
+
+def _noop(x: int) -> int:
+    """Noop."""
+    return x
+
+
+FORCED = {"type": "function", "function": {"name": "noop"}}
+
+
+def test_openai_passes_named_tool_choice_through():
+    from gwenflow.llms.openai import ChatOpenAI
+
+    llm = ChatOpenAI(api_key="test", tools=[Tool(_noop)], tool_choice=FORCED)
+    assert llm._model_params["tool_choice"] == FORCED
+
+
+def test_responses_api_uses_flat_named_tool_choice():
+    from gwenflow.llms.openai_response import ResponseOpenAI
+
+    llm = ResponseOpenAI(api_key="test", tools=[Tool(_noop)], tool_choice=FORCED)
+    assert llm._model_params["tool_choice"] == {"type": "function", "name": "noop"}
+
+
+def test_anthropic_translates_named_tool_choice():
+    from gwenflow.llms.anthropic import ChatAnthropic
+
+    llm = ChatAnthropic(api_key="test", tools=[Tool(_noop)], tool_choice=FORCED)
+    assert llm._model_params["tool_choice"] == {"type": "tool", "name": "noop"}
+    llm.tool_choice = "none"
+    assert llm._model_params["tool_choice"] == {"type": "none"}
+    llm.tool_choice = "required"
+    assert llm._model_params["tool_choice"] == {"type": "any"}
+
+
+def test_google_translates_named_tool_choice():
+    pytest.importorskip("google.genai")
+    from gwenflow.llms.google import ChatGoogle
+
+    llm = ChatGoogle(api_key="test", tools=[Tool(_noop)], tool_choice=FORCED)
+    fc = llm._build_config().tool_config.function_calling_config
+    assert str(fc.mode).endswith("ANY")
+    assert fc.allowed_function_names == ["noop"]
+
+
+def test_mistral_passes_named_tool_choice_through():
+    pytest.importorskip("mistralai")
+    from gwenflow.llms.mistral import ChatMistral
+
+    llm = ChatMistral(api_key="test", tools=[Tool(_noop)], tool_choice=FORCED)
+    assert llm._model_params["tool_choice"] == FORCED

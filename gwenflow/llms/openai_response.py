@@ -84,7 +84,10 @@ class ResponseOpenAI(ChatBase):
 
         if self.tools and self.tool_type == "fncall":
             model_params["tools"] = [self._tool_to_responses(tool) for tool in self.tools]
-            model_params["tool_choice"] = self.tool_choice or "auto"
+            if (forced := self._forced_tool_name()) is not None:
+                model_params["tool_choice"] = {"type": "function", "name": forced}
+            else:
+                model_params["tool_choice"] = self.tool_choice or "auto"
 
         if self.response_format:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
