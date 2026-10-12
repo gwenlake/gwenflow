@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 from dataclasses import dataclass
 from unittest.mock import MagicMock
@@ -5,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from gwenflow.agents.agent import Agent
+from gwenflow.agents.agent import FINAL_RESULT_TOOL, Agent
 from gwenflow.llms.base import ChatBase
 from gwenflow.tools import BaseTool
 from gwenflow.types import ModelResponse, RequestUsage, TextContent, ToolCall
@@ -521,3 +523,198 @@ def test_tool_choice_required_then_deferred_structured_output():
     assert result.parsed == _Answer(answer="3")
     assert [c["tool_choice"] for c in calls] == ["required", "auto"]
     assert [c["response_format"] for c in calls] == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# response_model + tools: the answer arrives as a `final_result` tool call
+# ---------------------------------------------------------------------------
+
+
+def _last_assistant(agent):
+    return [m for m in agent.history.get() if m.role == "assistant"][-1]
+
+
+def test_final_result_tool_exposed_only_with_tools():
+    with_tools = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    names = [t.name for t in with_tools.llm.tools]
+    assert names == ["add", FINAL_RESULT_TOOL]
+    final = with_tools.llm.tools[-1]
+    assert final.parameters == _Answer.model_json_schema()
+    assert final.description
+
+    without_tools = Agent(response_model=_Answer, llm=_mock_llm([]))
+    assert without_tools.llm.tools is None
+
+    no_schema = Agent(llm=_mock_llm([]), tools=[AddTool()])
+    assert [t.name for t in no_schema.llm.tools] == ["add"]
+
+
+def test_final_result_tool_added_by_tool_decorator():
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]))
+
+    @agent.tool
+    def ping() -> str:
+        """Ping."""
+        return "pong"
+
+    assert [t.name for t in agent.llm.tools] == ["ping", FINAL_RESULT_TOOL]
+
+
+def test_final_result_call_ends_the_run():
+    """pydantic-ai style: the model ends its tool loop by calling final_result."""
+    add = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    final = ToolCall(id="c2", name=FINAL_RESULT_TOOL, arguments='{"answer": "3"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent, [_response(content=None, tool_calls=[add]), _response(content=None, tool_calls=[final])]
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert result.finish_reason == "stop"
+    assert result.usage.tool_calls == 1
+    assert len(calls) == 2
+    assert [c["response_format"] for c in calls] == [None, None]
+    last = _last_assistant(agent)
+    assert not last.tool_calls
+    assert json.loads(last.content) == {"answer": "3"}
+
+
+def test_final_result_with_invalid_args_gets_validation_feedback():
+    bad = ToolCall(id="c1", name=FINAL_RESULT_TOOL, arguments='{"foo": 1}')
+    good = ToolCall(id="c2", name=FINAL_RESULT_TOOL, arguments='{"answer": "ok"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent, [_response(content=None, tool_calls=[bad]), _response(content=None, tool_calls=[good])]
+    )
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="ok")
+    assert len(calls) == 2
+    tool_msg = [m for m in agent.history.get() if m.role == "tool"][0]
+    assert tool_msg.tool_call_id == "c1"
+    assert "failed validation" in tool_msg.content
+    assert "answer" in tool_msg.content  # pydantic names the missing field
+
+
+def test_final_result_wins_over_other_tool_calls_in_the_same_turn():
+    add = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    final = ToolCall(id="c2", name=FINAL_RESULT_TOOL, arguments='{"answer": "3"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(agent, [_response(content=None, tool_calls=[add, final])])
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert result.usage.tool_calls == 0  # `add` was not executed
+    assert len(calls) == 1
+    assert not _last_assistant(agent).tool_calls
+
+
+def test_schema_called_by_its_own_name_is_the_final_answer():
+    """Qwen/Llama sometimes 'call' the schema title (`Answer`) instead of final_result."""
+    add = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    fake = ToolCall(id="c2", name="Answer", arguments='{"answer": "3"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent, [_response(content=None, tool_calls=[add]), _response(content=None, tool_calls=[fake])]
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert result.usage.tool_calls == 1
+    assert len(calls) == 2
+    assert not _last_assistant(agent).tool_calls
+
+
+def test_answer_tool_call_without_tools_is_absorbed_too():
+    fake = ToolCall(id="c1", name="Answer", arguments='{"answer": "yes"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]))
+    _record_calls(agent, [_response(content=None, tool_calls=[fake])])
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="yes")
+    assert result.finish_reason == "stop"
+
+
+def test_unknown_tool_call_with_invalid_args_points_to_final_result():
+    bogus = ToolCall(id="c1", name="Answer", arguments='{"foo": 1}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(agent, [_response(content=None, tool_calls=[bogus]), _response('{"answer": "ok"}')])
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="ok")
+    assert len(calls) == 2
+    tool_msg = [m for m in agent.history.get() if m.role == "tool"][0]
+    assert "does not exist" in tool_msg.content
+    assert FINAL_RESULT_TOOL in tool_msg.content
+
+
+def test_real_tool_call_is_never_mistaken_for_an_answer():
+    """A genuine tool whose arguments happen to fit the schema still runs."""
+
+    @dataclass(kw_only=True)
+    class EchoTool(BaseTool):
+        name: str = "echo"
+        description: str = "Echoes"
+
+        def _run(self, answer: str) -> str:
+            return answer.upper()
+
+    echo = ToolCall(id="c1", name="echo", arguments='{"answer": "hi"}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[EchoTool()])
+    _record_calls(agent, [_response(content=None, tool_calls=[echo]), _response('{"answer": "HI"}')])
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="HI")
+    assert result.usage.tool_calls == 1
+
+
+def test_final_result_with_lax_typed_arguments():
+    """The int field arrives as a string and pydantic coerces it."""
+
+    class _Total(BaseModel):
+        total_eur: int
+
+    final = ToolCall(id="c1", name=FINAL_RESULT_TOOL, arguments='{"total_eur": "7391"}')
+    agent = Agent(response_model=_Total, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(agent, [_response(content=None, tool_calls=[final])])
+    result = agent.run("total?")
+
+    assert result.parsed == _Total(total_eur=7391)
+    assert len(calls) == 1
+    assert json.loads(_last_assistant(agent).content) == {"total_eur": 7391}
+
+
+def test_final_result_absorbed_on_streaming_paths():
+    add = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    final = ToolCall(id="c2", name=FINAL_RESULT_TOOL, arguments='{"answer": "3"}')
+
+    def stream(input=None, **kwargs):
+        tc = add if len(input) <= 2 else final  # system+user -> tool turn; afterwards -> final
+        yield ModelResponse(parts=[tc], finish_reason="tool_calls", usage=RequestUsage(output_tokens=1))
+
+    async def astream(input=None, **kwargs):
+        for chunk in stream(input):
+            yield chunk
+
+    llm = _mock_llm([])
+    llm.stream.side_effect = stream
+    llm.astream.side_effect = astream
+    llm.input_to_message_list.side_effect = ChatBase.input_to_message_list.__get__(llm)
+    llm.get_thinking_parts.return_value = None
+
+    agent = Agent(response_model=_Answer, llm=llm, tools=[AddTool()])
+    events = list(agent.run_stream("1 + 2 ?"))
+    streamed = "".join(e.content for e in events if type(e).__name__ == "AgentEventContent" and e.content)
+    assert json.loads(streamed) == {"answer": "3"}
+    assert not _last_assistant(agent).tool_calls
+
+    async def go():
+        agent = Agent(response_model=_Answer, llm=llm, tools=[AddTool()])
+        out = [e async for e in agent.arun_stream("1 + 2 ?")]
+        return agent, out
+
+    agent2, events2 = asyncio.run(go())
+    streamed2 = "".join(e.content for e in events2 if type(e).__name__ == "AgentEventContent" and e.content)
+    assert json.loads(streamed2) == {"answer": "3"}
+    assert not _last_assistant(agent2).tool_calls

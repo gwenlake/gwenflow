@@ -14,7 +14,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JSON grammar from the first token, so the model could never emit a tool call:
   it answered in JSON right away and hallucinated the data it should have
   fetched. The agent now withholds `response_format` while tools are on offer
-  (the schema stays in the system prompt), and only re-enables it, with
+  and instead exposes the schema as a `final_result` tool (pydantic-ai's
+  approach): calling it ends the run with the validated arguments as
+  `response.parsed`, invalid arguments are fed back to the model as the tool
+  result, and other tool calls in the same turn are not executed. A model that
+  "calls" the schema by its own title (Qwen, Llama...) is handled the same way.
+  Plain JSON text is still accepted; `response_format` is only re-enabled, with
   `tool_choice="none"`, on a validation retry. Agents without tools are
   unchanged. `ChatAnthropic` now honours string `tool_choice` values
   (`"required"`/`"any"` → `{"type": "any"}`, `"none"` → `{"type": "none"}`)
