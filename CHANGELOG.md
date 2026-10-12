@@ -36,6 +36,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files and may create new ones under `creatable_prefixes` (never a file it was
   not shown, see `known_paths`); `ConsolidationResult.failed` tells a failed
   call from "nothing to change". A topic file's `type` defaults to its directory.
+- Example: `examples/agent_long_term_memory.py` walks through the tools, an
+  agent with memory, the consolidator and the curator on the same files.
 - `gwenflow.utils.markdown.parse_frontmatter` / `render_frontmatter`; `Skill`
   delegates to it. `gwenflow.memory.base.render_messages_as_text` (lifted from
   `ChatSummaryMemoryBuffer`, with per-message truncation).

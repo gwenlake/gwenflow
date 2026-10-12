@@ -64,11 +64,10 @@ _WRITE_RULE_FULL = (
 )
 _WRITE_RULE_EXPLICIT = (
     "2. Write only when the user explicitly asks you to remember, change or forget something: "
-    "`memory_edit` on {core} or on the file it concerns. Everything else (topic files, thread "
-    "notes, preferences you notice) is recorded automatically after your answer: "
-    "do not write it yourself."
+    "`memory_edit` on {core} or on the file it concerns. Do not record anything else yourself "
+    "(topic files, notes, preferences you notice)."
 )
-_WRITE_RULE_NONE = "2. Do not write memory: it is updated automatically after your answer."
+_WRITE_RULE_NONE = "2. You cannot write memory: if the user asks you to remember something, say so."
 
 TOOL_NAMES = ("read_memory", "memory_edit", "memory_write", "write_topic_file", "memory_move")
 

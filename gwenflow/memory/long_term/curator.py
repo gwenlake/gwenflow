@@ -59,13 +59,20 @@ def build_memory_curator(
 
     ``tool_choice`` defaults to ``"required"``: the first round must be a tool call (the run
     loop relaxes it to ``"auto"`` afterwards), which keeps small models from narrating
-    changes instead of making them. ``toolset`` should be built with ``allow_move=True`` and ``protocol=""``;
-    its ``always`` files are the core memory file(s) and the recent thread
-    notes, its ``browse`` prefix the user's directory. Load it with
-    ``await toolset.aload()`` before ``agent.arun("curate")`` and persist
-    with ``await toolset.aflush()`` after.
+    changes instead of making them. The toolset's ``always`` files are the core memory
+    file(s) and the recent thread notes, its ``browse`` prefix the user's directory. The
+    curator needs every tool (archiving included) and its own instructions, so the toolset
+    is set up for it: ``allow_move`` is turned on, a tool restriction is lifted, and the
+    conversational protocol is dropped unless one was set explicitly. Load it with
+    ``await toolset.aload()`` before ``agent.arun("curate")`` and persist with
+    ``await toolset.aflush()`` after.
     """
     from gwenflow.agents import Agent
+
+    toolset.allow_move = True
+    toolset.tool_names = None
+    if toolset.protocol is None:
+        toolset.protocol = ""
 
     core = ", ".join(f"`{p}`" for p in toolset.always if p.endswith("MEMORY.md")) or "the core memory file"
     browse = toolset.browse[0] if toolset.browse else "/memories/user/"

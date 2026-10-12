@@ -1,8 +1,6 @@
-"""Long-term markdown memory on real files.
+"""Long-term memory: an agent that remembers between conversations.
 
-Run it twice. The first run records a preference in MEMORY.md and a topic file
-under ./memory/; the second run starts with MEMORY.md in the prompt and the
-topic file recalled because the question names it.
+The memory is a set of markdown files under ./memory/.
 """
 
 import asyncio
@@ -10,28 +8,40 @@ import asyncio
 import dotenv
 
 from gwenflow import Agent, ChatOpenAI
-from gwenflow.memory import LocalFileMemoryStore, MemoryToolset
+from gwenflow.memory import LocalFileMemoryStore, MemoryConsolidator, MemoryToolset, build_memory_curator
 
 dotenv.load_dotenv(override=True)
 
+USER = "/memories/user/MEMORY.md"
+NOTES = "/memories/thread/demo/NOTES.md"
 
-async def main() -> None:
-    task = (
-        "Remember that I want short answers. Also keep a note that the Orion project (ref 42) "
-        "is owned by Alice and ships in March. Then tell me what you know about Orion."
-    )
+
+async def main():
+    llm = ChatOpenAI(model="gpt-4o-mini")
     store = LocalFileMemoryStore("./memory")
-    memory = MemoryToolset(store, always=["/memories/user/MEMORY.md"], browse=["/memories/user/"])
-    await memory.aload(query=task)
+    question = "Remember that I want answers as bullet points. Also, the Orion project slips to April."
 
-    agent = Agent(name="Assistant", llm=ChatOpenAI(model="gpt-4o-mini"), memory=memory)
-    async for event in agent.arun_stream(task):
-        if getattr(event, "content", None):
-            print(event.content, end="")
-    print()
+    # 1. Agent: its memory is in the prompt; it reads topic files and edits memory when asked.
+    memory = MemoryToolset(
+        store, always=[USER, NOTES], browse=["/memories/user/"], tools=["read_memory", "memory_edit"]
+    )
+    await memory.aload(query=question)
+    agent = Agent(name="Assistant", llm=llm, memory=memory)
+    response = await agent.arun(question)
+    print(response.content)
+    await memory.aflush()
 
-    report = await memory.aflush()
-    print(f"written: {[f.path for f in report.written]}, conflicts: {report.conflicts}")
+    # 2. Consolidator: after the conversation, update the notes and the topic files.
+    consolidator = MemoryConsolidator(llm=llm, creatable_prefixes=["/memories/user/projects/"])
+    result = await consolidator.aconsolidate({NOTES: memory.snapshot()[NOTES]}, agent.history.messages)
+    memory.apply(result.changed)
+    await memory.aflush()
+
+    # 3. Curator: tidy the memory (merge, deduplicate, archive).
+    curator_memory = MemoryToolset(store, always=[USER, NOTES], browse=["/memories/user/"])
+    await curator_memory.aload()
+    await build_memory_curator(llm, curator_memory).arun("curate")
+    await curator_memory.aflush()
 
 
 if __name__ == "__main__":

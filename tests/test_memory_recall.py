@@ -123,7 +123,7 @@ def test_conversational_tool_subset_and_protocol():
     asyncio.run(toolset.aload())
     assert [t.name for t in toolset.get_tools()] == ["read_memory", "memory_edit"]
     prompt = toolset.get_instructions()
-    assert "recorded automatically after your answer" in prompt
+    assert "Do not record anything else yourself" in prompt
     assert "write_topic_file" not in prompt
     assert "read_memory" in prompt
 
@@ -131,7 +131,7 @@ def test_conversational_tool_subset_and_protocol():
 def test_no_write_tools_protocol():
     toolset = MemoryToolset(InMemoryMemoryStore(), always=[USER], browse=["/memories/user/"], tools=("read_memory",))
     asyncio.run(toolset.aload())
-    assert "Do not write memory" in toolset.get_instructions()
+    assert "You cannot write memory" in toolset.get_instructions()
 
 
 def test_default_tools_unchanged_and_unknown_rejected():
