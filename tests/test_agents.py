@@ -432,3 +432,92 @@ def test_streaming_tool_loop_never_sends_a_task_less_prompt():
         non_system = [m["role"] for m in messages if m["role"] != "system"]
         assert non_system, f"turn {turn} was streamed with only a system prompt"
         assert any(task[:20] in str(m.get("content") or "") for m in messages), f"turn {turn} lost the user task"
+
+
+# ---------------------------------------------------------------------------
+# response_model + tools: response_format deferred until no tool is needed
+# ---------------------------------------------------------------------------
+
+
+class _Answer(BaseModel):
+    answer: str
+
+
+def _record_calls(agent, responses):
+    """Record response_format / tool_choice as the agent's LLM sees them at each invoke.
+
+    The agent works on a private copy of the llm (see __post_init__), so the
+    attributes must be read from `agent.llm`, not from the mock passed in.
+    """
+    calls = []
+
+    def _invoke(input):
+        calls.append({"response_format": agent.llm.response_format, "tool_choice": agent.llm.tool_choice})
+        return responses.pop(0)
+
+    agent.llm.invoke.side_effect = _invoke
+    return calls
+
+
+def test_response_format_sent_every_turn_without_tools():
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]))
+    calls = _record_calls(agent, [_response('{"answer": "yes"}')])
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="yes")
+    assert calls[0]["response_format"] is _Answer
+
+
+def test_response_format_withheld_while_tools_are_offered():
+    tool_call = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent,
+        [
+            _response(content=None, tool_calls=[tool_call]),
+            _response('{"answer": "3"}'),
+        ],
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert result.usage.tool_calls == 1
+    assert [c["response_format"] for c in calls] == [None, None]
+    assert [c["tool_choice"] for c in calls] == [None, None]
+
+
+def test_response_format_enforced_on_validation_retry_with_tools():
+    tool_call = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent,
+        [
+            _response(content=None, tool_calls=[tool_call]),
+            _response("The result is 3."),  # prose: fails validation
+            _response('{"answer": "3"}'),  # structured retry
+        ],
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert len(calls) == 3
+    assert calls[1]["response_format"] is None
+    assert calls[2]["response_format"] is _Answer
+    assert calls[2]["tool_choice"] == "none"
+
+
+def test_tool_choice_required_then_deferred_structured_output():
+    tool_call = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()], tool_choice="required")
+    calls = _record_calls(
+        agent,
+        [
+            _response(content=None, tool_calls=[tool_call]),
+            _response('{"answer": "3"}'),
+        ],
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert [c["tool_choice"] for c in calls] == ["required", "auto"]
+    assert [c["response_format"] for c in calls] == [None, None]

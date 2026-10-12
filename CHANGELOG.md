@@ -4,6 +4,22 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Structured output + tools on OpenAI-compatible servers.** Sending
+  `response_format` (JSON schema) together with `tools` works with OpenAI, but
+  many OpenAI-compatible servers (vLLM, DeepSeek, Scaleway, Ollama...) apply the
+  JSON grammar from the first token, so the model could never emit a tool call:
+  it answered in JSON right away and hallucinated the data it should have
+  fetched. The agent now withholds `response_format` while tools are on offer
+  (the schema stays in the system prompt), and only re-enables it, with
+  `tool_choice="none"`, on a validation retry. Agents without tools are
+  unchanged. `ChatAnthropic` now honours string `tool_choice` values
+  (`"required"`/`"any"` → `{"type": "any"}`, `"none"` → `{"type": "none"}`)
+  instead of always sending `{"type": "auto"}`.
+
 ## [1.2.4] — 2026-09-16
 
 ### Fixed

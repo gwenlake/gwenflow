@@ -161,6 +161,10 @@ class ChatAnthropic(ChatBase):
             model_params["tools"] = [self._tool_to_anthropic(tool) for tool in self.tools]
             if isinstance(self.tool_choice, dict):
                 model_params["tool_choice"] = self.tool_choice
+            elif self.tool_choice in ("required", "any"):
+                model_params["tool_choice"] = {"type": "any"}
+            elif self.tool_choice == "none":
+                model_params["tool_choice"] = {"type": "none"}
             else:
                 model_params["tool_choice"] = {"type": "auto"}
 

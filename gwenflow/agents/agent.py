@@ -578,6 +578,36 @@ class Agent:
             return {"raw": args}
         return parsed if isinstance(parsed, dict) else {"raw": args}
 
+    def _configure_llm_for_turn(self, structured: bool) -> None:
+        """Decide whether this turn asks the provider for native structured output.
+
+        Sending `response_format` (JSON schema) *and* `tools` in the same request
+        works with OpenAI, but many OpenAI-compatible servers (vLLM, DeepSeek,
+        Scaleway, Ollama...) apply the JSON grammar from the first token, which
+        makes a tool call impossible: the model answers in JSON right away and
+        hallucinates the data it should have fetched with its tools.
+
+        So, when the agent has tools, `response_format` is withheld while tools
+        are on offer. The schema is still in the system prompt, so the final
+        answer is normally valid JSON already. If it fails validation, the
+        retry turn (`structured=True`) re-enables `response_format` and
+        disables tool calls so the provider can enforce the schema.
+
+        Without tools the behaviour is unchanged: native structured output on
+        every turn.
+        """
+        if self.response_model is None:
+            return
+        if not self.get_all_tools():
+            self.llm.response_format = self.response_model
+            return
+        if structured:
+            self.llm.response_format = self.response_model
+            self.llm.tool_choice = "none"
+        else:
+            self.llm.response_format = None
+            self.llm.tool_choice = self.tool_choice
+
     def _validate_final_response(
         self, content_to_parse: str | Dict[str, Any] | List[Any] | None
     ) -> tuple[bool, Any, Optional[str]]:
@@ -897,10 +927,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             # format messages
             self.history.compact()
@@ -948,6 +980,7 @@ class Agent:
 
                 if not is_valid and validation_retries_left > 0:
                     validation_retries_left -= 1
+                    force_structured = True
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
@@ -1061,10 +1094,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -1107,6 +1142,7 @@ class Agent:
 
                 if not is_valid and validation_retries_left > 0:
                     validation_retries_left -= 1
+                    force_structured = True
                     retry_message = Message(role="user", content=error_msg)
                     self.history.add_message(retry_message)
                     continue
@@ -1221,10 +1257,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             self.history.compact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -1284,6 +1322,7 @@ class Agent:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:
                         validation_retries_left -= 1
+                        force_structured = True
                         self.history.add_message(Message(role="user", content=error_msg))
                         continue
                     if not is_valid:
@@ -1392,10 +1431,12 @@ class Agent:
 
         num_turns_available = self.max_turns
         validation_retries_left = MAX_VALIDATION_RETRIES
+        force_structured = False
         completed = False
 
         while num_turns_available > 0:
             num_turns_available -= 1
+            self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
             messages_for_model = [m.to_dict() for m in self.history.get()]
@@ -1452,6 +1493,7 @@ class Agent:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:
                         validation_retries_left -= 1
+                        force_structured = True
                         self.history.add_message(Message(role="user", content=error_msg))
                         continue
                     if not is_valid:
