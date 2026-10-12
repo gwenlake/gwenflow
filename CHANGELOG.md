@@ -19,9 +19,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `response.parsed`, invalid arguments are fed back to the model as the tool
   result, and other tool calls in the same turn are not executed. A model that
   "calls" the schema by its own title (Qwen, Llama...) is handled the same way.
-  Plain JSON text is still accepted; `response_format` is only re-enabled, with
-  `tool_choice="none"`, on a validation retry. Agents without tools are
-  unchanged. `ChatAnthropic` now honours string `tool_choice` values
+  Plain JSON text is still accepted; when it fails validation the retry turn
+  forces a `final_result` call through a named `tool_choice`, so
+  `response_format` is never sent together with tools. Agents without tools
+  are unchanged. A named `tool_choice` in the OpenAI shape
+  (`{"type": "function", "function": {"name": ...}}`) is now translated for
+  Anthropic, Google and the OpenAI Responses API; it was passed through
+  verbatim before. `ChatAnthropic` also honours string `tool_choice` values
   (`"required"`/`"any"` → `{"type": "any"}`, `"none"` → `{"type": "none"}`)
   instead of always sending `{"type": "auto"}`.
 

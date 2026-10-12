@@ -619,8 +619,11 @@ class Agent:
         (see `FinalResultTool`) and is also in the system prompt, so the final
         answer normally arrives as a `final_result` call or as valid JSON
         text. If a text answer fails validation, the retry turn
-        (`structured=True`) re-enables `response_format` and disables tool
-        calls so the provider can enforce the schema.
+        (`structured=True`) forces a `final_result` call through a named
+        `tool_choice`: on vLLM/Ollama-style servers a forced tool call is
+        honoured more reliably than a `response_format` grammar, and the
+        arguments go through the same validation. `response_format` is never
+        sent together with tools.
 
         Without tools the behaviour is unchanged: native structured output on
         every turn.
@@ -631,8 +634,8 @@ class Agent:
             self.llm.response_format = self.response_model
             return
         if structured:
-            self.llm.response_format = self.response_model
-            self.llm.tool_choice = "none"
+            self.llm.response_format = None
+            self.llm.tool_choice = {"type": "function", "function": {"name": FINAL_RESULT_TOOL}}
         else:
             self.llm.response_format = None
             self.llm.tool_choice = self.tool_choice

@@ -126,7 +126,11 @@ class ChatGoogle(ChatBase):
         if self.tools and self.tool_type == "fncall":
             declarations = [self._tool_to_google(t) for t in self.tools]
             config_kwargs["tools"] = [gt.Tool(function_declarations=declarations)]
-            if self.tool_choice:
+            if (forced := self._forced_tool_name()) is not None:
+                config_kwargs["tool_config"] = gt.ToolConfig(
+                    function_calling_config=gt.FunctionCallingConfig(mode="ANY", allowed_function_names=[forced])
+                )
+            elif self.tool_choice:
                 mode = {"required": "ANY", "auto": "AUTO", "none": "NONE"}.get(self.tool_choice, "AUTO")
                 config_kwargs["tool_config"] = gt.ToolConfig(
                     function_calling_config=gt.FunctionCallingConfig(mode=mode)

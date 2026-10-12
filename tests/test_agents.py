@@ -488,24 +488,58 @@ def test_response_format_withheld_while_tools_are_offered():
     assert [c["tool_choice"] for c in calls] == [None, None]
 
 
-def test_response_format_enforced_on_validation_retry_with_tools():
+FORCED_FINAL_RESULT = {"type": "function", "function": {"name": FINAL_RESULT_TOOL}}
+
+
+def test_validation_retry_with_tools_forces_a_final_result_call():
+    """Prose that fails validation is retried by forcing the final_result tool."""
     tool_call = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    final = ToolCall(id="c2", name=FINAL_RESULT_TOOL, arguments='{"answer": "3"}')
     agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
     calls = _record_calls(
         agent,
         [
             _response(content=None, tool_calls=[tool_call]),
             _response("The result is 3."),  # prose: fails validation
-            _response('{"answer": "3"}'),  # structured retry
+            _response(content=None, tool_calls=[final]),  # forced final_result
         ],
     )
     result = agent.run("1 + 2 ?")
 
     assert result.parsed == _Answer(answer="3")
     assert len(calls) == 3
-    assert calls[1]["response_format"] is None
-    assert calls[2]["response_format"] is _Answer
-    assert calls[2]["tool_choice"] == "none"
+    assert [c["response_format"] for c in calls] == [None, None, None]
+    assert calls[1]["tool_choice"] is None
+    assert calls[2]["tool_choice"] == FORCED_FINAL_RESULT
+    retry = [m for m in agent.history.get() if m.role == "user"][-1]
+    assert "failed validation" in retry.content
+
+
+def test_validation_retry_still_accepts_json_text():
+    tool_call = ToolCall(id="c1", name="add", arguments='{"a": 1, "b": 2}')
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]), tools=[AddTool()])
+    calls = _record_calls(
+        agent,
+        [
+            _response(content=None, tool_calls=[tool_call]),
+            _response("The result is 3."),
+            _response('{"answer": "3"}'),
+        ],
+    )
+    result = agent.run("1 + 2 ?")
+
+    assert result.parsed == _Answer(answer="3")
+    assert calls[2]["tool_choice"] == FORCED_FINAL_RESULT
+
+
+def test_validation_retry_without_tools_keeps_native_response_format():
+    agent = Agent(response_model=_Answer, llm=_mock_llm([]))
+    calls = _record_calls(agent, [_response("nope"), _response('{"answer": "yes"}')])
+    result = agent.run("hi")
+
+    assert result.parsed == _Answer(answer="yes")
+    assert [c["response_format"] for c in calls] == [_Answer, _Answer]
+    assert [c["tool_choice"] for c in calls] == [None, None]
 
 
 def test_tool_choice_required_then_deferred_structured_output():
