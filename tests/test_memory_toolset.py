@@ -3,7 +3,7 @@
 import asyncio
 
 from gwenflow.memory import InMemoryMemoryStore, MemoryConflictError, MemoryToolset
-from gwenflow.memory.templates import THREAD_NOTES_TEMPLATE, USER_MEMORY_TEMPLATE
+from gwenflow.memory.long_term.templates import THREAD_NOTES_TEMPLATE, USER_MEMORY_TEMPLATE
 from gwenflow.utils.markdown import render_frontmatter
 
 USER = "/memories/user/MEMORY.md"

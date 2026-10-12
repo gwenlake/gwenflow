@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from gwenflow.logger import logger
-from gwenflow.memory.store import (
+from gwenflow.stores.files.base import (
     MEMORY_ROOT,
     SIDECAR_SUFFIX,
     MemoryConflictError,

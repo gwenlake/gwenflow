@@ -1,18 +1,23 @@
 from gwenflow.memory.chat_memory_buffer import ChatMemoryBuffer
 from gwenflow.memory.chat_summary_memory_buffer import ChatSummaryMemoryBuffer
-from gwenflow.memory.consolidator import ConsolidationResult, MemoryConsolidator, merge_entities
-from gwenflow.memory.curator import build_memory_curator
-from gwenflow.memory.s3_store import S3MemoryStore
-from gwenflow.memory.store import (
+from gwenflow.memory.long_term import (
+    ConsolidationResult,
+    FlushReport,
+    MemoryConsolidator,
+    MemoryToolset,
+    build_memory_curator,
+    merge_entities,
+)
+from gwenflow.stores.files import (
     InMemoryMemoryStore,
     LocalFileMemoryStore,
     MemoryConflictError,
     MemoryFile,
     MemoryPathError,
     MemoryStore,
+    S3MemoryStore,
     normalize_memory_path,
 )
-from gwenflow.memory.toolset import FlushReport, MemoryToolset
 
 __all__ = [
     "ChatMemoryBuffer",

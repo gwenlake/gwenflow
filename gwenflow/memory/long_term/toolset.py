@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from gwenflow.logger import logger
-from gwenflow.memory.store import (
+from gwenflow.memory.long_term.templates import FORBIDDEN_CONTENT, default_template, render_topic_file
+from gwenflow.stores.files.base import (
     MemoryConflictError,
     MemoryFile,
     MemoryPathError,
@@ -28,7 +29,6 @@ from gwenflow.memory.store import (
     normalize_memory_path,
     normalize_memory_prefix,
 )
-from gwenflow.memory.templates import FORBIDDEN_CONTENT, default_template, render_topic_file
 from gwenflow.utils.markdown import parse_frontmatter
 
 if TYPE_CHECKING:
@@ -153,7 +153,7 @@ class MemoryToolset:
             typically gets ``("read_memory", "memory_edit")`` and leaves the
             rest to background consolidation.
         recall_limit: how many topic files :meth:`aload` recalls from the
-            request text (see :mod:`gwenflow.memory.recall`); 0 disables it.
+            request text (see :mod:`gwenflow.memory.long_term.recall`); 0 disables it.
         recall_stopwords: words that never count as a match on top of the
             generic defaults, typically the domain's common words.
     """
@@ -224,7 +224,7 @@ class MemoryToolset:
                 index[entry.path] = entry
         recalled_files: list[MemoryFile] = []
         if query and self.recall_limit > 0 and index:
-            from gwenflow.memory.recall import select_relevant
+            from gwenflow.memory.long_term.recall import select_relevant
 
             candidates = [e for e in index.values() if self.show_archived or not self._is_archived(e.path)]
             hits = select_relevant(candidates, query, limit=self.recall_limit, stopwords=self.recall_stopwords)

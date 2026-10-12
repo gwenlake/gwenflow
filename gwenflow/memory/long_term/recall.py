@@ -27,7 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Iterable
 
-from gwenflow.memory.store import MemoryFile
+from gwenflow.stores.files.base import MemoryFile
 
 RECALL_THRESHOLD = 2
 

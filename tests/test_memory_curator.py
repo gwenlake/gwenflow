@@ -5,7 +5,7 @@ import json
 
 from gwenflow.llms import ChatBase
 from gwenflow.memory import InMemoryMemoryStore, MemoryToolset, build_memory_curator
-from gwenflow.memory.curator import CURATION_PROMPT
+from gwenflow.memory.long_term.curator import CURATION_PROMPT
 from gwenflow.types import ModelResponse, RequestUsage, TextContent, ToolCall
 from gwenflow.utils.markdown import render_frontmatter
 

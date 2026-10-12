@@ -25,7 +25,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   archives unread files. New `Agent.memory` field; the block is placed after the
   JSON schema and before knowledge/context so a stable prompt prefix stays
   cacheable. Not rendered when `system_prompt` is set (same as skills).
-- **Automatic recall** (`gwenflow.memory.recall`): `MemoryToolset.aload(query=...)`
+- **Automatic recall** (`gwenflow.memory.long_term.recall`): `MemoryToolset.aload(query=...)`
   matches the request against the topic index (file names, descriptions,
   identifiers) and renders the matching files in the prompt, without an LLM
   call; `read_memory` remains the fallback. Generic function words only are

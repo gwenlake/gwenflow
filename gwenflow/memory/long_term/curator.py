@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from gwenflow.memory.templates import FORBIDDEN_CONTENT
-from gwenflow.memory.toolset import MemoryToolset
+from gwenflow.memory.long_term.templates import FORBIDDEN_CONTENT
+from gwenflow.memory.long_term.toolset import MemoryToolset
 
 if TYPE_CHECKING:
     from gwenflow.agents import Agent

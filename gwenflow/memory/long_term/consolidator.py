@@ -17,8 +17,8 @@ from typing import Any
 
 from gwenflow.logger import logger
 from gwenflow.memory.base import render_messages_as_text
-from gwenflow.memory.store import MemoryPathError, normalize_memory_path
-from gwenflow.memory.templates import FORBIDDEN_CONTENT, render_topic_file
+from gwenflow.memory.long_term.templates import FORBIDDEN_CONTENT, render_topic_file
+from gwenflow.stores.files.base import MemoryPathError, normalize_memory_path
 from gwenflow.types import AgentUsage, Message
 from gwenflow.utils.markdown import parse_frontmatter, render_frontmatter
 from gwenflow.utils.tokens import keep_tokens_from_text, num_tokens_from_string

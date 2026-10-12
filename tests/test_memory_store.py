@@ -13,7 +13,7 @@ from gwenflow.memory import (
     MemoryStore,
     normalize_memory_path,
 )
-from gwenflow.memory.store import normalize_memory_prefix
+from gwenflow.stores.files.base import normalize_memory_prefix
 from gwenflow.utils.markdown import parse_frontmatter, render_frontmatter
 
 # ---------------------------------------------------------------------------

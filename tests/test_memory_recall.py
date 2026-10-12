@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from gwenflow.memory import InMemoryMemoryStore, MemoryConsolidator, MemoryFile, MemoryToolset
-from gwenflow.memory.recall import select_relevant
+from gwenflow.memory.long_term.recall import select_relevant
 from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent
 from gwenflow.utils.markdown import render_frontmatter
 
