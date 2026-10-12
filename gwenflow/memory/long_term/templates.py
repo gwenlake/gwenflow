@@ -42,15 +42,6 @@ THREAD_NOTES_TEMPLATE = """\
 - (durable facts about the user noticed in this thread, not yet in the user memory)
 """
 
-FORBIDDEN_CONTENT = (
-    "credentials, passwords, API keys or tokens; bank, card or IBAN numbers; "
-    "health data; political, religious or union opinions; national identity numbers; "
-    "private contact details of a natural person (home address, personal phone or email) "
-    "unless they are a business contact; anything about the private life of third parties"
-)
-
-CORE_FILE_NAMES = ("MEMORY.md", "NOTES.md")
-
 
 def topic_type_for_path(path: str) -> str:
     """The directory a topic file sits in (``/memories/user/projects/x.md`` -> ``projects``), else ``topic``."""

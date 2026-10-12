@@ -105,11 +105,12 @@ def test_memory_edit_requires_unique_match():
     _, toolset = make()
     edit = tools_by_name(toolset)["memory_edit"]
     assert "did not appear" in edit.run(path=USER, old_str="nope", new_str="x")
-    assert "appears 4 times" in edit.run(path=USER, old_str="- (", new_str="x")
+    ambiguous = edit.run(path=USER, old_str="- (", new_str="x")
+    assert "appears 4 times" in ambiguous and "rewrite the whole file" in ambiguous
     out = edit.run(path=USER, old_str="## Notes\n", new_str="## Notes\n- 2026-10-09 wants short answers\n")
     assert out.startswith("OK.")
     assert "- 2026-10-09 wants short answers" in toolset.get(USER).content
-    assert USER in toolset.pending()
+    assert [f.path for f in run(toolset.aflush()).written] == [USER]
 
 
 def test_memory_edit_on_missing_topic_file_points_to_write_topic_file():
@@ -187,7 +188,7 @@ def test_aflush_writes_only_dirty_with_expected_version():
     assert store.read(USER).version == 2
     assert store.read(NOTES) is None  # untouched template is not persisted
     assert store.read(USER).last_read is not None
-    assert toolset.pending() == {}
+    assert run(toolset.aflush()).written == []  # nothing left to persist
     assert toolset.get(USER).version == 2
 
 
@@ -237,19 +238,47 @@ def test_aflush_never_raises_on_store_errors():
     tools_by_name(toolset)["memory_write"].run(path=USER, content="# User memory\n")
     report = run(toolset.aflush())
     assert report.errors == {USER: "db down"}
-    assert USER in toolset.pending()  # kept for a later retry
+    store.__class__ = InMemoryMemoryStore  # the store recovers
+    assert [f.path for f in run(toolset.aflush()).written] == [USER]  # kept for a later retry
 
 
 def test_apply_ignores_none_and_marks_dirty():
     store = InMemoryMemoryStore()
     _, toolset = make(store)
     toolset.apply({USER: None, NOTES: "# Thread notes\n## Goal\n- x\n"})
-    assert list(toolset.pending()) == [NOTES]
     assert toolset.snapshot()[USER] == USER_MEMORY_TEMPLATE
-    run(toolset.aflush())
+    assert [f.path for f in run(toolset.aflush()).written] == [NOTES]
     assert store.read(NOTES).content.startswith("# Thread notes")
 
 
 def test_conflict_error_message():
     err = MemoryConflictError(USER, 1, 2)
     assert "expected version 1" in str(err) and "found 2" in str(err)
+
+
+def test_memory_edit_refuses_a_fact_already_recorded_and_shows_the_file():
+    store = InMemoryMemoryStore()
+    store.write(USER, "# User memory\n## Preferences\n- short answers\n")
+    _, toolset = make(store)
+    edit = tools_by_name(toolset)["memory_edit"]
+    out = edit.run(path=USER, old_str="- short answers", new_str="- short answers\n- Short answers.")
+    assert out.startswith("Not changed: this is already in memory")
+    assert "Not changed" in edit.run(path=USER, old_str="- short answers", new_str="- short answers")
+    out = edit.run(path=USER, old_str="- short answers", new_str="- short answers\n- metric units")
+    assert out.startswith("OK.") and "- metric units" in out  # the model sees the file after its edit
+    assert toolset.get(USER).content.count("short answers") == 1
+
+
+def test_writes_drop_repeated_items_and_spent_placeholders():
+    from gwenflow.memory.long_term.editing import tidy
+
+    content = "# A\n- x\n- X.\n- y\n## B\n- x\n- x\n"
+    assert tidy(content) == "# A\n- x\n- y\n## B\n- x\n"
+    with_placeholders = "## Profile\n- (role, organisation)\n- data engineer\n## Notes\n- (facts to remember)\n"
+    assert tidy(with_placeholders) == "## Profile\n- data engineer\n## Notes\n- (facts to remember)\n"
+    _, toolset = make()
+    write = tools_by_name(toolset)["memory_write"]
+    assert write.run(path=USER, content="# User memory\n## Notes\n- a\n- a\n- a").startswith("OK.")
+    assert toolset.get(USER).content == "# User memory\n## Notes\n- a\n"
+    toolset.apply({NOTES: "# Thread notes\n## Goal\n- g\n- g\n"})
+    assert toolset.get(NOTES).content == "# Thread notes\n## Goal\n- g\n"

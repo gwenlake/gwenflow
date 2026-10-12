@@ -4,8 +4,8 @@ from gwenflow.memory.long_term import (
     ConsolidationResult,
     FlushReport,
     MemoryConsolidator,
+    MemoryCurator,
     MemoryToolset,
-    build_memory_curator,
     merge_entities,
 )
 from gwenflow.stores.files import (
@@ -28,12 +28,12 @@ __all__ = [
     "LocalFileMemoryStore",
     "MemoryConflictError",
     "MemoryConsolidator",
+    "MemoryCurator",
     "MemoryFile",
     "MemoryPathError",
     "MemoryStore",
     "MemoryToolset",
     "S3MemoryStore",
-    "build_memory_curator",
     "merge_entities",
     "normalize_memory_path",
 ]

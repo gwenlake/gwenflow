@@ -8,7 +8,7 @@ import asyncio
 import dotenv
 
 from gwenflow import Agent, ChatOpenAI
-from gwenflow.memory import LocalFileMemoryStore, MemoryConsolidator, MemoryToolset, build_memory_curator
+from gwenflow.memory import LocalFileMemoryStore, MemoryConsolidator, MemoryCurator, MemoryToolset
 
 dotenv.load_dotenv(override=True)
 
@@ -33,14 +33,13 @@ async def main():
 
     # 2. Consolidator: after the conversation, update the notes and the topic files.
     consolidator = MemoryConsolidator(llm=llm, creatable_prefixes=["/memories/user/projects/"])
-    result = await consolidator.aconsolidate({NOTES: memory.snapshot()[NOTES]}, agent.history.messages)
-    memory.apply(result.changed)
+    await consolidator.aupdate(memory, agent.history.messages, writable=[NOTES])
     await memory.aflush()
 
     # 3. Curator: tidy the memory (merge, deduplicate, archive).
     curator_memory = MemoryToolset(store, always=[USER, NOTES], browse=["/memories/user/"])
     await curator_memory.aload()
-    await build_memory_curator(llm, curator_memory).arun("curate")
+    await MemoryCurator(llm).arun(curator_memory)
     await curator_memory.aflush()
 
 

@@ -231,3 +231,52 @@ def test_without_prefixes_nothing_can_be_created():
 def test_identical_rewrite_counts_as_unchanged():
     result = consolidator(f'<file path="{NOTES}">\n# notes\n</file>').consolidate({NOTES: "# notes\n"}, TURN)
     assert result.files[NOTES] is None
+
+
+def test_aupdate_wires_a_loaded_toolset():
+    store = seeded_store()
+    store.write(NOTES, "# Thread notes\n## Goal\n- (goal)\n")
+    toolset = MemoryToolset(store, always=[USER, NOTES], browse=["/memories/user/"], protocol="")
+    asyncio.run(toolset.aload(query="Orion: Bob takes over from Alice"))
+    answer = (
+        f'<file path="{NOTES}">\n# Thread notes\n## Goal\n- follow Orion\n</file>\n'
+        f'<file path="{ORION}">\n- owner Bob (was Alice)\n</file>\n'
+        f'<file path="{VEGA}">\n---\ndescription: overwrite attempt\n---\n- lost\n</file>\n'
+        f'<file path="{USER}">\nhijack\n</file>'
+    )
+    c = consolidator(answer)
+    result = asyncio.run(c.aupdate(toolset, TURN, writable=[NOTES]))
+    assert set(result.changed) == {NOTES, ORION}  # Vega exists but was not shown; MEMORY.md is read-only
+    user_prompt = c.llm.inputs[0][1]["content"]
+    current_part, context_part = user_prompt.split("Context files")
+    assert f'<file path="{ORION}">' in current_part and f'<file path="{USER}">' in context_part
+    assert "/memories/user/index" in context_part and VEGA in context_part
+    report = asyncio.run(toolset.aflush())
+    assert {f.path for f in report.written} == {NOTES, ORION}
+    assert "- owner Bob (was Alice)" in store.read(ORION).content
+    assert store.read(ORION).description == INDEX[0].description  # frontmatter kept
+
+
+def test_show_renders_topic_files_in_full_and_keeps_them_movable():
+    store = seeded_store()
+    toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"], allow_move=True)
+    asyncio.run(toolset.aload(show=[VEGA]))
+    assert toolset.shown == [VEGA] and toolset.recalled == []
+    prompt = toolset.get_instructions()
+    assert "- cutover on a Sunday" in prompt
+    assert f'<file path="{VEGA}">' in prompt and 'recalled="true"' not in prompt  # shown, not recalled
+    assert f"{VEGA} — " in prompt and "(shown above)" in prompt
+    tools = {t.name: t for t in toolset.get_tools()}
+    assert tools["memory_move"].run(old_path=VEGA, new_path="/memories/user/archive/vega.md").startswith("OK.")
+    assert "core files" in tools["memory_write"].run(path=ORION, content="x")
+
+
+def test_memory_edit_keeps_a_topic_file_description():
+    store = seeded_store()
+    toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"])
+    asyncio.run(toolset.aload(show=[ORION]))
+    before = toolset.get(ORION).content
+    edit = {t.name: t for t in toolset.get_tools()}["memory_edit"]
+    assert edit.run(path=ORION, old_str=before, new_str="- owner Bob\n").startswith("OK.")
+    assert toolset.get(ORION).content.startswith("---\ndescription: Orion launch (ref 123)")
+    assert "- owner Bob" in toolset.get(ORION).content

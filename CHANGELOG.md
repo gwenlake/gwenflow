@@ -21,8 +21,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and this run's edits are replayed on a fresh copy after a version conflict.
   `MemoryConsolidator` rewrites files from a turn's messages with one cheap LLM
   call and returns the entities seen (`merge_entities` keeps them additively);
-  `build_memory_curator` wires an `Agent` that merges candidates, deduplicates and
-  archives unread files. New `Agent.memory` field; the block is placed after the
+  `MemoryCurator` runs an `Agent` that merges candidates, deduplicates and
+  archives unread files. Prompt texts are grouped in `gwenflow.memory.long_term.prompts`. New `Agent.memory` field; the block is placed after the
   JSON schema and before knowledge/context so a stable prompt prefix stays
   cacheable. Not rendered when `system_prompt` is set (same as skills).
 - **Automatic recall** (`gwenflow.memory.long_term.recall`): `MemoryToolset.aload(query=...)`

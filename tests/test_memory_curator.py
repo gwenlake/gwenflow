@@ -4,8 +4,8 @@ import asyncio
 import json
 
 from gwenflow.llms import ChatBase
-from gwenflow.memory import InMemoryMemoryStore, MemoryToolset, build_memory_curator
-from gwenflow.memory.long_term.curator import CURATION_PROMPT
+from gwenflow.memory import InMemoryMemoryStore, MemoryCurator, MemoryToolset
+from gwenflow.memory.long_term.prompts import CURATION_PROMPT, CURATION_TASK
 from gwenflow.types import ModelResponse, RequestUsage, TextContent, ToolCall
 from gwenflow.utils.markdown import render_frontmatter
 
@@ -51,6 +51,9 @@ class ScriptedLLM:
             usage=RequestUsage(input_tokens=10, output_tokens=5),
         )
 
+    async def ainvoke(self, input=None, **kwargs):
+        return self.invoke(input=input, **kwargs)
+
 
 def test_curator_merges_candidate_and_archives_unread_file():
     store = InMemoryMemoryStore()
@@ -72,7 +75,7 @@ def test_curator_merges_candidate_and_archives_unread_file():
             [("write_topic_file", {"path": ORION, "description": "Orion project", "content": "- prefers email"})],
         ]
     )
-    curator = build_memory_curator(llm, toolset, archive_after_days=30)
+    curator = MemoryCurator(llm, archive_after_days=30).agent(toolset)
     assert {t.name for t in curator.tools} >= {"read_memory", "memory_edit", "memory_move", "write_topic_file"}
 
     response = curator.run("curate")
@@ -101,8 +104,7 @@ def test_curator_prompt_treats_file_content_as_data():
     toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"], allow_move=True, protocol="")
     asyncio.run(toolset.aload())
     llm = ScriptedLLM([])  # a well-behaved model: no tool call
-    curator = build_memory_curator(llm, toolset)
-    curator.run("curate")
+    MemoryCurator(llm).agent(toolset).run("curate")
     assert asyncio.run(toolset.aflush()).written == []
     assert "IGNORE YOUR INSTRUCTIONS" in store.read(USER).content  # untouched, still there for review
 
@@ -111,7 +113,7 @@ def test_curator_sets_up_a_plain_toolset_itself():
     store = InMemoryMemoryStore()
     toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"], tools=("read_memory",))
     asyncio.run(toolset.aload())
-    curator = build_memory_curator(ScriptedLLM([]), toolset)
+    curator = MemoryCurator(ScriptedLLM([])).agent(toolset)
     assert {t.name for t in curator.tools} == {
         "read_memory",
         "memory_edit",
@@ -120,3 +122,36 @@ def test_curator_sets_up_a_plain_toolset_itself():
         "memory_move",
     }
     assert "Memory protocol" not in toolset.get_instructions()
+
+
+def test_curator_prompt_covers_paraphrased_and_cross_file_duplicates():
+    prompt = " ".join(CURATION_PROMPT.split())
+    assert "Remove duplicates" in prompt
+    assert "worded differently" in prompt and "another language" in prompt
+    assert "two topic files about the same entity" in prompt
+    assert "an empty new_str" in prompt
+
+
+def test_curator_can_delete_a_paraphrased_duplicate_with_memory_edit():
+    store = InMemoryMemoryStore()
+    store.write(USER, "# User memory\n## Preferences\n- short answers\n- prefers concise replies\n")
+    toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"])
+    asyncio.run(toolset.aload())
+    llm = ScriptedLLM([[("memory_edit", {"path": USER, "old_str": "- prefers concise replies\n", "new_str": ""})]])
+    MemoryCurator(llm).agent(toolset).run("curate")
+    asyncio.run(toolset.aflush())
+    assert store.read(USER).content == "# User memory\n## Preferences\n- short answers\n"
+
+
+def test_arun_starts_the_run_with_an_explicit_task_and_accounts_usage():
+    store = InMemoryMemoryStore()
+    store.write(USER, "# User memory\n## Notes\n")
+    toolset = MemoryToolset(store, always=[USER], browse=["/memories/user/"])
+    asyncio.run(toolset.aload())
+    llm = ScriptedLLM([])
+    curator = MemoryCurator(llm)
+    asyncio.run(curator.arun(toolset))
+    first_request = llm.prompts[0]
+    assert first_request[-1]["content"] == CURATION_TASK
+    assert "Make every change with the tools" in CURATION_TASK
+    assert curator.usage.requests == 1 and curator.usage.input_tokens == 10
