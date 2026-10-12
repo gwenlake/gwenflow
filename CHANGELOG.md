@@ -4,6 +4,42 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-10-12
+
+### Added
+
+- **Long-term markdown memory** (`gwenflow.memory`). Files live under a virtual
+  `/memories` root in a `MemoryStore` (async protocol with a sync `read` hook,
+  optimistic `expected_version` locking, path validation that rejects traversal);
+  `InMemoryMemoryStore` and `LocalFileMemoryStore` are the reference backends.
+  `MemoryToolset` mirrors `SkillsToolset`: always-loaded core files rendered in a
+  `## Memory` block, an index of topic files (path + frontmatter description) read
+  on demand with `read_memory`, and the editing tools `memory_edit`, `memory_write`,
+  `write_topic_file` (frontmatter generated) and, for curators, `memory_move`.
+  The toolset works on an in-process working copy (`aload()` before the run,
+  `aflush()` after): tools stay sync, every dirty file is flushed independently
+  and this run's edits are replayed on a fresh copy after a version conflict.
+  `MemoryConsolidator` rewrites files from a turn's messages with one cheap LLM
+  call and returns the entities seen (`merge_entities` keeps them additively);
+  `build_memory_curator` wires an `Agent` that merges candidates, deduplicates and
+  archives unread files. New `Agent.memory` field; the block is placed after the
+  JSON schema and before knowledge/context so a stable prompt prefix stays
+  cacheable. Not rendered when `system_prompt` is set (same as skills).
+- **Automatic recall** (`gwenflow.memory.recall`): `MemoryToolset.aload(query=...)`
+  matches the request against the topic index (file names, descriptions,
+  identifiers) and renders the matching files in the prompt, without an LLM
+  call; `read_memory` remains the fallback. Generic function words only are
+  ignored; applications add their domain words with `recall_stopwords`.
+  `MemoryToolset(tools=...)` exposes a subset of the tools (a conversational
+  agent typically keeps `read_memory` and `memory_edit`), and the protocol
+  follows what is exposed. `MemoryConsolidator` updates the recalled topic
+  files and may create new ones under `creatable_prefixes` (never a file it was
+  not shown, see `known_paths`); `ConsolidationResult.failed` tells a failed
+  call from "nothing to change". A topic file's `type` defaults to its directory.
+- `gwenflow.utils.markdown.parse_frontmatter` / `render_frontmatter`; `Skill`
+  delegates to it. `gwenflow.memory.base.render_messages_as_text` (lifted from
+  `ChatSummaryMemoryBuffer`, with per-message truncation).
+
 ## [1.2.5] — 2026-10-12
 
 ### Fixed

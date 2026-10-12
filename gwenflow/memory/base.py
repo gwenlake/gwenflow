@@ -19,6 +19,32 @@ FILE_TOKENS_DEFAULT = 500  # baseline for a small PDF; refined by data size
 AUDIO_B64_CHARS_PER_SEC = 32000  # ~16kHz mono PCM at base64 expansion ratio
 
 
+def render_messages_as_text(messages: list[Message], *, max_chars_per_message: int | None = None) -> str:
+    """Plain-text transcript of `messages` for a summarizer or consolidator.
+
+    One line per message (`[role] text`), tool calls spelled out, multi-modal
+    parts reduced to their text. `max_chars_per_message` truncates each line
+    (long tool results would otherwise dominate the transcript).
+    """
+    lines: list[str] = []
+    for m in messages:
+        text = None
+        if isinstance(m.content, str) and m.content:
+            text = m.content
+        elif isinstance(m.content, list):
+            texts = [p.content for p in m.content if isinstance(p, TextContent)]
+            if texts:
+                text = " ".join(texts)
+        if text is not None:
+            if max_chars_per_message is not None and len(text) > max_chars_per_message:
+                text = text[:max_chars_per_message] + " [...]"
+            lines.append(f"[{m.role}] {text}")
+        if m.tool_calls:
+            for tc in m.tool_calls:
+                lines.append(f"[{m.role}] tool_call: {tc}")
+    return "\n".join(lines)
+
+
 @dataclass
 class BaseChatMemory:
     id: str | None = None

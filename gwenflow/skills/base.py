@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, List, Optional
 
 import yaml
 
+from gwenflow.utils.markdown import parse_frontmatter
+
 if TYPE_CHECKING:
     from gwenflow.tools import Tool
 
@@ -118,13 +120,7 @@ class Skill:
     @staticmethod
     def _parse_skill_md(raw: str) -> tuple[dict, str]:
         """Split YAML frontmatter from markdown body in a SKILL.md file."""
-        if raw.startswith("---"):
-            parts = raw.split("---", 2)
-            if len(parts) >= 3:
-                frontmatter = yaml.safe_load(parts[1]) or {}
-                body = parts[2].strip()
-                return frontmatter, body
-        return {}, raw.strip()
+        return parse_frontmatter(raw)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Skill":
