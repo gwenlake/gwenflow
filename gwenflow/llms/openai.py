@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
@@ -43,6 +44,52 @@ def _split_think_tags(content: str) -> Tuple[Optional[str], str]:
     remaining = _THINK_BLOCK_RE.sub("", content).strip()
     thinking = "\n\n".join(b.strip() for b in blocks)
     return thinking, remaining
+
+
+_TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>(.*?)(?:</tool_call>|\Z)", re.DOTALL)
+_TOOL_CALL_NAME_RE = re.compile(r"^(?:<function=)?\s*([A-Za-z0-9_.-]+)\s*>?")
+_TOOL_CALL_PARAM_RE = re.compile(r"<parameter=([^>\s]+)>\n?(.*?)\n?</parameter>", re.DOTALL)
+
+
+def _recover_tool_calls(content: str, tool_names: set) -> Tuple[List[ToolCall], str]:
+    """Pull tool calls the model wrote as text out of a full string.
+
+    Returns (calls, remaining_text). Used as a fallback for local models (Qwen3
+    in particular) that write their calls as ``<tool_call>`` markup the server
+    does not always parse, so they come back in `content` instead of
+    `tool_calls`. Handles ``<tool_call><function=NAME><parameter=KEY>VALUE
+    </parameter></function></tool_call>``, the same with the ``<function=`` tag
+    dropped, and ``<tool_call>{"name": ..., "arguments": {...}}</tool_call>``.
+    Only names in `tool_names` are recovered; anything else stays text.
+    """
+    if not content or "<tool_call>" not in content:
+        return [], content
+    calls: List[ToolCall] = []
+    for match in _TOOL_CALL_BLOCK_RE.finditer(content):
+        body = match.group(1).strip()
+        if body.startswith("{"):
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            name = data.get("name")
+            arguments = data.get("arguments", data.get("parameters", {}))
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    continue
+        else:
+            found = _TOOL_CALL_NAME_RE.match(body)
+            if not found:
+                continue
+            name = found.group(1)
+            arguments = dict(_TOOL_CALL_PARAM_RE.findall(body))
+        if name in tool_names and isinstance(arguments, dict):
+            calls.append(ToolCall(id=f"call_{uuid.uuid4().hex[:24]}", name=name, arguments=json.dumps(arguments)))
+    if not calls:
+        return [], content
+    return calls, _TOOL_CALL_BLOCK_RE.sub("", content).strip()
 
 
 class _ThinkTagStreamExtractor:
@@ -412,6 +459,20 @@ class ChatOpenAI(ChatBase):
                 except Exception as e:
                     logger.warning(f"Error processing tool calls: {e}")
 
+        if self.tools and not any(isinstance(p, ToolCall) for p in parts):
+            names = {t.name if isinstance(t, Tool) else t.get("function", {}).get("name") for t in self.tools}
+            recovered: list = []
+            for part in parts:
+                calls, rest = _recover_tool_calls(part.content, names) if isinstance(part, TextContent) else ([], "")
+                if not calls:
+                    recovered.append(part)
+                    continue
+                logger.info(f"Recovered {len(calls)} tool call(s) the model wrote as text: {[c.name for c in calls]}")
+                if rest:
+                    recovered.append(TextContent(content=rest))
+                recovered.extend(calls)
+            parts = recovered
+
         model_response = ModelResponse(
             parts=parts,
             finish_reason="stop",
@@ -423,7 +484,6 @@ class ChatOpenAI(ChatBase):
 
         return model_response
 
-    @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
             messages_for_model = self.input_to_message_list(input)

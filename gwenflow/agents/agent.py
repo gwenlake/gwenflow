@@ -25,7 +25,7 @@ from pydantic import BaseModel, ValidationError
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.logger import logger
-from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
+from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
@@ -155,6 +155,12 @@ class Agent:
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
     skills: List[Skill] = field(default_factory=list)
+
+    memory: Optional[MemoryToolset] = None
+    """Long-term markdown memory: a `## Memory` block in the system prompt plus
+    the editing tools (`read_memory`, `memory_edit`, ...). Load it with
+    `await memory.aload()` before the run and persist with `await memory.aflush()`
+    after; the block is not rendered when `system_prompt` is set."""
     """Skills that extend the agent's instructions."""
 
     total_usage: AgentUsage = field(default_factory=AgentUsage)
@@ -209,6 +215,8 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+        if self.memory:
+            self.tools = list(self.tools) + self.memory.get_tools()
         if self.team:
             self._handoff_tools = self._build_handoff_tools()
             self.tools = list(self.tools) + self._handoff_tools
@@ -452,6 +460,10 @@ class Agent:
         lines.append(f"  tools:           {len(self.get_all_tools())}")
         if self.skills:
             lines.append(f"  skills:          {', '.join(s.name for s in self.skills)}")
+        if self.memory:
+            lines.append(
+                f"  memory:          {len(self.memory.always)} core file(s), {len(self.memory.index())} topic file(s)"
+            )
         if self.team:
             lines.append(f"  team:            {', '.join(m.name or m.id for m in self.team)}")
         if self.response_model is not None:
@@ -804,6 +816,9 @@ class Agent:
                 schema_str = json.dumps(self.response_model, indent=4)
             prompt_schema = PROMPT_JSON_SCHEMA.format(json_schema=schema_str).strip()
             system_prompt_parts.append(prompt_schema)
+
+        if self.memory:
+            system_prompt_parts.append("## Memory:\n\n" + self.memory.get_instructions())
 
         if self.retriever:
             references = self.retriever.search(query=task)

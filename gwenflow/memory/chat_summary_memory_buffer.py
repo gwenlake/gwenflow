@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gwenflow.logger import logger
+from gwenflow.memory.base import render_messages_as_text
 from gwenflow.memory.chat_memory_buffer import ChatMemoryBuffer
-from gwenflow.types import AgentUsage, Message, TextContent
+from gwenflow.types import AgentUsage, Message
 from gwenflow.utils.tokens import keep_tokens_from_text
 
 MAX_SUMMARY_CONTENT = 0.15
@@ -115,18 +116,7 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
 
     def _render_for_summary(self, messages: list[Message]) -> str:
         """Plain-text rendering of evicted messages for the summarizer."""
-        lines: list[str] = []
-        for m in messages:
-            if isinstance(m.content, str) and m.content:
-                lines.append(f"[{m.role}] {m.content}")
-            elif isinstance(m.content, list):
-                texts = [p.content for p in m.content if isinstance(p, TextContent)]
-                if texts:
-                    lines.append(f"[{m.role}] " + " ".join(texts))
-            if m.tool_calls:
-                for tc in m.tool_calls:
-                    lines.append(f"[{m.role}] tool_call: {tc}")
-        return "\n".join(lines)
+        return render_messages_as_text(messages)
 
     def _compress_evicted(self, evicted: list[Message]) -> bool:
         """Fold `evicted` into the rolling summary.
