@@ -15,6 +15,7 @@ LLM_TOKEN_COUNT_COMPLETION_AUDIO = "llm.token_count.completion_details.audio"
 LLM_TOKEN_COUNT_COMPLETION_REASONING = "llm.token_count.completion_details.reasoning"
 LLM_FINISH_REASON = "llm.finish_reason"
 TOOL_NAME = "tool.name"
+ERROR_TYPE = "error.type"
 SESSION_ID = "session.id"
 USER_ID = "user.id"
 
@@ -42,6 +43,8 @@ SPAN_KIND_RERANKER = "RERANKER"
 AGENT_NAME = "gwenflow.agent.name"  # for multi-agent flows
 AGENT_LLM_REQUESTS = "gwenflow.agent.llm_requests"  # LLM calls made in one run
 AGENT_TOOL_CALLS = "gwenflow.agent.tool_calls"  # tools executed in one run
+AGENT_FINISH_REASON = "gwenflow.agent.finish_reason"  # "stop", or "max_turns" when the run gave up
+INTERRUPTED = "gwenflow.interrupted"  # what cut the call short: GeneratorExit, CancelledError...
 LLM_TOOL_CALLS = "llm.tool_calls"
 LLM_TOOLS_COUNT = "gwenflow.llm.tools.count"  # tools offered to the model
 LLM_TOOLS_SCHEMA_HASH = "gwenflow.llm.tools.schema_hash"  # identifies a toolset without its schema

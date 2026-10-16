@@ -484,6 +484,7 @@ class ChatOpenAI(ChatBase):
 
         return model_response
 
+    @tracer.llm(name="LLM Invoke")
     def invoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
         try:
             messages_for_model = self.input_to_message_list(input)

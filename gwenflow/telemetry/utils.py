@@ -169,6 +169,28 @@ def capture_finish_reason(span, result: Any) -> None:
         span.set_attribute(sc.LLM_FINISH_REASON, str(finish_reason))
 
 
+def capture_agent_finish_reason(span, result: Any) -> None:
+    finish_reason = getattr(result, "finish_reason", None)
+    if finish_reason:
+        span.set_attribute(sc.AGENT_FINISH_REASON, str(finish_reason))
+
+
+def error_type(exc: BaseException) -> str:
+    """The class of a failure's root cause, named the way a traceback names it.
+
+    The LLM clients wrap provider errors (`raise RuntimeError(...) from e`), so
+    the raised class says nothing: the bottom of the `__cause__` chain does.
+    """
+    seen = {id(exc)}
+    while exc.__cause__ is not None and id(exc.__cause__) not in seen:
+        exc = exc.__cause__
+        seen.add(id(exc))
+    cls = type(exc)
+    if cls.__module__ in ("builtins", "__main__"):
+        return cls.__qualname__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
 def capture_agent_usage(span, result: Any) -> None:
     usage = getattr(result, "usage", None)
     if not usage:
