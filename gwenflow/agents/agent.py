@@ -940,15 +940,15 @@ class Agent:
         tool_map = {tool.name: tool for tool in self.get_all_tools()}
 
         if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
-            # Only reached when the arguments failed validation (a valid
-            # final_result never gets here: see _absorb_answer_tool_call).
             _, _, error_msg = self._validate_final_response(self._parse_tool_args(tool_call))
             logger.warning(f"final_result arguments failed validation: {error_msg}")
             tool_execution.content = error_msg or "Invalid final_result arguments"
+            tracer.mark_error(message=tool_execution.content, error_type="invalid_final_result")
             return tool_execution.to_message()
 
         if tool_call.name not in tool_map.keys():
             logger.error(f"Tool {tool_call.name} does not exist")
+            tracer.mark_error(message=f"Tool {tool_call.name} does not exist", error_type="unknown_tool")
             tool_execution.content = f"Tool {tool_call.name} does not exist"
             if self.response_model is not None:
                 tool_execution.content += f". To give your final answer, call the `{FINAL_RESULT_TOOL}` tool."
@@ -975,13 +975,10 @@ class Agent:
             result = tool.run(**arguments)
         except Exception as e:
             logger.error(f"Error executing tool '{tool_call.name}': {e}")
-            # Include the exception detail so the model can self-correct
-            # (wrong argument name, malformed JSON, ...).
+            tracer.mark_error(e)
             tool_execution.content = f"Error executing tool '{tool_call.name}': {e}"
             return tool_execution.to_message()
 
-        # A falsy result ("", 0, False, [], None) is a valid tool outcome,
-        # not an error. ToolResponse.content is the *stringified* value.
         if result is None:
             tool_execution.content = ""
         elif isinstance(result, str):
@@ -1041,7 +1038,7 @@ class Agent:
             self.history.compact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             response = self.reason(messages_for_reasoning_model)
-            if response is not None:  # reason() returns None on an empty plan
+            if response is not None:
                 agent_response.reasoning_content = response.reasoning_content
                 agent_response.usage.add(response.usage)
                 if response.reasoning_content:

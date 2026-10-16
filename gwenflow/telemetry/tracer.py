@@ -13,10 +13,12 @@ from gwenflow.telemetry._settings import (
     should_report_llm_usage,
 )
 from gwenflow.telemetry.utils import (
+    capture_agent_finish_reason,
     capture_agent_usage,
     capture_finish_reason,
     capture_llm_usage,
     capture_tool_calls,
+    error_type,
     record_documents,
     record_inputs,
     record_outputs,
@@ -193,6 +195,7 @@ class DecoratorTracer:
             capture_finish_reason(span, result_for_usage)
         elif kind_name == "AGENT":
             capture_agent_usage(span, result_for_usage)
+            capture_agent_finish_reason(span, result_for_usage)
         elif kind_name == "RETRIEVER":
             record_documents(span, sc.RETRIEVAL_DOCUMENTS, result_for_usage)
             return
@@ -217,6 +220,49 @@ class DecoratorTracer:
 
         span.set_status(StatusCode.ERROR, str(exc))
         span.record_exception(exc)
+        span.set_attribute(sc.ERROR_TYPE, error_type(exc))
+
+    def _interrupted(self, span, exc: BaseException) -> None:
+        """Record a call cut short rather than failed.
+
+        A stream its consumer dropped, a cancelled task: the status stays unset,
+        and the attribute says what happened.
+        """
+        span.set_attribute(sc.INTERRUPTED, type(exc).__name__)
+
+    def mark_error(
+        self,
+        exc: BaseException | None = None,
+        *,
+        message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """Report, on the current gwenflow span, a failure the call handles itself.
+
+        A tool error is handed back to the model as the tool's result: the call
+        returns normally, and its span would read as a success. `_ok` keeps an
+        error set from inside, so the span ends as failed. Pass the exception
+        when there is one, else a `message`; `error_type` overrides the class.
+        """
+        if not is_tracing_enabled() or _suppressed():
+            return
+        try:
+            from opentelemetry import trace
+            from opentelemetry.trace import StatusCode
+        except ImportError:
+            return
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        try:
+            if exc is not None:
+                self._error(span, exc)
+            else:
+                span.set_status(StatusCode.ERROR, message)
+            if error_type:
+                span.set_attribute(sc.ERROR_TYPE, error_type)
+        except Exception as e:
+            logger.debug(f"Telemetry failed to record a handled error: {e}")
 
     def _wrap_logic(self, name_attr: str, kind_name: str, name_override: str | None = None):
         def decorator(func):
@@ -263,6 +309,9 @@ class DecoratorTracer:
                     except Exception as e:
                         self._error(span, e)
                         raise
+                    except BaseException as e:
+                        self._interrupted(span, e)
+                        raise
                     finally:
                         span.end()
 
@@ -289,6 +338,9 @@ class DecoratorTracer:
                         return result
                     except Exception as e:
                         self._error(span, e)
+                        raise
+                    except BaseException as e:
+                        self._interrupted(span, e)
                         raise
                     finally:
                         otel_context.detach(token)
@@ -335,6 +387,9 @@ class DecoratorTracer:
                     except Exception as e:
                         self._error(span, e)
                         raise
+                    except BaseException as e:
+                        self._interrupted(span, e)
+                        raise
                     finally:
                         span.end()
 
@@ -359,6 +414,9 @@ class DecoratorTracer:
                     return result
                 except Exception as e:
                     self._error(span, e)
+                    raise
+                except BaseException as e:
+                    self._interrupted(span, e)
                     raise
                 finally:
                     otel_context.detach(token)
