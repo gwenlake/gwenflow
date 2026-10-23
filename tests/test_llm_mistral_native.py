@@ -141,7 +141,11 @@ def test_tools_wire_format():
     assert "tools" in params
     assert params["tools"][0] == {
         "type": "function",
-        "function": {"name": "add", "description": params["tools"][0]["function"]["description"], "parameters": params["tools"][0]["function"]["parameters"]},
+        "function": {
+            "name": "add",
+            "description": params["tools"][0]["function"]["description"],
+            "parameters": params["tools"][0]["function"]["parameters"],
+        },
     }
     assert params["tool_choice"] == "auto"
 

@@ -28,7 +28,7 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
     summary (`llm` calls), and stops there. `get()` stays a pure read that
     simply sends the current summary as the first message of the window — its
     token cost is deducted from the budget by `_budget()`, and it is capped at
-    ``MAX_SUMMARY_CONTENT * token_limit`` tokens.
+    ``MAX_SUMMARY_CONTENT * limit()`` tokens.
 
     The agent calls `compact()` / `acompact()` before each `get()`.
 
@@ -101,6 +101,7 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
             if not self._compress_evicted(self.messages[self._summarized_upto : evict_end]):
                 return  # LLM failed: keep the pointer, retry on a later compact()
             self._summarized_upto = evict_end
+            self._invalidate_anchor()  # the window changed shape: re-estimate until the next reply
 
     async def acompact(self) -> None:
         """Async variant of `compact()`.

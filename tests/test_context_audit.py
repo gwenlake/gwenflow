@@ -172,21 +172,21 @@ def test_unknown_model_silently_gets_the_128k_default():
     assert llm.get_context_size() == int(DEFAULT_CONTEXT_SIZE * CONTEXT_SAFETY_RATIO)
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason="no fallback_context_window yet (step 1)")
 def test_fallback_context_window_applies_only_to_unknown_models():
+    """Fixed in step 1."""
     known = ChatOpenAI(model="gpt-5-mini", api_key="x", fallback_context_window=32768)
     unknown = ChatOpenAI(model="my-local-model", api_key="x", fallback_context_window=32768)
     assert known.get_context_size() == int(400000 * CONTEXT_SAFETY_RATIO)
     assert unknown.get_context_size() == int(32768 * CONTEXT_SAFETY_RATIO)
 
 
-@pytest.mark.xfail(strict=True, reason="the budget is frozen at construction (step 1)")
 def test_budget_follows_a_replaced_llm():
-    """`agent.llm = other` must change the window the history works with."""
+    """`agent.llm = other` must change the window the history works with (fixed in step 1)."""
     agent = scripted_agent(llm=ScriptedLLM(context_size=600))
+    assert agent.history.limit() == 600
     agent.llm = ScriptedLLM(context_size=200)
     agent.run("TASK: analyse the market.")
-    assert agent.history.token_limit == 200
+    assert agent.history.limit() == 200
 
 
 # ---------------------------------------------------------------------------

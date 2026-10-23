@@ -12,6 +12,34 @@ def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> i
     return num_tokens
 
 
+def hf_tokenizer(model: str, **kwargs):
+    """Token counter backed by the Hugging Face tokenizer of `model`.
+
+    Returns a `tokenizer_fn` for the memory buffers (`text -> int`), so a
+    model served by vLLM, Ollama or Scaleway is counted with its own
+    tokenizer instead of tiktoken's `cl100k_base`:
+
+        agent = Agent(..., history=ChatSummaryMemoryBuffer(
+            max_fraction=0.85, tokenizer_fn=hf_tokenizer("Qwen/Qwen3.6-27B")))
+
+    Requires the optional `transformers` package; `kwargs` go to
+    `AutoTokenizer.from_pretrained` (`trust_remote_code`, `token`...).
+    """
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as e:
+        raise ImportError(
+            "`transformers` is not installed. Install it with `pip install transformers` to use hf_tokenizer()."
+        ) from e
+    tokenizer = AutoTokenizer.from_pretrained(model, **kwargs)
+
+    def count(text) -> int:
+        return len(tokenizer.encode(str(text), add_special_tokens=False))
+
+    count.__name__ = f"hf_tokenizer({model})"
+    return count
+
+
 def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
     """Return the number of tokens used by a list of messages."""
     try:

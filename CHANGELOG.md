@@ -51,6 +51,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Agent.max_tool_output_tokens`: a longer tool result is set aside; the model gets
   its beginning, a reference and a `read_tool_output(ref, offset, length)` tool to
   page through the rest. Off by default.
+- Context measured on the provider's own counts. The memory buffer anchors its size on
+  the provider's last reported usage (`observe_usage`: prompt + completion tokens,
+  which cover the system prompt, tool schemas and files) and estimates only the
+  messages stored since; `used_tokens()` / `context_usage()` expose the result with
+  the window, the limit and whether the window is known. The agent anchors after
+  every reply, on all four run loops.
+- `ChatMemoryBuffer.max_fraction` (exclusive with `token_limit`): the budget as a
+  share of the model's context window, resolved on every request against the LLM
+  actually called. **Default behaviour change:** the buffer an agent creates for
+  itself now uses `max_fraction=0.75` instead of a `token_limit` frozen at
+  construction, so replacing `agent.llm` moves the budget. A buffer passed
+  explicitly is untouched.
+- `fallback_context_window` on every LLM: used only when the model is unknown
+  (`context_window` still overrides everything). `ChatBase.context_window_info()`
+  says where the value comes from and whether it is assumed.
+- `gwenflow.utils.tokens.hf_tokenizer(model)`: a `tokenizer_fn` backed by the Hugging
+  Face tokenizer of the served model (optional `transformers` dependency), for
+  buffers that must count like a Mistral, Qwen or Gemma server does.
 
 ## [1.3.0] — 2026-10-12
 

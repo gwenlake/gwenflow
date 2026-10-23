@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
+from gwenflow.llms.base import CONTEXT_SAFETY_RATIO
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
 from gwenflow.retriever import Retriever
@@ -39,6 +40,8 @@ from gwenflow.types import (
     AgentEventToolStarted,
     AgentResponse,
     AgentUsage,
+    ContextUsage,
+    ContextWindowInfo,
     Message,
     ModelResponse,
     RequestUsage,
@@ -220,10 +223,13 @@ class Agent:
             summarizer.tools = []
             summarizer.tool_choice = None
             summarizer.response_format = None
+            # Fraction of the window, resolved on every request against the
+            # LLM actually called (see `_sync_context_window`).
             self.history = ChatSummaryMemoryBuffer(
-                token_limit=self.llm.get_context_size(),
+                max_fraction=CONTEXT_SAFETY_RATIO,
                 llm=summarizer,
             )
+            self._sync_context_window()
         if self.response_model:
             self.llm.response_format = self.response_model
         if self.skills:
@@ -317,6 +323,9 @@ class Agent:
         """A new, empty buffer with the same configuration as `self.history`."""
         kwargs: Dict[str, Any] = {
             "token_limit": self.history.token_limit,
+            "max_fraction": self.history.max_fraction,
+            "context_window": self.history.context_window,
+            "context_window_resolved": self.history.context_window_resolved,
             "tokenizer_fn": self.history.tokenizer_fn,
         }
         summarizer = getattr(self.history, "llm", None)
@@ -452,7 +461,7 @@ class Agent:
         if command == "/history":
             messages = self.history.messages
             tokens = self.history._token_count_for_messages(messages)
-            parts = [f"{len(messages)} message(s) stored, ~{tokens} tokens (limit {self.history.token_limit})."]
+            parts = [f"{len(messages)} message(s) stored, ~{tokens} tokens (limit {self.history.limit()})."]
             summary = getattr(self.history, "summary", "")
             if summary:
                 parts.append(f"Running summary: ~{self.history.tokenizer_fn(summary)} tokens.")
@@ -486,7 +495,7 @@ class Agent:
             lines.append(f"  response_model:  {model_name}")
         lines.append(
             f"  memory:          {type(self.history).__name__} "
-            f"(token_limit {self.history.token_limit:,}, reserved {self.history.reserved_tokens:,})"
+            f"(token_limit {self.history.limit():,}, reserved {self.history.reserved_tokens:,})"
         )
         summarizer = getattr(self.history, "llm", None)
         if summarizer is not None:
@@ -799,6 +808,30 @@ class Agent:
         """
         self.history.system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.reserved_tokens = self._tools_token_count()
+        self._sync_context_window()
+
+    def _sync_context_window(self) -> None:
+        """Tell the history the context window of the LLM about to be called.
+
+        Resolved on every request, so replacing `agent.llm` moves the budget.
+        An LLM without `context_window_info` (a stub) is read through
+        `get_context_size()`, which is `CONTEXT_SAFETY_RATIO` of its window.
+        """
+        info = None
+        info_fn = getattr(self.llm, "context_window_info", None)
+        if callable(info_fn):
+            info = info_fn()
+        if isinstance(info, ContextWindowInfo):
+            window, resolved = info.tokens, info.resolved
+        else:  # a stub (test double, custom class): read its context size instead
+            window, resolved = round(self.llm.get_context_size() / CONTEXT_SAFETY_RATIO), True
+        self.history.context_window = window
+        self.history.context_window_resolved = resolved
+
+    def context_usage(self) -> ContextUsage:
+        """Size of the next request against the model's window (see `ContextUsage`)."""
+        self._sync_context_window()
+        return self.history.context_usage()
 
     def get_system_prompt(
         self,
@@ -947,11 +980,16 @@ class Agent:
 
     @tracer.tool(name="Tool Call")
     def _calibrate_history(self, window: List[Message], usage: Any) -> None:
-        """Feed the provider's real prompt token count back to the memory buffer."""
-        observe = getattr(self.history, "observe_prompt_tokens", None)
-        actual = getattr(usage, "input_tokens", 0) if usage is not None else 0
-        if observe is not None and actual:
-            observe(window, actual)
+        """Anchor the memory buffer on the provider's reported usage.
+
+        Called once the reply is stored, so the anchor covers the request and
+        its reply (see `ChatMemoryBuffer.observe_usage`).
+        """
+        observe = getattr(self.history, "observe_usage", None)
+        input_tokens = getattr(usage, "input_tokens", 0) if usage is not None else 0
+        output_tokens = getattr(usage, "output_tokens", 0) if usage is not None else 0
+        if observe is not None and input_tokens:
+            observe(window, input_tokens, output_tokens)
 
     def _tool_output_reader(self) -> Tool:
         store = self._tool_outputs
@@ -1139,7 +1177,6 @@ class Agent:
 
             # usage
             agent_response.usage.add(response.usage)
-            self._calibrate_history(window, response.usage)
 
             # native thinking from the main LLM call
             if response.thinking:
@@ -1169,6 +1206,7 @@ class Agent:
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             _message.thinking_parts = self.llm.get_thinking_parts(response)
             self.history.add_message(_message)
+            self._calibrate_history(window, response.usage)
 
             # stop if not tool call
             if not response.tool_calls:
@@ -1307,7 +1345,6 @@ class Agent:
 
             # usage
             agent_response.usage.add(response.usage)
-            self._calibrate_history(window, response.usage)
 
             if response.thinking:
                 if agent_response.reasoning_content:
@@ -1335,6 +1372,7 @@ class Agent:
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             _message.thinking_parts = self.llm.get_thinking_parts(response)
             self.history.add_message(_message)
+            self._calibrate_history(window, response.usage)
 
             if not response.tool_calls:
                 content_to_check = response.parsed if response.parsed else response.content
@@ -1506,7 +1544,6 @@ class Agent:
                 turn_response.parts.extend(chunk.parts)
 
             agent_response.usage.add(turn_usage)
-            self._calibrate_history(window, turn_usage)
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:
@@ -1525,6 +1562,7 @@ class Agent:
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             _message.thinking_parts = self.llm.get_thinking_parts(turn_response)
             self.history.add_message(_message)
+            self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
                 if self.response_model:
@@ -1686,7 +1724,6 @@ class Agent:
                 turn_response.parts.extend(chunk.parts)
 
             agent_response.usage.add(turn_usage)
-            self._calibrate_history(window, turn_usage)
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:
@@ -1705,6 +1742,7 @@ class Agent:
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             _message.thinking_parts = self.llm.get_thinking_parts(turn_response)
             self.history.add_message(_message)
+            self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
                 if self.response_model:

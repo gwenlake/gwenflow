@@ -46,13 +46,13 @@ def _audio_completion(
         audio=audio,
     )
     choice = SimpleNamespace(message=msg, finish_reason="stop")
-    usage = SimpleNamespace(
-        prompt_tokens=5, completion_tokens=10, total_tokens=15, completion_tokens_details=None
-    )
+    usage = SimpleNamespace(prompt_tokens=5, completion_tokens=10, total_tokens=15, completion_tokens_details=None)
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
-def _audio_chunk(data: str | None = None, transcript: str | None = None, id: str | None = None, expires_at: int | None = None):
+def _audio_chunk(
+    data: str | None = None, transcript: str | None = None, id: str | None = None, expires_at: int | None = None
+):
     """Streaming-shaped audio delta."""
     return SimpleNamespace(data=data, transcript=transcript, id=id, expires_at=expires_at)
 
@@ -160,11 +160,13 @@ def test_model_response_audio_none_when_no_audio_parts():
 
 
 def test_model_response_audio_concatenates_chunks():
-    mr = ModelResponse(parts=[
-        TextContent(content="unrelated"),
-        AudioContent(data="AAA", transcript="Hi ", extra={"id": "x"}),
-        AudioContent(data="BBB", transcript="there.", extra={"expires_at": 1000}),
-    ])
+    mr = ModelResponse(
+        parts=[
+            TextContent(content="unrelated"),
+            AudioContent(data="AAA", transcript="Hi ", extra={"id": "x"}),
+            AudioContent(data="BBB", transcript="there.", extra={"expires_at": 1000}),
+        ]
+    )
     agg = mr.audio
     assert agg.data == "AAABBB"
     assert agg.transcript == "Hi there."
@@ -172,19 +174,23 @@ def test_model_response_audio_concatenates_chunks():
 
 
 def test_model_response_audio_format_from_last_chunk():
-    mr = ModelResponse(parts=[
-        AudioContent(data="A", format="wav"),
-        AudioContent(data="B", format="mp3"),
-    ])
+    mr = ModelResponse(
+        parts=[
+            AudioContent(data="A", format="wav"),
+            AudioContent(data="B", format="mp3"),
+        ]
+    )
     assert mr.audio.format == "mp3"
 
 
 def test_model_response_audio_empty_chunks_skipped():
     """Chunks with empty data but a transcript should still be included."""
-    mr = ModelResponse(parts=[
-        AudioContent(data="", transcript="Hello"),
-        AudioContent(data="DATA", transcript=" world"),
-    ])
+    mr = ModelResponse(
+        parts=[
+            AudioContent(data="", transcript="Hello"),
+            AudioContent(data="DATA", transcript=" world"),
+        ]
+    )
     assert mr.audio.data == "DATA"
     assert mr.audio.transcript == "Hello world"
 
@@ -199,11 +205,13 @@ def test_model_response_images_empty_by_default():
 
 
 def test_model_response_images_returns_only_image_parts():
-    mr = ModelResponse(parts=[
-        ImageContent(url="x"),
-        TextContent(content="y"),
-        ImageContent(data="Z", media_type="image/png"),
-    ])
+    mr = ModelResponse(
+        parts=[
+            ImageContent(url="x"),
+            TextContent(content="y"),
+            ImageContent(data="Z", media_type="image/png"),
+        ]
+    )
     assert len(mr.images) == 2
     assert all(isinstance(p, ImageContent) for p in mr.images)
     assert mr.images[0].url == "x"

@@ -28,9 +28,7 @@ from gwenflow.types import ImageContent, Message, TextContent
 # ---------------------------------------------------------------------------
 
 # 1x1 red PNG, base64.
-RED_PIXEL_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
-)
+RED_PIXEL_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
 RED_PIXEL_PNG = base64.b64decode(RED_PIXEL_PNG_B64)
 
 
@@ -217,9 +215,7 @@ def test_json_roundtrip_preserves_image_metadata():
 def _fake_openai_response(text: str = "red"):
     msg = SimpleNamespace(role="assistant", content=text, tool_calls=None, reasoning_content=None)
     choice = SimpleNamespace(message=msg, finish_reason="stop")
-    usage = SimpleNamespace(
-        prompt_tokens=10, completion_tokens=1, total_tokens=11, completion_tokens_details=None
-    )
+    usage = SimpleNamespace(prompt_tokens=10, completion_tokens=1, total_tokens=11, completion_tokens_details=None)
     return SimpleNamespace(choices=[choice], usage=usage)
 
 

@@ -8,6 +8,7 @@ from gwenflow.llms.models import MODELS, ModelInfo
 from gwenflow.logger import logger
 from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ModelResponse, ThinkingContent
+from gwenflow.types.context import ContextWindowInfo
 
 DEFAULT_CONTEXT_SIZE = 128000
 
@@ -78,6 +79,11 @@ class ChatBase(ABC):
     `--max-model-len`, a model missing from the table); "auto" asks the
     server (see `discover_context_window`) and falls back on the table."""
 
+    fallback_context_window: Optional[int] = None
+    """Context window to assume when the model is unknown: not in `MODELS`,
+    not discovered. Unlike `context_window` it never overrides a known value.
+    None falls back on `DEFAULT_CONTEXT_SIZE` with a warning."""
+
     def _forced_tool_name(self) -> Optional[str]:
         """Name of the tool a named `tool_choice` forces, or None.
 
@@ -116,25 +122,38 @@ class ChatBase(ABC):
         """Ask the provider for the model's context window. None if unsupported."""
         return None
 
-    def resolve_context_window(self) -> int:
-        """Context window of the model, in tokens (see `context_window`)."""
+    def context_window_info(self) -> ContextWindowInfo:
+        """Context window of the model and whether it is known or assumed.
+
+        Resolution order: an explicit `context_window` (int); `"auto"`
+        discovery from the server; the `MODELS` table; `fallback_context_window`;
+        `DEFAULT_CONTEXT_SIZE` with a one-time warning. Only the last two are
+        reported as not resolved.
+        """
         if isinstance(self.context_window, int) and self.context_window > 0:
-            return self.context_window
+            return ContextWindowInfo(tokens=self.context_window, resolved=True, source="context_window")
         if self.context_window == "auto":
             discovered = self.discover_context_window()
             if discovered:
                 self.context_window = discovered  # cache: ask the server once
-                return discovered
+                return ContextWindowInfo(tokens=discovered, resolved=True, source="server")
         info = lookup_model_info(self.model)
         if info is not None:
-            return info["context_window"]
+            return ContextWindowInfo(tokens=info["context_window"], resolved=True, source="table")
+        if self.fallback_context_window:
+            return ContextWindowInfo(tokens=self.fallback_context_window, resolved=False, source="fallback")
         if self.model not in _warned_unknown_models:
             _warned_unknown_models.add(self.model)
             logger.warning(
                 f"Unknown context window for model '{self.model}': assuming {DEFAULT_CONTEXT_SIZE:,} tokens. "
-                f"Pass context_window=<tokens> (or 'auto' for a vLLM-compatible server) if that is wrong."
+                f"Pass context_window=<tokens> (or 'auto' for a vLLM-compatible server), or "
+                f"fallback_context_window=<tokens>, if that is wrong."
             )
-        return DEFAULT_CONTEXT_SIZE
+        return ContextWindowInfo(tokens=DEFAULT_CONTEXT_SIZE, resolved=False, source="default")
+
+    def resolve_context_window(self) -> int:
+        """Context window of the model, in tokens (see `context_window_info`)."""
+        return self.context_window_info().tokens
 
     def get_context_size(self) -> int:
         """Token budget for the agent's history: the window minus a safety margin."""

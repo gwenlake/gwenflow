@@ -5,11 +5,14 @@ from typing import Any
 
 from gwenflow.logger import logger
 from gwenflow.memory.base import BaseChatMemory
-from gwenflow.types import Message, TextContent
+from gwenflow.types import ContextUsage, Message, TextContent
 from gwenflow.utils.tokens import keep_tokens_from_text
 
 DEFAULT_TOKEN_LIMIT = 8192
 DEFAULT_TOKEN_LIMIT_RATIO = 0.75
+DEFAULT_CONTEXT_WINDOW = 128000
+"""Window assumed by a fraction-based buffer until the agent tells it the
+model's real one (same value as `gwenflow.llms.base.DEFAULT_CONTEXT_SIZE`)."""
 MAX_MESSAGE_CONTENT = 0.5
 
 # Calibration of the local token estimate against the provider's real count.
@@ -57,6 +60,23 @@ class ChatMemoryBuffer(BaseChatMemory):
     """
 
     token_limit: int | None = None
+    """Absolute budget of the request, in tokens (system prompt, tool schemas
+    and messages included). Exclusive with `max_fraction`. Without either,
+    `DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO`."""
+
+    max_fraction: float | None = None
+    """Budget as a share of the model's context window, resolved on every
+    request against `context_window` (the agent refreshes it from the LLM it
+    actually calls, so swapping `agent.llm` moves the budget). Exclusive with
+    `token_limit`."""
+
+    context_window: int | None = None
+    """Context window of the model the next request goes to, in tokens. Set
+    by the agent before each request; `DEFAULT_CONTEXT_WINDOW` until then."""
+
+    context_window_resolved: bool = True
+    """Whether `context_window` is known (table, server, explicit) or assumed
+    (`fallback_context_window`, library default). Reported by `context_usage()`."""
 
     reserved_tokens: int = 0
     """Tokens the request spends outside the message list — the tool schemas the
@@ -76,10 +96,35 @@ class ChatMemoryBuffer(BaseChatMemory):
     min_cleared_tool_result_tokens: int = 200
     """Tool results smaller than this are not worth clearing."""
 
+    _anchor_tokens: int | None = None
+    """Prompt + completion tokens the provider reported for the last request,
+    or None when no request has been observed since the history changed shape."""
+
+    _anchor_index: int = 0
+    """Number of stored messages the anchor accounts for: those were in the
+    last request (as sent) or are its reply. Messages past it are estimated."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not self.token_limit:
+        if self.token_limit is not None and self.max_fraction is not None:
+            raise ValueError("token_limit and max_fraction are exclusive: pass one of them.")
+        if self.max_fraction is not None and not 0 < self.max_fraction <= 1:
+            raise ValueError(f"max_fraction must be in (0, 1], got {self.max_fraction}.")
+        if self.token_limit is None and self.max_fraction is None:
             self.token_limit = int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
+
+    # ------------------------------------------------------------------
+    # Budget
+    # ------------------------------------------------------------------
+
+    def limit(self) -> int:
+        """The request budget in provider tokens.
+
+        `token_limit` when set, else `max_fraction` of the current `context_window`.
+        """
+        if self.max_fraction is not None:
+            return int((self.context_window or DEFAULT_CONTEXT_WINDOW) * self.max_fraction)
+        return int(self.token_limit)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -139,8 +184,8 @@ class ChatMemoryBuffer(BaseChatMemory):
     # ------------------------------------------------------------------
 
     def _effective_token_limit(self) -> int:
-        """`token_limit` expressed in local-estimate tokens."""
-        return int(self.token_limit / self.token_scale)
+        """The budget expressed in local-estimate tokens."""
+        return int(self.limit() / self.token_scale)
 
     def observe_prompt_tokens(self, window: list[Message], actual_tokens: int) -> None:
         """Calibrate the local estimate with the prompt tokens the provider billed.
@@ -160,6 +205,63 @@ class ChatMemoryBuffer(BaseChatMemory):
             self.token_scale = ratio
         else:
             self.token_scale = TOKEN_SCALE_DECAY * self.token_scale + (1 - TOKEN_SCALE_DECAY) * ratio
+
+    def observe_usage(self, window: list[Message], input_tokens: int, output_tokens: int = 0) -> None:
+        """Anchor the size of the history on what the provider just reported.
+
+        Call it once the reply has been stored: `input_tokens + output_tokens`
+        then covers everything in the request (system prompt, tool schemas,
+        files, the window) plus the reply, and the messages stored after this
+        point are the only ones left to estimate. The same count also
+        calibrates `token_scale` for the parts that still need estimating.
+        """
+        self.observe_prompt_tokens(window, input_tokens)
+        if not input_tokens or input_tokens <= 0:
+            return
+        self._anchor_tokens = int(input_tokens) + int(output_tokens or 0)
+        self._anchor_index = len(self.messages)
+
+    def _invalidate_anchor(self) -> None:
+        """Forget the anchor: the stored history changed shape (compaction, reset, load)."""
+        self._anchor_tokens = None
+        self._anchor_index = 0
+
+    def _anchor_valid(self) -> bool:
+        return self._anchor_tokens is not None and self._anchor_index <= len(self.messages)
+
+    def _scaled(self, local_tokens: int) -> int:
+        return int(local_tokens * self.token_scale)
+
+    def used_tokens(self) -> int:
+        """Provider tokens the next request would carry if the history were sent as is.
+
+        Anchored: the last reported usage plus a scaled local estimate of the
+        messages added since. Unanchored: a scaled local estimate of the system
+        prompt, the tool schemas, the summary and every stored message.
+        """
+        if self._anchor_valid():
+            added = self._token_count_for_messages(self.messages[self._anchor_index :])
+            return self._anchor_tokens + self._scaled(added)
+        total = self._initial_token_count() + self.reserved_tokens
+        summary_message = self._summary_message()
+        if summary_message is not None:
+            total += self._token_count_for_message(summary_message)
+        total += self._token_count_for_messages(self.messages)
+        return self._scaled(total)
+
+    def context_usage(self) -> ContextUsage:
+        """Where the history stands against the model's window (see `ContextUsage`)."""
+        return ContextUsage(
+            used_tokens=self.used_tokens(),
+            window_tokens=self.context_window or DEFAULT_CONTEXT_WINDOW,
+            limit_tokens=self.limit(),
+            resolved=self.context_window_resolved,
+            anchored=self._anchor_valid(),
+        )
+
+    def reset(self):
+        super().reset()
+        self._invalidate_anchor()
 
     # ------------------------------------------------------------------
     # Pass 0: lighten tool results
@@ -265,6 +367,9 @@ class ChatMemoryBuffer(BaseChatMemory):
             )
             budget = 0
         return budget
+
+    def _token_limit_for_display(self) -> int:
+        return self.limit()
 
     def _clamp_history(self, chat_history: list[Message], budget: int) -> list[Message]:
         """Passes 0 and 1: lighten tool results, then clamp large messages.
