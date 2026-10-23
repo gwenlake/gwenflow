@@ -113,16 +113,22 @@ class ScriptedLLM:
     def get_thinking_parts(self, response):
         return None
 
+    @staticmethod
+    def prompt_tokens(input) -> int:
+        """Realistic usage for the fakes: one token per word, like `words()`."""
+        return sum(len(str(m.get("content") or "").split()) + 4 for m in input)
+
     def invoke(self, input):
         first = input[0].get("content", "") if input and isinstance(input[0], dict) else ""
         if first.startswith("You maintain a running summary"):
             self.summary_calls += 1
             return ModelResponse(
-                parts=[TextContent(content=self.summary)], usage=RequestUsage(input_tokens=80, output_tokens=20)
+                parts=[TextContent(content=self.summary)],
+                usage=RequestUsage(input_tokens=self.prompt_tokens(input), output_tokens=20),
             )
         self.prompts.append(input)
         self.turn += 1
-        usage = RequestUsage(input_tokens=100, output_tokens=10)
+        usage = RequestUsage(input_tokens=self.prompt_tokens(input), output_tokens=10)
         if self.turn <= self.tool_turns:
             call = ToolCall(id=f"call_{self.turn}", name="search", arguments=json.dumps({"q": f"market {self.turn}"}))
             return ModelResponse(parts=[call], finish_reason="tool_calls", usage=usage)
@@ -266,9 +272,8 @@ def test_live_turn_overflow_clears_results_then_drops_oldest_messages():
     assert window[0].content.startswith("TASK:")  # but the task is kept
 
 
-@pytest.mark.xfail(strict=True, reason="no summary inside the live turn (steps 2-3)")
 def test_intermediate_notes_of_a_long_turn_survive_in_some_form():
-    """Wanted: older notes of the live turn reach the model, summarized if need be."""
+    """Older notes of the live turn reach the model, summarized if need be (fixed in step 2)."""
     llm = ScriptedLLM(summary="SUMMARY: notes 0 to 9 say the first files were relevant.")
     buf = ChatSummaryMemoryBuffer(token_limit=900, tokenizer_fn=words, llm=llm)
     buf.add_messages(agent_history(n_reads=20, result_words=200, with_notes=True))
@@ -304,7 +309,7 @@ def test_clearing_and_summarizing_keep_pairs_whole():
     buf.compact()
     window = buf.get()
     assert_tool_pairs([m for m in window if m.role != "system"])
-    assert buf._summarized_upto in (0, 2)  # whole groups only
+    assert_tool_pairs(buf.messages)  # the stored history too: the cut was a group boundary
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +324,8 @@ def test_task_survives_as_long_as_it_is_the_last_user_message():
     assert buf.get()[0].content.startswith("TASK:")
 
 
-@pytest.mark.xfail(strict=True, reason="the anchor moves to the retry message (step 2: pin the first user message)")
 def test_task_survives_a_validation_retry_message():
-    """A schema-validation retry adds a user message: the task must still be sent."""
+    """A schema-validation retry adds a user message: the task is still sent (fixed in step 2)."""
     messages = agent_history(n_reads=20, result_words=200)
     messages.append(Message(role="user", content="Validation error: field 'total' is required. Answer again."))
     buf = ChatMemoryBuffer(token_limit=500, tokenizer_fn=words)
@@ -402,8 +406,9 @@ def test_summary_usage_is_tracked_on_the_history_only():
     assert agent.total_usage.requests == len(agent.llm.prompts)
 
 
-@pytest.mark.xfail(strict=True, reason="an empty summary is retried on every compact() with no cap (step 3)")
 def test_empty_summary_is_retried_a_bounded_number_of_times():
+    """One retry, then the sliding window takes over (fixed in step 2)."""
+
     class EmptyLLM:
         calls = 0
 

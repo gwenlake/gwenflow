@@ -69,6 +69,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `gwenflow.utils.tokens.hf_tokenizer(model)`: a `tokenizer_fn` backed by the Hugging
   Face tokenizer of the served model (optional `transformers` dependency), for
   buffers that must count like a Mistral, Qwen or Gemma server does.
+- Compaction in tiers (`gwenflow.memory.compaction`).
+  `ChatMemoryBuffer.compact()` now rewrites the stored history, cheapest
+  strategy first, re-measuring after each one and stopping once the history is back
+  under `target()`: `DeduplicateReads` (latest read of a file wins; on every request),
+  `ClampOversized` (head + tail of one oversized answer, tool result or tool argument),
+  `ClearToolResults` (`keep_pairs`, `exclude_tools`, `clear_tool_inputs`,
+  `min_clear_tokens`), `SummarizeOlder` (the summary tier of `ChatSummaryMemoryBuffer`,
+  now inside the live turn too, with a recent tail kept verbatim) and `SlidingWindow`.
+  Strategies never mutate the messages they receive; a tier that raises is skipped and
+  the sliding window always closes the chain. `strategies=[...]` replaces the tiers,
+  `default_strategies()` builds them.
+  **Default behaviour changes:** compaction is persisted in `messages` (the originals
+  of what was altered are kept in `compactions[-1].removed`), the plain
+  `ChatMemoryBuffer` compacts too (without summary), and compaction works in batches:
+  it triggers at `max_fraction` (0.85 of the window for the agent's default buffer)
+  and stops at `target()` (70 % of the limit by default, `target_fraction` /
+  `target_tokens` to set it), so the prefix sent to the model, and the provider's
+  prompt cache, stay stable between two batches. `get()` is unchanged as a last
+  resort when the stored history still does not fit.
+- Tool call / result pairing is guaranteed by construction (groups, see
+  `tool_groups`), checked by `validate_tool_pairs`. The first user message, the last
+  one (the live task, also pinned by the agent for the run) and any message marked
+  with `compaction.pin()` survive every strategy. The task now survives a
+  schema-validation retry.
+- `/compact` works on every buffer and reports the tiers applied, the message and
+  token counts before and after.
 
 ## [1.3.0] — 2026-10-12
 

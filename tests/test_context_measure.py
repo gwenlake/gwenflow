@@ -10,9 +10,9 @@ import types
 import pytest
 
 from gwenflow import Agent, ChatOpenAI
-from gwenflow.llms.base import CONTEXT_SAFETY_RATIO, DEFAULT_CONTEXT_SIZE
+from gwenflow.llms.base import DEFAULT_CONTEXT_SIZE
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
-from gwenflow.memory.chat_memory_buffer import DEFAULT_CONTEXT_WINDOW
+from gwenflow.memory.chat_memory_buffer import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_FRACTION
 from gwenflow.types import ContextWindowInfo, Message
 from gwenflow.utils.tokens import hf_tokenizer
 from tests.test_context_audit import ScriptedLLM, agent_history, scripted_agent, tool_turn, words
@@ -70,11 +70,11 @@ def test_token_limit_is_absolute():
 
 def test_agent_default_history_follows_the_llm_window():
     agent = Agent(name="a", llm=ChatOpenAI(model="gpt-5-mini", api_key="x"))
-    assert agent.history.max_fraction == CONTEXT_SAFETY_RATIO
-    assert agent.history.limit() == int(400000 * CONTEXT_SAFETY_RATIO)
+    assert agent.history.max_fraction == DEFAULT_MAX_FRACTION
+    assert agent.history.limit() == int(400000 * DEFAULT_MAX_FRACTION)
     agent.llm = ChatOpenAI(model="my-vllm-model", api_key="x", context_window=32768)
     agent._prepare_history(task="t")
-    assert agent.history.limit() == int(32768 * CONTEXT_SAFETY_RATIO)
+    assert agent.history.limit() == int(32768 * DEFAULT_MAX_FRACTION)
     assert agent.history.context_window_resolved is True
 
 
@@ -83,7 +83,7 @@ def test_agent_context_usage_flags_an_assumed_window():
     usage = agent.context_usage()
     assert usage.window_tokens == 32768
     assert usage.resolved is False
-    assert usage.limit_tokens == int(32768 * CONTEXT_SAFETY_RATIO)
+    assert usage.limit_tokens == int(32768 * DEFAULT_MAX_FRACTION)
 
 
 def test_clone_keeps_the_fraction_configuration():
@@ -161,8 +161,8 @@ def test_agent_anchors_after_each_reply():
     agent.run("TASK: go.")
     usage = agent.history.context_usage()
     assert usage.anchored is True
-    # ScriptedLLM reports 100 + 10 tokens per call; the last reply is the final answer
-    assert usage.used_tokens == 110
+    # the last reply is the final answer: the anchor covers the whole history
+    assert usage.used_tokens == ScriptedLLM.prompt_tokens(agent.llm.prompts[-1]) + 10
     assert agent.history._anchor_index == len(agent.history.messages)
 
 

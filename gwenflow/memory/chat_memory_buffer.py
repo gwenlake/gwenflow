@@ -1,11 +1,19 @@
 import copy
 import json
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Any
 
 from gwenflow.logger import logger
 from gwenflow.memory.base import BaseChatMemory
-from gwenflow.types import ContextUsage, Message, TextContent
+from gwenflow.memory.compaction import (
+    CompactionContext,
+    CompactionRecord,
+    CompactionStrategy,
+    default_strategies,
+    protected_indexes,
+)
+from gwenflow.types import AgentUsage, ContextUsage, Message, TextContent
 from gwenflow.utils.tokens import keep_tokens_from_text
 
 DEFAULT_TOKEN_LIMIT = 8192
@@ -13,6 +21,15 @@ DEFAULT_TOKEN_LIMIT_RATIO = 0.75
 DEFAULT_CONTEXT_WINDOW = 128000
 """Window assumed by a fraction-based buffer until the agent tells it the
 model's real one (same value as `gwenflow.llms.base.DEFAULT_CONTEXT_SIZE`)."""
+DEFAULT_MAX_FRACTION = 0.85
+"""Trigger of the agent's default buffer: compaction starts when the next
+request would use this share of the window."""
+DEFAULT_TARGET_RATIO = 0.70
+"""Default target of `compact()`, as a share of the limit (0.85 * 0.70 = 60 %
+of the window for the agent's default buffer). The gap between trigger and
+target is what keeps the sent prefix stable, and the prompt cache valid,
+between two compaction batches."""
+MAX_COMPACTION_RECORDS = 20
 MAX_MESSAGE_CONTENT = 0.5
 
 # Calibration of the local token estimate against the provider's real count.
@@ -29,9 +46,25 @@ DUPLICATE_TOOL_RESULT = "[Same call as a later {call}: result removed, see the m
 
 @dataclass
 class ChatMemoryBuffer(BaseChatMemory):
-    """Sliding-window memory that keeps the most recent messages within a token budget.
+    """Chat memory that keeps the history within a token budget.
 
-    Four-pass strategy (each pass only runs if the previous ones did not fit):
+    Two mechanisms, one persistent and one on the fly:
+
+    `compact()` rewrites the stored history in tiers (see
+    `gwenflow.memory.compaction`): deduplicate file reads, clamp oversized
+    parts, clear old tool results, summarize older messages (with a
+    summarizer, see `ChatSummaryMemoryBuffer`), drop the oldest messages.
+    It triggers when the next request would exceed `limit()` and stops once
+    the history is under `target()`, so it works in batches and the prefix
+    sent to the model is identical between two batches. The agent calls it
+    before each request. The first user message, the task the agent pinned
+    and any message marked with `compaction.pin()` always survive.
+
+    `get()` is a pure read that returns the window to send. When the stored
+    history fits (always true right after `compact()`), it is the history as
+    is. Otherwise, as a last resort (a buffer used without `compact()`, a
+    single message bigger than the budget), the four passes below shrink the
+    window on copies, without touching the stored history:
       0. Lighten tool results — cheap and model-free. Results of a call that is
          repeated later (same tool, same arguments) are replaced by a stub; then
          the oldest results outside the `keep_recent_tool_results` most recent
@@ -104,14 +137,38 @@ class ChatMemoryBuffer(BaseChatMemory):
     """Number of stored messages the anchor accounts for: those were in the
     last request (as sent) or are its reply. Messages past it are estimated."""
 
+    target_fraction: float | None = None
+    """Where `compact()` stops, as a share of the context window. Must be
+    below `max_fraction`. None: `DEFAULT_TARGET_RATIO` of the limit."""
+
+    target_tokens: int | None = None
+    """Where `compact()` stops, in tokens (absolute). None: `DEFAULT_TARGET_RATIO`
+    of the limit. Exclusive with `target_fraction`."""
+
+    strategies: list[CompactionStrategy] | None = None
+    """Compaction tiers, cheapest first. None: `default_strategies()`, with
+    the summarizer of a `ChatSummaryMemoryBuffer`."""
+
+    compactions: list[CompactionRecord] = field(default_factory=list)
+    """What the last compactions did (most recent last, capped)."""
+
+    usage: AgentUsage = field(default_factory=AgentUsage)
+    """Cumulative usage of the LLM calls made by compaction (summaries).
+    Deliberately NOT cleared by `reset()`: tokens already spent stay
+    accounted for (see /cost)."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.token_limit is not None and self.max_fraction is not None:
             raise ValueError("token_limit and max_fraction are exclusive: pass one of them.")
         if self.max_fraction is not None and not 0 < self.max_fraction <= 1:
             raise ValueError(f"max_fraction must be in (0, 1], got {self.max_fraction}.")
+        if self.target_fraction is not None and self.target_tokens is not None:
+            raise ValueError("target_fraction and target_tokens are exclusive: pass one of them.")
         if self.token_limit is None and self.max_fraction is None:
             self.token_limit = int(DEFAULT_TOKEN_LIMIT * DEFAULT_TOKEN_LIMIT_RATIO)
+        if self.target() >= self.limit():
+            raise ValueError(f"the compaction target ({self.target()}) must be below the limit ({self.limit()}).")
 
     # ------------------------------------------------------------------
     # Budget
@@ -125,6 +182,14 @@ class ChatMemoryBuffer(BaseChatMemory):
         if self.max_fraction is not None:
             return int((self.context_window or DEFAULT_CONTEXT_WINDOW) * self.max_fraction)
         return int(self.token_limit)
+
+    def target(self) -> int:
+        """Where `compact()` stops, in provider tokens (see `target_fraction`, `target_tokens`)."""
+        if self.target_tokens is not None:
+            return int(self.target_tokens)
+        if self.target_fraction is not None:
+            return int((self.context_window or DEFAULT_CONTEXT_WINDOW) * self.target_fraction)
+        return int(self.limit() * DEFAULT_TARGET_RATIO)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -409,7 +474,8 @@ class ChatMemoryBuffer(BaseChatMemory):
         # Pass 3: never drop the live turn. If the suffix that fits stops short of
         # the last user message, pull that message back in and drop the oldest
         # messages of the turn instead — a task-less prompt is worse than a
-        # truncated one.
+        # truncated one. Protected messages (first user message, pinned task)
+        # are pulled back in the same way by `get()`.
         anchor = self._last_user_index(chat_history)
         if anchor is not None and start > anchor:
             token_count += counts[anchor]
@@ -436,15 +502,95 @@ class ChatMemoryBuffer(BaseChatMemory):
         """
         return None
 
-    def compact(self) -> None:
-        """Fold about-to-be-evicted messages into a summary.
+    def _summarizer(self) -> Any:
+        """LLM used by the summary tier; the base buffer has none."""
+        return None
 
-        No-op here: the base buffer simply drops evicted messages. The agent
-        calls this before each `get()`.
+    def _default_strategies(self) -> list[CompactionStrategy]:
+        return default_strategies(summarizer=self._summarizer())
+
+    def _compaction_context(self, excess: int) -> CompactionContext:
+        return CompactionContext(
+            count=self._token_count_for_message,
+            tokenizer_fn=self.tokenizer_fn,
+            excess=excess,
+            budget=self._budget(),
+            summary=getattr(self, "summary", "") or "",
+        )
+
+    def _store_summary(self, summary: str) -> None:
+        """Hook for the summary buffer; the base buffer keeps no summary."""
+
+    def _local_estimate(self, messages: list[Message], summary: str = "") -> int:
+        """Local tokens of a request made of `messages` with `summary` in front."""
+        total = self._initial_token_count() + self.reserved_tokens + self._token_count_for_messages(messages)
+        if summary:
+            total += self._token_count_for_message(Message(role="assistant", content=summary)) + 12
+        return total
+
+    def compact(self) -> CompactionRecord | None:
+        """Rewrite the stored history so that the next request fits.
+
+        Runs the always-on tiers on every call, and the others only when the
+        next request would exceed `limit()`, cheapest first, until the history
+        is back under `target()`. A tier that raises is skipped (the sliding
+        window at the end always succeeds). Returns what was done, or None
+        when nothing changed. The agent calls it before each `get()`.
         """
+        if not self.messages:
+            return None
+        tiers = self.strategies if self.strategies is not None else self._default_strategies()
+        used = self.used_tokens()
+        over = used > self.limit()
+        excess = math.ceil((used - self.target()) / self.token_scale) if over else 0
+        ctx = self._compaction_context(excess)
+        before = list(self.messages)
+        messages = before
+        applied: list[str] = []
+        for tier in tiers:
+            if not over and not tier.always:
+                continue
+            if over and ctx.excess <= 0 and not tier.always:
+                break
+            try:
+                candidate = tier.compact(messages, ctx)
+            except Exception as e:  # noqa: BLE001 — a failing tier must not fail the run
+                logger.warning(f"Compaction tier '{tier.name}' failed, moving on to the next one: {e}")
+                continue
+            if candidate is messages:
+                continue
+            messages = candidate
+            applied.append(tier.name)
+            # Re-measure (a summary adds its own message to the window).
+            ctx.excess = self._local_estimate(messages, ctx.summary) - math.ceil(self.target() / self.token_scale)
+        self.usage.add(ctx.usage)
+        summary_changed = ctx.summary != (getattr(self, "summary", "") or "")
+        if summary_changed:
+            self._store_summary(ctx.summary)
+        if not applied and not summary_changed:
+            return None
+        originals = {id(m) for m in messages}
+        record = CompactionRecord(
+            strategies=applied,
+            messages_before=len(before),
+            messages_after=len(messages),
+            tokens_before=used,
+            tokens_after=0,
+            notes=ctx.notes,
+            removed=[m for m in before if id(m) not in originals],
+        )
+        self.messages = messages
+        self._invalidate_anchor()
+        record.tokens_after = self.used_tokens()
+        self.compactions.append(record)
+        del self.compactions[:-MAX_COMPACTION_RECORDS]
+        return record
 
-    async def acompact(self) -> None:
-        """Async variant of `compact()`. No-op here."""
+    async def acompact(self) -> CompactionRecord | None:
+        """Async variant of `compact()`: the (sync) LLM calls run in a worker thread."""
+        import asyncio
+
+        return await asyncio.to_thread(self.compact)
 
     # ------------------------------------------------------------------
     # Main API
@@ -466,8 +612,10 @@ class ChatMemoryBuffer(BaseChatMemory):
         start, anchor, token_count = self._prune(chat_history, budget)
 
         kept = chat_history[start:]
-        if anchor is not None and anchor < start:
-            kept = [chat_history[anchor]] + kept
+        pulled = protected_indexes(chat_history)
+        if anchor is not None:
+            pulled.add(anchor)
+        kept = [chat_history[index] for index in sorted(pulled) if index < start] + kept
         if summary_message is not None:
             kept = [summary_message] + kept
 

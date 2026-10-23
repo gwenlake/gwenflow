@@ -227,12 +227,15 @@ def test_summary_buffer_does_not_call_the_llm_when_clearing_is_enough():
             calls.append(input)
             return SimpleNamespace(content="summary", usage=None)
 
-    buf = ChatSummaryMemoryBuffer(token_limit=2500, tokenizer_fn=words, llm=SpyLLM())
+    # 8 reads of ~500 tokens: clearing the 5 oldest results (keep_pairs=3) frees
+    # ~2,400 tokens, enough to get from ~4,200 under the target (70 % of 3,600).
+    buf = ChatSummaryMemoryBuffer(token_limit=3600, tokenizer_fn=words, llm=SpyLLM())
     buf.add_messages([Message(role="user", content="earlier question"), Message(role="assistant", content="answer")])
     buf.add_messages(agent_history())
-    buf.compact()
+    record = buf.compact()
     assert calls == []
     assert buf.summary == ""
+    assert record.strategies == ["clear_tool_results"]
 
 
 # ---------------------------------------------------------------------------

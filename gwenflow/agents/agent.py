@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import math
 import re
 import threading
 import uuid
@@ -27,6 +28,8 @@ from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.llms.base import CONTEXT_SAFETY_RATIO
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
+from gwenflow.memory.chat_memory_buffer import DEFAULT_MAX_FRACTION
+from gwenflow.memory.compaction import PINNED_KEY, pin
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
@@ -226,7 +229,7 @@ class Agent:
             # Fraction of the window, resolved on every request against the
             # LLM actually called (see `_sync_context_window`).
             self.history = ChatSummaryMemoryBuffer(
-                max_fraction=CONTEXT_SAFETY_RATIO,
+                max_fraction=DEFAULT_MAX_FRACTION,
                 llm=summarizer,
             )
             self._sync_context_window()
@@ -393,12 +396,18 @@ class Agent:
         agent_response.finish_reason = "stop"
         return agent_response
 
-    def _compact_report(self, folded_before: int) -> str:
-        folded = self.history._summarized_upto - folded_before
-        if folded == 0:
+    def _compact_report(self, record: Any) -> str:
+        if record is None:
             return "Nothing to compact: the conversation fits in the context window."
-        summary_tokens = self.history.tokenizer_fn(self.history.summary)
-        return f"Compacted {folded} message(s) into the running summary (~{summary_tokens} tokens)."
+        report = (
+            f"Compacted the history ({', '.join(record.strategies)}): "
+            f"{record.messages_before} -> {record.messages_after} message(s), "
+            f"~{record.tokens_before:,} -> ~{record.tokens_after:,} tokens."
+        )
+        summary = getattr(self.history, "summary", "")
+        if summary and "summarize_older" in record.strategies:
+            report += f" Running summary: ~{self.history.tokenizer_fn(summary)} tokens."
+        return report
 
     def _execute_command(self, command: str, args: str = "") -> str:
         if command == "/help":
@@ -410,11 +419,7 @@ class Agent:
             self.history.reset()
             return f"History cleared ({removed} message(s) removed)."
         if command == "/compact":
-            if not hasattr(self.history, "_summarized_upto"):
-                return "This agent's memory does not support compaction (plain ChatMemoryBuffer)."
-            before = self.history._summarized_upto
-            self.history.compact()
-            return self._compact_report(before)
+            return self._compact_report(self.history.compact())
         if command == "/cost":
             return self._cost_report()
         if command == "/tools":
@@ -551,7 +556,7 @@ class Agent:
         summary_note = ""
         if hasattr(self.history, "summary"):
             self.history.summary = data.get("summary") or ""
-            self.history._summarized_upto = min(int(data.get("summarized_upto") or 0), len(messages))
+            self.history._summarized_upto = int(data.get("summarized_upto") or 0)
             if self.history.summary:
                 summary_note = ", summary restored"
         elif data.get("summary"):
@@ -598,10 +603,8 @@ class Agent:
         return "\n".join(lines)
 
     async def _aexecute_command(self, command: str, args: str = "") -> str:
-        if command == "/compact" and hasattr(self.history, "_summarized_upto"):
-            before = self.history._summarized_upto
-            await self.history.acompact()
-            return self._compact_report(before)
+        if command == "/compact":
+            return self._compact_report(await self.history.acompact())
         return self._execute_command(command, args)
 
     def tool(self, func: Callable) -> Callable:
@@ -810,6 +813,22 @@ class Agent:
         self.history.reserved_tokens = self._tools_token_count()
         self._sync_context_window()
 
+    def _pin_task(self, messages: List[Message]) -> None:
+        """Pin the task of this run so that no compaction removes it.
+
+        The pin of the previous run's task is released: the first user message
+        of the history is protected on its own, and the running summary
+        covers the rest.
+        """
+        for message in self.history.messages:
+            if message.extra.get("pinned_by") == "agent":
+                message.extra.pop(PINNED_KEY, None)
+                message.extra.pop("pinned_by", None)
+        for message in reversed(messages):
+            if message.role == "user":
+                pin(message).extra["pinned_by"] = "agent"
+                break
+
     def _sync_context_window(self) -> None:
         """Tell the history the context window of the LLM about to be called.
 
@@ -823,8 +842,9 @@ class Agent:
             info = info_fn()
         if isinstance(info, ContextWindowInfo):
             window, resolved = info.tokens, info.resolved
-        else:  # a stub (test double, custom class): read its context size instead
-            window, resolved = round(self.llm.get_context_size() / CONTEXT_SAFETY_RATIO), True
+        else:  # a stub (test double, custom class): its context size is the budget itself
+            fraction = self.history.max_fraction or CONTEXT_SAFETY_RATIO
+            window, resolved = math.ceil(self.llm.get_context_size() / fraction), True
         self.history.context_window = window
         self.history.context_window_resolved = resolved
 
@@ -1138,6 +1158,7 @@ class Agent:
 
         # history
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         # add reasoning
@@ -1309,6 +1330,7 @@ class Agent:
         )
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -1478,6 +1500,7 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -1661,6 +1684,7 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
