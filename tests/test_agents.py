@@ -386,14 +386,23 @@ def test_tool_loop_never_sends_a_task_less_prompt():
 
 
 def test_tool_loop_window_stays_bounded():
-    """The window must still slide — keeping everything would defeat the buffer."""
+    """The window must still shrink — keeping everything would defeat the buffer.
+
+    Pass 0 keeps every message (the task and each call stay visible) but replaces
+    the oldest tool results by a one-line stub, so the bound is on tokens, not on
+    the message count.
+    """
     llm, captured = _capturing_llm(context_size=1200, tool_turns=6)
     agent = Agent(name="analyst", instructions="Be terse.", llm=llm, tools=[BigSearchTool()])
 
     agent.run("Analyse the French cloud market.")
 
-    # Without pruning the last turn would carry 1 user + 6*(assistant+tool) = 13 messages
-    assert len(captured[-1]) < 13
+    last = captured[-1]
+    count = agent.history.tokenizer_fn
+    assert sum(count(str(m.get("content") or "")) for m in last) <= 1200
+    # Without clearing the last turn would carry 6 full search results (~300 tokens each)
+    full = [m for m in last if m["role"] == "tool" and str(m["content"]).startswith("RESULTS for")]
+    assert 0 < len(full) < 6
 
 
 def test_streaming_tool_loop_never_sends_a_task_less_prompt():

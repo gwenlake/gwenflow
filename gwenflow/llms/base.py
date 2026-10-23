@@ -4,11 +4,56 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from gwenflow.llms.models import MODELS
-from gwenflow.tools import Tool
+from gwenflow.llms.models import MODELS, ModelInfo
+from gwenflow.logger import logger
+from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ModelResponse, ThinkingContent
 
 DEFAULT_CONTEXT_SIZE = 128000
+
+CONTEXT_SAFETY_RATIO = 0.75
+"""Share of the context window the agent lets its history use; the rest is left
+for the model's answer and for estimation errors."""
+
+_MODEL_NAME_SEPARATORS = "-_:@"
+_warned_unknown_models: set[str] = set()
+
+# Case-insensitive view of the table, built once: every comparison below is
+# done on lowercase names, whatever the casing of the key or the request.
+_MODELS_LOWER: dict[str, ModelInfo] = {key.lower(): info for key, info in MODELS.items()}
+
+
+def normalize_model_name(model: str) -> str:
+    """Lowercase a model id and strip any provider / organisation prefix.
+
+    `Qwen/Qwen3.6-35B-A3B` -> `qwen3.6-35b-a3b`, `GPT-5-Mini` -> `gpt-5-mini`.
+    """
+    return model.strip().lower().rsplit("/", 1)[-1]
+
+
+def lookup_model_info(model: str) -> Optional[ModelInfo]:
+    """Find a model in `MODELS`, tolerating the names inference servers use.
+
+    Matching ignores case throughout. Tries, in order: the name lowercased and
+    stripped of any provider / organisation prefix (`Qwen/Qwen3.6-35B-A3B` ->
+    `qwen3.6-35b-a3b`); then the longest known name the model id starts with,
+    followed by a separator (`mistral-small-3.2-24b-instruct-2506` ->
+    `mistral-small-3.2-24b`). A dot is not a separator, so `gpt-5.7` never
+    falls back on `gpt-5`.
+    """
+    if not model:
+        return None
+    name = normalize_model_name(model)
+    if name in _MODELS_LOWER:
+        return _MODELS_LOWER[name]
+    matches = [
+        key
+        for key in _MODELS_LOWER
+        if name.startswith(key) and len(name) > len(key) and name[len(key)] in _MODEL_NAME_SEPARATORS
+    ]
+    if matches:
+        return _MODELS_LOWER[max(matches, key=len)]
+    return None
 
 
 @dataclass(kw_only=True)
@@ -19,13 +64,19 @@ class ChatBase(ABC):
     system_prompt: Optional[str] = None
     """The system prompt to use when invoking the LLM."""
 
-    tools: List[Tool] = field(default_factory=list)
+    tools: List[BaseTool] = field(default_factory=list)
     """A list of tools that the LLM can use."""
 
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     tool_type: str = "fncall"
 
     provider: Optional[str] = None
+
+    context_window: Optional[Union[int, str]] = None
+    """Context window of the model, in tokens. None looks the model up in
+    `MODELS`; an int overrides it (a vLLM server started with a smaller
+    `--max-model-len`, a model missing from the table); "auto" asks the
+    server (see `discover_context_window`) and falls back on the table."""
 
     def _forced_tool_name(self) -> Optional[str]:
         """Name of the tool a named `tool_choice` forces, or None.
@@ -61,11 +112,37 @@ class ChatBase(ABC):
             await async_client.close()
             self.async_client = None
 
+    def discover_context_window(self) -> Optional[int]:
+        """Ask the provider for the model's context window. None if unsupported."""
+        return None
+
+    def resolve_context_window(self) -> int:
+        """Context window of the model, in tokens (see `context_window`)."""
+        if isinstance(self.context_window, int) and self.context_window > 0:
+            return self.context_window
+        if self.context_window == "auto":
+            discovered = self.discover_context_window()
+            if discovered:
+                self.context_window = discovered  # cache: ask the server once
+                return discovered
+        info = lookup_model_info(self.model)
+        if info is not None:
+            return info["context_window"]
+        if self.model not in _warned_unknown_models:
+            _warned_unknown_models.add(self.model)
+            logger.warning(
+                f"Unknown context window for model '{self.model}': assuming {DEFAULT_CONTEXT_SIZE:,} tokens. "
+                f"Pass context_window=<tokens> (or 'auto' for a vLLM-compatible server) if that is wrong."
+            )
+        return DEFAULT_CONTEXT_SIZE
+
     def get_context_size(self) -> int:
-        return int(MODELS.get(self.model, {}).get("context_window", DEFAULT_CONTEXT_SIZE) * 0.75)
+        """Token budget for the agent's history: the window minus a safety margin."""
+        return int(self.resolve_context_window() * CONTEXT_SAFETY_RATIO)
 
     def get_reasoning_model(self) -> str:
-        return MODELS.get(self.model, {}).get("reasoning", False)
+        info = lookup_model_info(self.model)
+        return info["reasoning"] if info is not None else False
 
     def get_thinking_parts(self, response: ModelResponse) -> Optional[List[ThinkingContent]]:
         """Thinking parts to attach to the assistant Message for echo-back.

@@ -149,7 +149,7 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
         if not new_summary:
             logger.warning("History compaction returned an empty summary, will retry on next compact().")
             return False
-        max_summary_tokens = int(MAX_SUMMARY_CONTENT * self.token_limit)
+        max_summary_tokens = int(MAX_SUMMARY_CONTENT * self._effective_token_limit())
         self.summary = keep_tokens_from_text(
             new_summary, token_limit=max_summary_tokens, tokenizer_fn=self.tokenizer_fn
         )

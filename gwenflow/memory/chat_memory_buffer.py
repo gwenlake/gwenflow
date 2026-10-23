@@ -1,4 +1,5 @@
 import copy
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,12 +12,28 @@ DEFAULT_TOKEN_LIMIT = 8192
 DEFAULT_TOKEN_LIMIT_RATIO = 0.75
 MAX_MESSAGE_CONTENT = 0.5
 
+# Calibration of the local token estimate against the provider's real count.
+MIN_TOKEN_SCALE = 0.7
+MAX_TOKEN_SCALE = 4.0
+MIN_CALIBRATION_TOKENS = 256
+TOKEN_SCALE_DECAY = 0.8
+
+CLEARED_TOOL_RESULT = (
+    "[Result of {call} removed to free context ({tokens} tokens). Call the tool again if you still need it.]"
+)
+DUPLICATE_TOOL_RESULT = "[Same call as a later {call}: result removed, see the more recent one.]"
+
 
 @dataclass
 class ChatMemoryBuffer(BaseChatMemory):
     """Sliding-window memory that keeps the most recent messages within a token budget.
 
-    Three-pass strategy:
+    Four-pass strategy (each pass only runs if the previous ones did not fit):
+      0. Lighten tool results — cheap and model-free. Results of a call that is
+         repeated later (same tool, same arguments) are replaced by a stub; then
+         the oldest results outside the `keep_recent_tool_results` most recent
+         are replaced by a one-line stub, oldest first, until the window fits.
+         The call itself stays visible, so the model knows it can call again.
       1. Pre-filter: any single message exceeding `MAX_MESSAGE_CONTENT * token_limit`
          has its TEXT parts truncated — on a copy, never on the stored history.
          Multi-modal parts (image/audio/file) and thinking_parts are left intact —
@@ -46,6 +63,18 @@ class ChatMemoryBuffer(BaseChatMemory):
     provider sends alongside every call. Not knowing about them made the buffer
     believe it was under budget while the request overflowed. The agent refreshes
     this at the start of each run."""
+
+    token_scale: float = 1.0
+    """Ratio between the provider's real prompt token count and the local
+    estimate (tiktoken's cl100k_base, which under-counts for the Mistral, Qwen
+    or Gemma tokenizers, especially on French, JSON or code). The agent feeds it
+    through `observe_prompt_tokens()` after each call; the budget is divided by it."""
+
+    keep_recent_tool_results: int = 3
+    """Tool results that pass 0 never clears (the most recent ones)."""
+
+    min_cleared_tool_result_tokens: int = 200
+    """Tool results smaller than this are not worth clearing."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -106,6 +135,110 @@ class ChatMemoryBuffer(BaseChatMemory):
         return [Message(role="system", content=self.system_prompt)] + messages
 
     # ------------------------------------------------------------------
+    # Calibration against the provider's token count
+    # ------------------------------------------------------------------
+
+    def _effective_token_limit(self) -> int:
+        """`token_limit` expressed in local-estimate tokens."""
+        return int(self.token_limit / self.token_scale)
+
+    def observe_prompt_tokens(self, window: list[Message], actual_tokens: int) -> None:
+        """Calibrate the local estimate with the prompt tokens the provider billed.
+
+        `window` is the list `get()` returned for that call (system prompt
+        included); the tool schemas are added through `reserved_tokens`. An
+        under-estimate is corrected at once (the next call must not overflow);
+        an over-estimate is relaxed slowly.
+        """
+        if not actual_tokens or actual_tokens <= 0:
+            return
+        estimated = self._token_count_for_messages(window) + self.reserved_tokens
+        if estimated < MIN_CALIBRATION_TOKENS:
+            return  # too small to say anything about the tokenizer
+        ratio = min(max(actual_tokens / estimated, MIN_TOKEN_SCALE), MAX_TOKEN_SCALE)
+        if ratio > self.token_scale:
+            self.token_scale = ratio
+        else:
+            self.token_scale = TOKEN_SCALE_DECAY * self.token_scale + (1 - TOKEN_SCALE_DECAY) * ratio
+
+    # ------------------------------------------------------------------
+    # Pass 0: lighten tool results
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tool_calls_by_id(chat_history: list[Message]) -> dict[str, tuple[str, str]]:
+        """Map each tool_call_id to `(tool name, arguments)` from the assistant turns."""
+        calls: dict[str, tuple[str, str]] = {}
+        for message in chat_history:
+            for tool_call in message.tool_calls or []:
+                function = tool_call.get("function") or {}
+                name = function.get("name") or tool_call.get("name") or "tool"
+                arguments = function.get("arguments", tool_call.get("arguments", ""))
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments, sort_keys=True, default=str)
+                if tool_call.get("id"):
+                    calls[tool_call["id"]] = (name, arguments)
+        return calls
+
+    @staticmethod
+    def _describe_call(name: str, arguments: str, max_chars: int = 120) -> str:
+        if len(arguments) > max_chars:
+            arguments = arguments[:max_chars] + "..."
+        return f"{name}({arguments})"
+
+    def _stub(self, message: Message, text: str) -> Message:
+        stub = copy.copy(message)
+        stub.content = text
+        return stub
+
+    def _lighten_tool_results(self, chat_history: list[Message], budget: int) -> list[Message]:
+        """Pass 0: replace dispensable tool results by stubs, on copies.
+
+        Runs only when the history does not fit. First the results of calls
+        repeated later with the same arguments (a file read twice...), then the
+        oldest results beyond the `keep_recent_tool_results` most recent, oldest
+        first, until the history fits. Never touches the stored history.
+        """
+        counts = [self._token_count_for_message(m) for m in chat_history]
+        total = sum(counts)
+        if total <= budget:
+            return chat_history
+
+        calls = self._tool_calls_by_id(chat_history)
+        tool_indexes = [i for i, m in enumerate(chat_history) if m.role == "tool" and m.tool_call_id in calls]
+
+        def replace(index: int, text: str) -> None:
+            nonlocal total
+            stub = self._stub(chat_history[index], text)
+            stub_count = self._token_count_for_message(stub)
+            total -= counts[index] - stub_count
+            counts[index] = stub_count
+            chat_history[index] = stub
+
+        # a) duplicates: keep only the most recent result of an identical call
+        seen: set[tuple[str, str]] = set()
+        for index in reversed(tool_indexes):
+            key = calls[chat_history[index].tool_call_id]
+            if key in seen and counts[index] >= self.min_cleared_tool_result_tokens:
+                replace(index, DUPLICATE_TOOL_RESULT.format(call=self._describe_call(*key)))
+            seen.add(key)
+
+        # b) old results, oldest first, until the history fits
+        keep = max(self.keep_recent_tool_results, 0)
+        candidates = tool_indexes[:-keep] if keep else tool_indexes
+        for index in candidates:
+            if total <= budget:
+                break
+            if counts[index] < self.min_cleared_tool_result_tokens:
+                continue
+            name, arguments = calls[chat_history[index].tool_call_id]
+            replace(
+                index,
+                CLEARED_TOOL_RESULT.format(call=self._describe_call(name, arguments), tokens=counts[index]),
+            )
+        return chat_history
+
+    # ------------------------------------------------------------------
     # Window computation (shared by get() and subclass compaction)
     # ------------------------------------------------------------------
 
@@ -115,29 +248,31 @@ class ChatMemoryBuffer(BaseChatMemory):
         `token_limit` minus the system prompt, the reserved (tool schema)
         tokens, and the summary message if a subclass maintains one.
         """
+        token_limit = self._effective_token_limit()
         initial_token_count = self._initial_token_count()
-        if initial_token_count > self.token_limit:
+        if initial_token_count > token_limit:
             raise ValueError("Initial token count exceeds token limit")
 
-        budget = self.token_limit - initial_token_count - self.reserved_tokens
+        budget = token_limit - initial_token_count - self.reserved_tokens
         summary_message = self._summary_message()
         if summary_message is not None:
             budget -= self._token_count_for_message(summary_message)
         if budget <= 0:
             logger.warning(
                 f"System prompt, tool schemas and summary fill the whole context "
-                f"({self.token_limit - budget} of {self.token_limit} tokens): "
+                f"({token_limit - budget} of {token_limit} tokens): "
                 f"no room left for the conversation."
             )
             budget = 0
         return budget
 
     def _clamp_history(self, chat_history: list[Message], budget: int) -> list[Message]:
-        """Pass 1: clamp very large individual messages (text-only effect).
+        """Passes 0 and 1: lighten tool results, then clamp large messages.
 
-        Works on copies: the stored history is never mutated, and a
+        Clamping only shortens text. Works on copies: the stored history is never mutated, and a
         non-positive limit (budget exhausted) never wipes every message.
         """
+        chat_history = self._lighten_tool_results(chat_history, budget)
         per_message_limit = int(MAX_MESSAGE_CONTENT * budget)
         if per_message_limit <= 0:
             return chat_history

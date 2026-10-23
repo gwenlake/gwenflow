@@ -47,8 +47,11 @@ from gwenflow.types import (
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
+from gwenflow.utils.tokens import keep_tokens_from_text
 
 FINAL_RESULT_TOOL = "final_result"
+READ_TOOL_OUTPUT = "read_tool_output"
+MAX_STORED_TOOL_OUTPUTS = 50
 
 
 @dataclass(kw_only=True)
@@ -154,6 +157,16 @@ class Agent:
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
+    max_tool_output_tokens: Optional[int] = None
+    """Cap on a single tool result. A longer result is stored aside: the model
+    gets its beginning plus a reference, and a `read_tool_output` tool to page
+    through the rest — instead of one grep or file read filling the context.
+    None (default) keeps results whole."""
+
+    _tool_outputs: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    """Full tool results set aside by `max_tool_output_tokens`, by reference.
+    Shared with clones, so a handoff's references stay readable."""
+
     skills: List[Skill] = field(default_factory=list)
 
     memory: Optional[MemoryToolset] = None
@@ -215,6 +228,8 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+        if self.max_tool_output_tokens and not any(t.name == READ_TOOL_OUTPUT for t in self.tools):
+            self.tools = list(self.tools) + [self._tool_output_reader()]
         if self.memory:
             self.tools = list(self.tools) + self.memory.get_tools()
         if self.team:
@@ -931,6 +946,59 @@ class Agent:
         return tools
 
     @tracer.tool(name="Tool Call")
+    def _calibrate_history(self, window: List[Message], usage: Any) -> None:
+        """Feed the provider's real prompt token count back to the memory buffer."""
+        observe = getattr(self.history, "observe_prompt_tokens", None)
+        actual = getattr(usage, "input_tokens", 0) if usage is not None else 0
+        if observe is not None and actual:
+            observe(window, actual)
+
+    def _tool_output_reader(self) -> Tool:
+        store = self._tool_outputs
+        default_length = (self.max_tool_output_tokens or 1000) * 4
+
+        def read_tool_output(ref: str, offset: int = 0, length: int = default_length) -> str:
+            """Read part of a long tool result that was set aside.
+
+            Args:
+                ref: The reference given in the truncated result.
+                offset: Character offset to start reading from.
+                length: Number of characters to read.
+            """
+            text = store.get(ref)
+            if text is None:
+                return f"Unknown reference '{ref}'."
+            offset = max(int(offset or 0), 0)
+            length = min(max(int(length or default_length), 1), default_length)
+            chunk = text[offset : offset + length]
+            end = offset + len(chunk)
+            if end < len(text):
+                chunk += f"\n[{end} of {len(text)} characters read; continue with offset={end}]"
+            else:
+                chunk += f"\n[end of output, {len(text)} characters]"
+            return chunk
+
+        return Tool(read_tool_output)
+
+    def _set_aside_long_output(self, tool_name: str, content: str) -> str:
+        """Apply `max_tool_output_tokens` to one tool result."""
+        limit = self.max_tool_output_tokens
+        if not limit or tool_name == READ_TOOL_OUTPUT or not content:
+            return content
+        tokenizer_fn = self.history.tokenizer_fn
+        total = tokenizer_fn(content)
+        if total <= limit:
+            return content
+        ref = f"out_{uuid.uuid4().hex[:8]}"
+        self._tool_outputs[ref] = content
+        while len(self._tool_outputs) > MAX_STORED_TOOL_OUTPUTS:
+            self._tool_outputs.pop(next(iter(self._tool_outputs)))
+        head = keep_tokens_from_text(content, token_limit=limit, tokenizer_fn=tokenizer_fn)
+        return (
+            f"{head}\n[Output truncated: {total} tokens in total, {len(content)} characters. "
+            f"Read the rest with {READ_TOOL_OUTPUT}(ref='{ref}', offset={len(head)}).]"
+        )
+
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
@@ -985,6 +1053,7 @@ class Agent:
             tool_execution.content = result
         else:
             tool_execution.content = str(result)
+        tool_execution.content = self._set_aside_long_output(tool_call.name, tool_execution.content)
         return tool_execution.to_message()
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
@@ -1061,7 +1130,8 @@ class Agent:
 
             # format messages
             self.history.compact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
@@ -1069,6 +1139,7 @@ class Agent:
 
             # usage
             agent_response.usage.add(response.usage)
+            self._calibrate_history(window, response.usage)
 
             # native thinking from the main LLM call
             if response.thinking:
@@ -1228,13 +1299,15 @@ class Agent:
             self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             response = await self.llm.ainvoke(input=messages_for_model)
             self._absorb_answer_tool_call(response)
 
             # usage
             agent_response.usage.add(response.usage)
+            self._calibrate_history(window, response.usage)
 
             if response.thinking:
                 if agent_response.reasoning_content:
@@ -1392,7 +1465,8 @@ class Agent:
             self._configure_llm_for_turn(structured=force_structured)
 
             self.history.compact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             full_content = ""
             full_thinking = ""
@@ -1432,6 +1506,7 @@ class Agent:
                 turn_response.parts.extend(chunk.parts)
 
             agent_response.usage.add(turn_usage)
+            self._calibrate_history(window, turn_usage)
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:
@@ -1573,7 +1648,8 @@ class Agent:
             self._configure_llm_for_turn(structured=force_structured)
 
             await self.history.acompact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             full_content = ""
             full_thinking = ""
@@ -1610,6 +1686,7 @@ class Agent:
                 turn_response.parts.extend(chunk.parts)
 
             agent_response.usage.add(turn_usage)
+            self._calibrate_history(window, turn_usage)
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:

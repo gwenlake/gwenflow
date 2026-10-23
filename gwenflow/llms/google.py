@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.types import (
     AudioContent,
     FileContent,
@@ -151,7 +151,7 @@ class ChatGoogle(ChatBase):
 
         return gt.GenerateContentConfig(**config_kwargs)
 
-    def _tool_to_google(self, tool: Tool) -> gt.FunctionDeclaration:
+    def _tool_to_google(self, tool: BaseTool) -> gt.FunctionDeclaration:
         return gt.FunctionDeclaration(
             name=tool.name,
             description=tool.description or "",

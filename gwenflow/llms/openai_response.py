@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
@@ -106,7 +106,7 @@ class ResponseOpenAI(ChatBase):
 
         return {k: v for k, v in model_params.items() if v is not None}
 
-    def _tool_to_responses(self, tool: Tool) -> Dict[str, Any]:
+    def _tool_to_responses(self, tool: BaseTool) -> Dict[str, Any]:
         """Responses-API function tool format (flat, no nested 'function' key)."""
         return {
             "type": "function",

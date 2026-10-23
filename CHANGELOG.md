@@ -4,6 +4,54 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ChatOpenAI._parse_response` (and so `ChatGwenlake`, `ChatDeepSeek`, `ChatOllama`...)
+  crashed with `AttributeError: 'ReadFileTool' object has no attribute 'get'` whenever
+  the model answered in plain text while tools that inherit `BaseTool` but not `Tool`
+  were on offer — every `CodingAgent` run. The text-tool-call recovery now accepts any
+  `BaseTool`. Only the OpenAI family had the bug (the other providers have no text
+  recovery); every provider now types its tools as `BaseTool`, and
+  `tests/test_llm_base_tools.py` pins schema building and plain-text parsing with
+  BaseTool subclasses on offer for all nine LLM classes.
+- The context window of a model served under another name was silently the 128k
+  default: `lookup_model_info` now strips provider / organisation prefixes, ignores
+  case and falls back on the longest known name followed by a separator
+  (`mistral-small-3.2-24b-instruct-2506` -> `mistral-small-3.2-24b`). Matching ignores
+  case end to end (`qwen/qwen3.6-35B-A3B` -> `qwen3.6-35b-a3b`), and a test pins the
+  table keys to lowercase. An unknown model logs a warning once.
+- `MODELS` refreshed (2026-10-23): GPT-6 Astra / Sol / Luna and GPT-6.1 Sol, Claude
+  Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and Mythos 5.1, Gemini 4 Argon, 3.8 Flash,
+  3.6 Flash and 3.5 Flash-Lite, DeepSeek `deepseek-flash` / `deepseek-v4.1-flash` (dated
+  builds such as `deepseek-v4-flash-0731` resolve through the prefix rule), Grok 4.6 and
+  4.7, Mistral Large 4 (`mistral-large-4`), the Mistral `-latest` aliases, GLM 5.3 / 5.3
+  Flash / 5.3 FlashX (Z.ai and via Mistral),
+  Qwen3.8 Max / Flash and the Qwen3.8 open weights (27B, Flash-Next, 2.4T-A95B). Mistral
+  windows and reasoning flags now match the `/v1/models` listing: Medium 3.5, Small 4
+  and Ministral 14B / 8B are 262,144 tokens, Medium 3.5 and Small 4 are reasoning models.
+
+### Added
+
+- `context_window` on every LLM: an int overrides the table (a vLLM server started
+  with a smaller `--max-model-len`), `"auto"` reads it from the server's `/models`
+  listing (`max_model_len`, `context_length` or `context_window`) on OpenAI-compatible
+  clients and falls back on the table.
+- Token calibration: after each call the agent hands the provider's real prompt token
+  count to the memory buffer (`observe_prompt_tokens`), which scales its budget
+  (`token_scale`). tiktoken's `cl100k_base` under-counts for Mistral, Qwen or Gemma,
+  so the history overflowed before compaction kicked in.
+- Pass 0 of `ChatMemoryBuffer`, model-free and only when the history does not fit:
+  results of a call repeated later with the same arguments are replaced by a stub,
+  then the oldest tool results beyond `keep_recent_tool_results` (3) are replaced by
+  a one-line stub naming the call, oldest first, until the window fits. It also
+  works inside the live turn, where the summary never applies, and it spares
+  `ChatSummaryMemoryBuffer` an LLM call whenever clearing is enough.
+- `Agent.max_tool_output_tokens`: a longer tool result is set aside; the model gets
+  its beginning, a reference and a `read_tool_output(ref, offset, length)` tool to
+  page through the rest. Off by default.
+
 ## [1.3.0] — 2026-10-12
 
 ### Added

@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.types import (
     FileContent,
     ImageContent,
@@ -127,7 +127,7 @@ class ChatMistral(ChatBase):
 
         return {k: v for k, v in model_params.items() if v is not None}
 
-    def _tool_to_mistral(self, tool: Tool) -> Dict[str, Any]:
+    def _tool_to_mistral(self, tool: BaseTool) -> Dict[str, Any]:
         return {
             "type": "function",
             "function": {
