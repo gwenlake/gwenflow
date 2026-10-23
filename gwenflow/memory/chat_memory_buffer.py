@@ -13,6 +13,8 @@ from gwenflow.memory.compaction import (
     default_strategies,
     protected_indexes,
 )
+from gwenflow.telemetry import _semconv as sc
+from gwenflow.telemetry import tracer
 from gwenflow.types import AgentUsage, ContextUsage, Message, TextContent
 from gwenflow.utils.tokens import keep_tokens_from_text
 
@@ -542,9 +544,23 @@ class ChatMemoryBuffer(BaseChatMemory):
         """
         if not self.messages:
             return None
-        tiers = self.strategies if self.strategies is not None else self._default_strategies()
         used = self.used_tokens()
         over = used > self.limit()
+        if not over:
+            return self._compact_now(used, over=False)
+        with tracer.span("compact_messages") as span:
+            record = self._compact_now(used, over=True)
+            if record is not None:
+                span.set_attribute(sc.COMPACTION_STRATEGIES, record.strategies)
+                span.set_attribute(sc.COMPACTION_MESSAGES_BEFORE, record.messages_before)
+                span.set_attribute(sc.COMPACTION_MESSAGES_AFTER, record.messages_after)
+                span.set_attribute(sc.COMPACTION_TOKENS_BEFORE, record.tokens_before)
+                span.set_attribute(sc.COMPACTION_TOKENS_AFTER, record.tokens_after)
+                span.set_attribute(sc.COMPACTION_NOTES, record.notes)
+            return record
+
+    def _compact_now(self, used: int, over: bool) -> CompactionRecord | None:
+        tiers = self.strategies if self.strategies is not None else self._default_strategies()
         excess = math.ceil((used - self.target()) / self.token_scale) if over else 0
         ctx = self._compaction_context(excess)
         before = list(self.messages)

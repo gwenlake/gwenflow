@@ -103,6 +103,11 @@ def _update_stream_state(chunk: Any, content: str, tool_calls: Any) -> tuple[str
     return content, tool_calls
 
 
+class _NoopSpan:
+    def set_attribute(self, key: str, value: Any) -> None:
+        pass
+
+
 class DecoratorTracer:
     def __init__(self, tracer_name: str = "gwenflow"):
         self.tracer_name = tracer_name
@@ -128,6 +133,33 @@ class DecoratorTracer:
         finally:
             _telemetry_context.set(prev)
             restore_baggage()
+
+    @contextmanager
+    def span(self, name: str, kind: str = sc.SPAN_KIND_CHAIN):
+        """A plain span around a block of code, a no-op when tracing is off.
+
+        Yields an object with `set_attribute(key, value)`; errors raised in
+        the block are recorded on the span and re-raised.
+        """
+        if not is_tracing_enabled() or _suppressed():
+            yield _NoopSpan()
+            return
+        from opentelemetry import context as otel_context
+        from opentelemetry import trace
+
+        span = self._get_tracer().start_span(name)
+        token = otel_context.attach(trace.set_span_in_context(span))
+        try:
+            span.set_attribute(sc.OPENINFERENCE_SPAN_KIND, kind)
+            self._apply_context(span)
+            yield span
+            self._ok(span)
+        except Exception as e:
+            self._error(span, e)
+            raise
+        finally:
+            otel_context.detach(token)
+            span.end()
 
     @contextmanager
     def suppress(self):

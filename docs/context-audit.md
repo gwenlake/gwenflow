@@ -100,3 +100,19 @@ from a high threshold down to a lower target, and persist the rewrite
 - A summarizer that returns an empty summary is retried on every `compact()`
   with no cap: one wasted LLM call per turn for the rest of the session
   (`test_empty_summary_is_retried_a_bounded_number_of_times`, step 3).
+
+## Resolution
+
+| Finding | Fixed by |
+|---|---|
+| 1. budget frozen at construction, no fallback window | step 1: `max_fraction` resolved per request on the LLM called, `fallback_context_window`, `context_window_info()` |
+| 3. tokenizer error changes sign with the content | step 1: usage anchored on the provider's last `input + output` tokens, only new messages estimated; `hf_tokenizer()` |
+| 4. live turn never summarized, notes lost | step 2: `SummarizeOlder` works inside the live turn, recent tail kept; step 3: better transcript and incremental summary |
+| 6. task lost after a validation retry | step 2: first and last user messages protected, the run's task pinned by the agent |
+| 7. prefix changes on every request | step 2: compaction persisted in batches from the trigger (85 %) down to the target (70 % of the limit) |
+| 8. summary usage outside the run, empty summary retried forever | step 3: `drain_usage()` folds it into the run, one retry then the sliding window |
+| 5. pairing (already correct) | step 2: guaranteed by construction (`tool_groups`), `validate_tool_pairs` in every strategy test |
+
+`tests/test_context_audit.py` keeps every finding as a passing test; the only
+documented defect left is the on-the-fly path of `get()` used without
+`compact()`, which is the last resort and not what the agent does.

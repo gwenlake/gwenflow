@@ -109,6 +109,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Agent.total_usage` of the run that triggered them (`/cost` shows the compaction
   block as a breakdown, "included above"), and a delegated worker's compaction is no
   longer counted twice.
+- Observability. `Agent.context_usage()` / `ChatMemoryBuffer.context_usage()` return a
+  `ContextUsage` (tokens used, window, limit, fraction, whether the window is known,
+  whether the count is anchored on the provider); `Agent(on_context_usage=...)` is
+  called with it before every request. `Agent(warn_near_limits=True)` adds a
+  request-scoped "Context notice" to the system prompt when `warning_threshold` of the
+  budget or of `max_turns` is reached (URGENT) and when compaction is imminent or
+  `critical_remaining_turns` are left (CRITICAL), so the model concludes instead of
+  seeing its history rewritten; nothing is written in the history. Each compaction
+  that triggers emits a `compact_messages` span with the strategies applied and the
+  message and token counts before and after, never the content
+  (`tracer.span(name)` is the generic helper behind it).
 
 ## [1.3.0] — 2026-10-12
 

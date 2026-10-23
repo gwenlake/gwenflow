@@ -170,6 +170,19 @@ class Agent:
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
+    warn_near_limits: bool = False
+    """Tell the model, in the system prompt of the request, when the run is
+    close to a limit: `warning_threshold` of the context budget or of
+    `max_turns` (URGENT), compaction imminent or `critical_remaining_turns`
+    left (CRITICAL). Request-scoped: nothing is written in the history."""
+
+    warning_threshold: float = 0.7
+    critical_remaining_turns: int = 3
+
+    on_context_usage: Optional[Callable[[ContextUsage], None]] = None
+    """Called before every request with the size of the history against the
+    model's window (see `ContextUsage`)."""
+
     max_tool_output_tokens: Optional[int] = None
     """Cap on a single tool result. A longer result is stored aside: the model
     gets its beginning plus a reference, and a `read_tool_output` tool to page
@@ -817,9 +830,50 @@ class Agent:
 
         The system prompt and the tool schemas sent alongside every request.
         """
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._base_system_prompt = self.get_system_prompt(task=task, context=context)
+        self.history.system_prompt = self._base_system_prompt
         self.history.reserved_tokens = self._tools_token_count()
         self._sync_context_window()
+
+    _base_system_prompt: str = field(default="", init=False, repr=False)
+
+    def _limit_warning(self, usage: ContextUsage, turns_left: int) -> Optional[str]:
+        """The context notice for this request, or None when nothing is close."""
+        if not self.warn_near_limits:
+            return None
+        lines: list[str] = []
+        budget_fraction = usage.used_tokens / usage.limit_tokens if usage.limit_tokens else 0.0
+        if budget_fraction >= 1.0:
+            lines.append(
+                f"[CRITICAL] The context budget is exhausted ({usage.fraction:.0%} of the window): older messages "
+                "are being compacted. Conclude: give your final answer now."
+            )
+        elif budget_fraction >= self.warning_threshold:
+            lines.append(
+                f"[URGENT] {usage.fraction:.0%} of the context window is used; older messages will be compacted "
+                "soon. Wrap up the task and give your final answer."
+            )
+        if self.max_turns:
+            if turns_left <= self.critical_remaining_turns:
+                lines.append(
+                    f"[CRITICAL] {turns_left} turn(s) left before the run stops without an answer. "
+                    "Give your final answer now."
+                )
+            elif 1 - turns_left / self.max_turns >= self.warning_threshold:
+                lines.append(f"[URGENT] {turns_left} of {self.max_turns} turns left. Wrap up and answer.")
+        if not lines:
+            return None
+        return "## Context notice\n\n" + "\n".join(lines)
+
+    def _before_request(self, turns_left: int) -> None:
+        """Per-request bookkeeping: window sync, usage report, limit notice."""
+        self._sync_context_window()
+        usage = self.history.context_usage()
+        if self.on_context_usage is not None:
+            self.on_context_usage(usage)
+        warning = self._limit_warning(usage, turns_left)
+        base = self._base_system_prompt or self.history.system_prompt or ""
+        self.history.system_prompt = f"{base}\n\n{warning}".strip() if warning else base
 
     def _pin_task(self, messages: List[Message]) -> None:
         """Pin the task of this run so that no compaction removes it.
@@ -1194,6 +1248,7 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             # format messages
             self.history.compact()
@@ -1368,6 +1423,7 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             await self.history.acompact()
             window = self.history.get()
@@ -1538,6 +1594,7 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             self.history.compact()
             window = self.history.get()
@@ -1725,6 +1782,7 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             await self.history.acompact()
             window = self.history.get()
