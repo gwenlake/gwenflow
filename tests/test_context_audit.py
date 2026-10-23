@@ -351,21 +351,29 @@ def sent_prefix(buf: ChatMemoryBuffer) -> list[str]:
     return prefix
 
 
-@pytest.mark.xfail(strict=True, reason="the clearing frontier advances one result per request (step 2: hysteresis)")
 def test_prefix_is_stable_between_two_compaction_batches():
-    """Wanted: consecutive requests keep an identical prefix until the next batch."""
+    """Consecutive requests keep an identical prefix until the next batch (fixed in step 2).
+
+    `compact()` before `get()`, as the agent does: the persisted batch goes
+    well under the limit, so the next requests change nothing.
+    """
     buf = ChatMemoryBuffer(token_limit=1800, tokenizer_fn=words)
     buf.add_messages(agent_history(n_reads=12, result_words=200))
+    buf.compact()
     prefixes = [sent_prefix(buf)]
     for i in range(3):
         buf.add_messages(tool_turn(f"extra{i}", "ReadFileTool", {"file_path": f"x{i}.csv"}, 200))
+        buf.compact()
         prefixes.append(sent_prefix(buf))
     stable_steps = sum(1 for a, b in zip(prefixes, prefixes[1:], strict=False) if a == b)
     assert stable_steps >= 2
 
 
 def test_prefix_currently_changes_on_every_request():
-    """Confirmed defect, kept as documentation: each request clears one more result."""
+    """Documented: `get()` alone (no `compact()`) still clears one more result per request.
+
+    That is the last-resort path of a buffer used without the agent loop.
+    """
     buf = ChatMemoryBuffer(token_limit=1800, tokenizer_fn=words)
     buf.add_messages(agent_history(n_reads=12, result_words=200))
     prefixes = [sent_prefix(buf)]
@@ -381,8 +389,8 @@ def test_prefix_currently_changes_on_every_request():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="compaction usage lives only in history.usage (step 3)")
 def test_summary_tokens_are_part_of_the_run_usage():
+    """Fixed in step 3: summaries are folded into the run that triggered them."""
     agent = scripted_agent(llm=ScriptedLLM(context_size=400, tool_turns=8))
     agent.run("TASK: first run.")
     agent.run("TASK: second run.")
@@ -402,8 +410,8 @@ def test_summary_usage_is_tracked_on_the_history_only():
         agent.run(f"TASK: run {i}.")
     summary_calls = agent.history.llm.summary_calls
     assert summary_calls >= 1
-    assert agent.history.usage.requests == summary_calls
-    assert agent.total_usage.requests == len(agent.llm.prompts)
+    assert agent.history.usage.requests == summary_calls  # the breakdown shown by /cost
+    assert agent.total_usage.requests == len(agent.llm.prompts) + summary_calls  # and part of the total
 
 
 def test_empty_summary_is_retried_a_bounded_number_of_times():

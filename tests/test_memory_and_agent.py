@@ -512,7 +512,7 @@ def costly_agent():
 
 
 def test_total_usage_accumulates_over_runs(costly_agent):
-    calls = len(costly_agent.llm.main_inputs)
+    calls = len(costly_agent.llm.main_inputs) + costly_agent.history.llm.summary_calls
     assert costly_agent.total_usage.requests == calls
     assert costly_agent.total_usage.input_tokens == 100 * calls
     assert costly_agent.total_usage.output_tokens == 10 * calls
@@ -529,12 +529,13 @@ def test_cost_without_pricing(costly_agent):
     main_calls = len(costly_agent.llm.main_inputs)
     content = costly_agent.run("/cost").content
     assert "Session usage" in content
-    assert "Compaction" in content
+    assert "Compaction (included above)" in content
     assert "unavailable" in content
-    assert f"{100 * main_calls:,}" in content
+    summary_calls = costly_agent.history.llm.summary_calls
+    assert f"{100 * (main_calls + summary_calls):,}" in content
     # the command itself is free and not counted as a request
     assert len(costly_agent.llm.main_inputs) == main_calls
-    assert costly_agent.total_usage.requests == main_calls
+    assert costly_agent.total_usage.requests == main_calls + summary_calls
 
 
 def test_cost_with_pricing(costly_agent):
@@ -551,7 +552,7 @@ def test_reset_does_not_zero_the_cost(costly_agent):
     summary_calls = costly_agent.history.llm.summary_calls
     costly_agent.run("/reset")
     costly_agent.run("/cost")
-    assert costly_agent.total_usage.requests == main_calls
+    assert costly_agent.total_usage.requests == main_calls + summary_calls
     assert costly_agent.history.usage.requests == summary_calls
 
 

@@ -63,7 +63,11 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
             return None
         return Message(
             role="assistant",
-            content=f"Summary of the earlier conversation (older messages were compressed):\n\n{self.summary}",
+            content=(
+                "Summary of the earlier conversation (older messages were compressed; "
+                "what follows is second-hand, verify before relying on details):\n\n"
+                f"{self.summary}"
+            ),
         )
 
     def compact(self) -> CompactionRecord | None:

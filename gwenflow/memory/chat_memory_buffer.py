@@ -157,6 +157,9 @@ class ChatMemoryBuffer(BaseChatMemory):
     Deliberately NOT cleared by `reset()`: tokens already spent stay
     accounted for (see /cost)."""
 
+    _pending_usage: AgentUsage = field(default_factory=AgentUsage)
+    """Compaction usage not yet folded into a run (see `drain_usage`)."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.token_limit is not None and self.max_fraction is not None:
@@ -564,6 +567,7 @@ class ChatMemoryBuffer(BaseChatMemory):
             # Re-measure (a summary adds its own message to the window).
             ctx.excess = self._local_estimate(messages, ctx.summary) - math.ceil(self.target() / self.token_scale)
         self.usage.add(ctx.usage)
+        self._pending_usage.add(ctx.usage)
         summary_changed = ctx.summary != (getattr(self, "summary", "") or "")
         if summary_changed:
             self._store_summary(ctx.summary)
@@ -585,6 +589,16 @@ class ChatMemoryBuffer(BaseChatMemory):
         self.compactions.append(record)
         del self.compactions[:-MAX_COMPACTION_RECORDS]
         return record
+
+    def drain_usage(self) -> AgentUsage:
+        """Take the compaction usage accumulated since the last drain.
+
+        The agent folds it into the usage of the run that triggered it, so
+        summaries are part of `AgentResponse.usage` and `Agent.total_usage`.
+        """
+        drained = self._pending_usage
+        self._pending_usage = AgentUsage()
+        return drained
 
     async def acompact(self) -> CompactionRecord | None:
         """Async variant of `compact()`: the (sync) LLM calls run in a worker thread."""

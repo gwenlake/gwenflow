@@ -292,8 +292,10 @@ def test_sliding_window_drops_oldest_groups_but_keeps_protected():
 
 def test_sliding_window_keep_messages():
     messages = [Message(role="user", content="t")] + [Message(role="assistant", content=f"a{i}") for i in range(10)]
-    out = SlidingWindow(keep_messages=4).compact(messages, make_ctx(messages, excess=0))
+    out = SlidingWindow(keep_messages=4, receipt=False).compact(messages, make_ctx(messages, excess=0))
     assert len(out) == 4 and out[0].content == "t"
+    with_note = SlidingWindow(keep_messages=4).compact(messages, make_ctx(messages, excess=0))
+    assert with_note[1].content.startswith("[Earlier messages were removed")
 
 
 # ---------------------------------------------------------------------------

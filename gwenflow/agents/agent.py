@@ -149,6 +149,13 @@ class Agent:
     """Reasoning model."""
 
     history: ChatMemoryBuffer | None = None
+    """Conversation memory. None: a `ChatSummaryMemoryBuffer` on `max_fraction`
+    0.85 of the model's window, summarizing with `summarizer` or a copy of `llm`."""
+
+    summarizer: Optional[ChatBase] = None
+    """LLM used to summarize the history when it is compacted; a cheaper model
+    than `llm` is a good choice. None: a copy of `llm` without tools. Ignored
+    when `history` is given."""
     """Historical messages for the agent."""
 
     retriever: Optional[Retriever] = None
@@ -219,10 +226,10 @@ class Agent:
             # is still shared (shallow copy).
             self.llm = copy.copy(self.llm)
         if self.history is None:
-            # Dedicated summarizer: same model, but stripped of the agent's
-            # tools and response_format (assigned on self.llm below) so the
-            # compaction calls stay plain text-in / text-out.
-            summarizer = copy.copy(self.llm)
+            # Dedicated summarizer: `summarizer`, or the same model stripped of
+            # the agent's tools and response_format (assigned on self.llm
+            # below) so the compaction calls stay plain text-in / text-out.
+            summarizer = copy.copy(self.summarizer if self.summarizer is not None else self.llm)
             summarizer.tools = []
             summarizer.tool_choice = None
             summarizer.response_format = None
@@ -344,10 +351,7 @@ class Agent:
         cumulative `delegation_usage` feeds the /cost breakdown.
         """
         usage = AgentUsage()
-        usage.add(response.usage)
-        compaction = getattr(worker.history, "usage", None)
-        if compaction is not None and compaction.requests:
-            usage.add(compaction)
+        usage.add(response.usage)  # the worker's compaction spend is already inside
         with self._delegation_lock:
             self._pending_delegation_usage.add(usage)
             self.delegation_usage.add(usage)
@@ -419,7 +423,9 @@ class Agent:
             self.history.reset()
             return f"History cleared ({removed} message(s) removed)."
         if command == "/compact":
-            return self._compact_report(self.history.compact())
+            record = self.history.compact()
+            self.total_usage.add(self.history.drain_usage())
+            return self._compact_report(record)
         if command == "/cost":
             return self._cost_report()
         if command == "/tools":
@@ -587,8 +593,8 @@ class Agent:
 
         compaction_usage = getattr(self.history, "usage", None)
         if compaction_usage is not None and compaction_usage.requests:
-            combined.add(compaction_usage)
-            lines += block("Compaction:", compaction_usage)
+            # Breakdown only: summaries are folded into the run that triggered them.
+            lines += block("Compaction (included above):", compaction_usage)
 
         if self.pricing:
             cost = combined.input_tokens * self.pricing.get("input", 0.0)
@@ -604,7 +610,9 @@ class Agent:
 
     async def _aexecute_command(self, command: str, args: str = "") -> str:
         if command == "/compact":
-            return self._compact_report(await self.history.acompact())
+            record = await self.history.acompact()
+            self.total_usage.add(self.history.drain_usage())
+            return self._compact_report(record)
         return self._execute_command(command, args)
 
     def tool(self, func: Callable) -> Callable:
@@ -1304,6 +1312,9 @@ class Agent:
         )
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1470,6 +1481,9 @@ class Agent:
         )
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1654,6 +1668,9 @@ class Agent:
         yield event
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
@@ -1835,6 +1852,9 @@ class Agent:
         yield event
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         yield agent_response

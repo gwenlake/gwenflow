@@ -95,6 +95,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   schema-validation retry.
 - `/compact` works on every buffer and reports the tiers applied, the message and
   token counts before and after.
+- A better summary. The summarizer gets a `<message>`-tagged transcript where every
+  tool result is capped (`tool_result_max_chars`, 500) and text imitating the tags is
+  escaped; the previous summary is handed back as a `<previous-summary>` block to
+  update (keep what is still true, drop what is stale, add the new); user messages can
+  be kept verbatim beside the summary (`keep_user_messages`, each capped at
+  `keep_user_messages_max_chars`); an empty summary is retried once, then the sliding
+  window takes over for that batch. The summary message now says it is second-hand,
+  and a sliding-window cut leaves a one-line receipt (`SlidingWindow(receipt=True)`)
+  so the model does not assume continuity.
+- `Agent(summarizer=...)`: a (cheaper) model for the summaries. **Default behaviour
+  change:** the summaries' tokens are now folded into `AgentResponse.usage` and
+  `Agent.total_usage` of the run that triggered them (`/cost` shows the compaction
+  block as a breakdown, "included above"), and a delegated worker's compaction is no
+  longer counted twice.
 
 ## [1.3.0] — 2026-10-12
 
