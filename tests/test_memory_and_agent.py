@@ -225,10 +225,14 @@ def test_llm_failure_keeps_the_pointer_and_does_not_loop():
     assert broken.calls == 1
 
 
-def test_compaction_is_retried_on_the_next_call():
+def test_compaction_is_retried_on_the_next_overflow():
+    """A failed summary falls back on dropping for that batch; the next overflow summarizes."""
     buf = filled(summary_buffer(llm=BrokenLLM()))
     buf.compact()
+    assert buf.summary == ""
+    assert len(buf.messages) < 12  # the sliding window took over
     buf.llm = FakeLLM()
+    filled(buf)
     buf.compact()
     assert buf.summary != ""
     assert buf._summarized_upto > 0
@@ -268,15 +272,18 @@ def test_reset_clears_summary_and_pointer():
 # ---------------------------------------------------------------------------
 
 
-def test_base_buffer_compact_is_a_noop():
+def test_base_buffer_compact_drops_without_summarizing():
+    """The plain buffer compacts too (persisted), but it never summarizes."""
     buf = filled(ChatMemoryBuffer(token_limit=120, tokenizer_fn=tok))
-    before = [(m.role, m.content) for m in buf.get()]
-    buf.compact()
-    asyncio.run(buf.acompact())
+    record = buf.compact()
+    assert record is not None and record.strategies == ["sliding_window"]
+    assert record.messages_after < record.messages_before
+    assert buf.used_tokens() <= buf.target()
+    assert asyncio.run(buf.acompact()) is None  # fits now: nothing more to do
     after = [(m.role, m.content) for m in buf.get()]
-    assert before == after
     assert any(role == "user" for role, _ in after)
     assert not any("Summary" in (content or "") for _, content in after)
+    assert after[0][1].startswith("question 0")  # the first user message is kept
 
 
 def test_base_buffer_has_no_llm_or_summary_attribute():
@@ -465,9 +472,11 @@ def test_an_unknown_command_goes_to_the_llm():
     assert len(agent.llm.main_inputs) == 1
 
 
-def test_compact_on_a_plain_buffer_reports_it_is_unsupported():
+def test_compact_on_a_plain_buffer_reports_what_it_did():
     agent = Agent(name="cmd-base", llm=MiniLLM(), history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok))
-    assert "does not support compaction" in agent.run("/compact").content
+    assert "Nothing to compact" in agent.run("/compact").content
+    filled(agent.history)
+    assert "sliding_window" in agent.run("/compact").content
 
 
 def test_arun_compact_command():
@@ -503,7 +512,7 @@ def costly_agent():
 
 
 def test_total_usage_accumulates_over_runs(costly_agent):
-    calls = len(costly_agent.llm.main_inputs)
+    calls = len(costly_agent.llm.main_inputs) + costly_agent.history.llm.summary_calls
     assert costly_agent.total_usage.requests == calls
     assert costly_agent.total_usage.input_tokens == 100 * calls
     assert costly_agent.total_usage.output_tokens == 10 * calls
@@ -520,12 +529,13 @@ def test_cost_without_pricing(costly_agent):
     main_calls = len(costly_agent.llm.main_inputs)
     content = costly_agent.run("/cost").content
     assert "Session usage" in content
-    assert "Compaction" in content
+    assert "Compaction (included above)" in content
     assert "unavailable" in content
-    assert f"{100 * main_calls:,}" in content
+    summary_calls = costly_agent.history.llm.summary_calls
+    assert f"{100 * (main_calls + summary_calls):,}" in content
     # the command itself is free and not counted as a request
     assert len(costly_agent.llm.main_inputs) == main_calls
-    assert costly_agent.total_usage.requests == main_calls
+    assert costly_agent.total_usage.requests == main_calls + summary_calls
 
 
 def test_cost_with_pricing(costly_agent):
@@ -542,7 +552,7 @@ def test_reset_does_not_zero_the_cost(costly_agent):
     summary_calls = costly_agent.history.llm.summary_calls
     costly_agent.run("/reset")
     costly_agent.run("/cost")
-    assert costly_agent.total_usage.requests == main_calls
+    assert costly_agent.total_usage.requests == main_calls + summary_calls
     assert costly_agent.history.usage.requests == summary_calls
 
 
@@ -645,9 +655,10 @@ def test_save_load_round_trip(tooled_agent, tmp_path):
     assert tooled_agent.history.summary == saved_summary
     assert tooled_agent.history._summarized_upto == saved_upto
 
-    # and the agent keeps working on the restored history
+    # and the agent keeps working on the restored history (which it may compact again)
     tooled_agent.run("nouvelle question apres restauration " + "mot " * 8)
-    assert len(tooled_agent.history.messages) == count + 2
+    assert tooled_agent.history.messages[-2].content.startswith("nouvelle question")
+    assert tooled_agent.history.messages[-1].role == "assistant"
 
 
 def test_load_missing_file(tmp_path):

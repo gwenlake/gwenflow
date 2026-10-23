@@ -6,15 +6,21 @@ class ModelInfo(TypedDict):
     reasoning: bool
 
 
-# Last verified: 2026-07-21
+# Last verified: 2026-10-23
+# Keys are lowercase: `lookup_model_info` lowercases the requested name before
+# matching, so `Qwen/Qwen3.6-35B-A3B` finds `qwen3.6-35b-a3b`.
 MODELS: dict[str, ModelInfo] = {
     # --- OPENAI ---
+    "gpt-6.1-sol": {"context_window": 1050000, "reasoning": True},  # 2026-09-29, newer Sol
+    "gpt-6-astra": {"context_window": 1050000, "reasoning": True},  # 2026-09-04
+    "gpt-6-sol": {"context_window": 1050000, "reasoning": True},  # 2026-09-22
+    "gpt-6-luna": {"context_window": 1050000, "reasoning": True},  # 2026-09-22
     "gpt-5.6": {"context_window": 1050000, "reasoning": True},  # alias -> gpt-5.6-sol
     "gpt-5.6-sol": {"context_window": 1050000, "reasoning": True},
     "gpt-5.6-terra": {"context_window": 1050000, "reasoning": True},
     "gpt-5.6-luna": {"context_window": 1050000, "reasoning": True},
     "gpt-5.5-pro": {"context_window": 1050000, "reasoning": True},
-    "gpt-5.5": {"context_window": 1050000, "reasoning": True},
+    "gpt-5.5": {"context_window": 1050000, "reasoning": True},  # retired from ChatGPT, API unchanged
     "gpt-5.4-pro": {"context_window": 1050000, "reasoning": True},
     "gpt-5.4": {"context_window": 1050000, "reasoning": True},
     "gpt-5.4-mini": {"context_window": 400000, "reasoning": True},
@@ -39,10 +45,13 @@ MODELS: dict[str, ModelInfo] = {
     # not an API model id: use o3-mini with reasoning_effort="high"
     "o3-mini-high": {"context_window": 200000, "reasoning": True},
     "o4-mini": {"context_window": 200000, "reasoning": True},
-    # --- ANTHROPIC (verified 2026-08-08) ---
+    # --- ANTHROPIC (verified 2026-10-23) ---
+    "claude-fable-5-1": {"context_window": 1000000, "reasoning": True},  # 2026-09-01, thinking always on
     "claude-fable-5": {"context_window": 1000000, "reasoning": True},  # thinking always on
+    "claude-mythos-5-1": {"context_window": 1000000, "reasoning": True},  # 2026-10-06, trusted access only
     "claude-mythos-5": {"context_window": 1000000, "reasoning": True},  # Project Glasswing only
     "claude-mythos-preview": {"context_window": 1000000, "reasoning": True},  # -> claude-mythos-5
+    "claude-opus-5-5": {"context_window": 1000000, "reasoning": True},  # 2026-09-22, thinking always on
     "claude-opus-5": {"context_window": 1000000, "reasoning": True},  # thinking on by default
     "claude-opus-4-8": {"context_window": 1000000, "reasoning": True},
     "claude-opus-4-7": {"context_window": 1000000, "reasoning": True},
@@ -53,12 +62,14 @@ MODELS: dict[str, ModelInfo] = {
     "claude-opus-4-1-20250805": {"context_window": 200000, "reasoning": True},
     "claude-opus-4-0": {"context_window": 200000, "reasoning": True},  # deprecated
     "claude-opus-4-20250514": {"context_window": 200000, "reasoning": True},
+    "claude-sonnet-5-5": {"context_window": 1000000, "reasoning": True},  # 2026-09-28, adaptive thinking
     "claude-sonnet-5": {"context_window": 1000000, "reasoning": True},  # thinking on by default
     "claude-sonnet-4-6": {"context_window": 1000000, "reasoning": True},
     "claude-sonnet-4-5": {"context_window": 200000, "reasoning": True},  # 1M via beta header
     "claude-sonnet-4-5-20250929": {"context_window": 200000, "reasoning": True},
     "claude-sonnet-4-0": {"context_window": 200000, "reasoning": True},  # deprecated
     "claude-sonnet-4-20250514": {"context_window": 200000, "reasoning": True},
+    "claude-haiku-5-5": {"context_window": 1000000, "reasoning": True},  # 2026-10-07, adaptive thinking
     "claude-haiku-4-5": {"context_window": 200000, "reasoning": True},
     "claude-haiku-4-5-20251001": {"context_window": 200000, "reasoning": True},
     "claude-3-7-sonnet-20250219": {"context_window": 200000, "reasoning": True},  # retired 2026-02-19
@@ -67,11 +78,15 @@ MODELS: dict[str, ModelInfo] = {
     "claude-3-opus-20240229": {"context_window": 200000, "reasoning": False},  # retired 2026-01-05
     "claude-3-haiku-20240307": {"context_window": 200000, "reasoning": False},  # retired 2026-04-19
     # --- GOOGLE ---
+    "gemini-4-argon": {"context_window": 1048576, "reasoning": True},  # 2026-10, flagship reasoning model
+    "gemini-3.8-flash": {"context_window": 1048576, "reasoning": True},  # 2026-09
+    "gemini-3.6-flash": {"context_window": 1048576, "reasoning": True},  # 2026-07, previous-generation Flash
     "gemini-3.5-flash": {"context_window": 1048576, "reasoning": True},
+    "gemini-3.5-flash-lite": {"context_window": 1048576, "reasoning": True},
     "gemini-3.1-pro": {"context_window": 1048576, "reasoning": True},
     "gemini-3.1-pro-preview": {"context_window": 1048576, "reasoning": True},
     "gemini-3.1-flash-lite": {"context_window": 1048576, "reasoning": True},
-    "gemini-3.1-flash-lite-preview": {"context_window": 1048576, "reasoning": True},
+    "gemini-3.1-flash-lite-preview": {"context_window": 1048576, "reasoning": True},  # shut down
     "gemini-3-flash": {"context_window": 1048576, "reasoning": True},
     "gemini-3-flash-preview": {"context_window": 1048576, "reasoning": True},
     "gemini-2.5-pro": {"context_window": 1048576, "reasoning": True},
@@ -92,12 +107,18 @@ MODELS: dict[str, ModelInfo] = {
     "gemma-3-12b-it": {"context_window": 131072, "reasoning": False},
     "gemma-3-4b-it": {"context_window": 131072, "reasoning": False},
     "gemma-3-1b-it": {"context_window": 32768, "reasoning": False},
-    # --- DEEPSEEK ---
+    # --- DEEPSEEK (verified 2026-10-23) ---
+    # Dated builds (deepseek-v4-flash-0731, deepseek-v4-pro-0813, deepseek-v4.1-flash-1017...)
+    # resolve to these entries through the prefix rule of `lookup_model_info`.
+    "deepseek-flash": {"context_window": 1000000, "reasoning": True},  # current Flash (V4.1), thinking optional
+    "deepseek-v4.1-flash": {"context_window": 1000000, "reasoning": True},  # same model, name used by routers
     "deepseek-v4-pro": {"context_window": 1000000, "reasoning": True},
-    "deepseek-v4-flash": {"context_window": 1000000, "reasoning": True},
+    "deepseek-v4-flash": {"context_window": 1000000, "reasoning": True},  # retired 2026-09-10, routed to V4.1 Flash
     "deepseek-chat": {"context_window": 128000, "reasoning": False},  # deprecated 2026-07-24
     "deepseek-reasoner": {"context_window": 128000, "reasoning": True},  # deprecated 2026-07-24
     # --- XAI ---
+    "grok-4.7": {"context_window": 500000, "reasoning": True},  # 2026-09-21
+    "grok-4.6": {"context_window": 500000, "reasoning": True},  # 2026-08-12
     "grok-4.5": {"context_window": 500000, "reasoning": True},  # configurable reasoning effort
     "grok-4.3": {"context_window": 1000000, "reasoning": False},
     "grok-4.20-0309-reasoning": {"context_window": 1000000, "reasoning": True},
@@ -128,18 +149,37 @@ MODELS: dict[str, ModelInfo] = {
     "open-mixtral-8x7b": {"context_window": 32768, "reasoning": False},
     "open-mistral-nemo": {"context_window": 128000, "reasoning": False},
     "codestral-2508": {"context_window": 256000, "reasoning": False},
+    "codestral-latest": {"context_window": 256000, "reasoning": False},  # -> codestral-2508
     "codestral-2501": {"context_window": 256000, "reasoning": False},
-    "mistral-medium-2604": {"context_window": 256000, "reasoning": False},
-    "mistral-large-2512": {"context_window": 256000, "reasoning": False},
-    "mistral-small-2603": {"context_window": 256000, "reasoning": False},
+    # Names, windows and reasoning flags below match GET /v1/models (2026-10-23).
+    # Mistral Large 4 (public preview 2026-10-06): mistral-large-latest still points to Large 3.
+    "mistral-large-4": {"context_window": 1048576, "reasoning": True},  # also served as mistral-large-4-0
+    "mistral-large-2512": {"context_window": 262144, "reasoning": False},  # Large 3
+    "mistral-large-latest": {"context_window": 262144, "reasoning": False},  # -> mistral-large-2512
+    # Mistral Medium 3.5 (v26.04) unifies instruct and reasoning; magistral-medium-latest is an alias.
+    "mistral-medium-2604": {"context_window": 262144, "reasoning": True},
+    "mistral-medium-latest": {"context_window": 262144, "reasoning": True},  # -> mistral-medium-2604
+    "magistral-medium-latest": {"context_window": 262144, "reasoning": True},  # -> mistral-medium-2604
+    # Mistral Small 4 (v26.03): magistral-small-latest is an alias.
+    "mistral-small-2603": {"context_window": 262144, "reasoning": True},
+    "mistral-small-latest": {"context_window": 262144, "reasoning": True},  # -> mistral-small-2603
+    "magistral-small-latest": {"context_window": 262144, "reasoning": True},  # -> mistral-small-2603
     "mistral-small-2506": {"context_window": 128000, "reasoning": False},
     "ministral-3-14b-2512": {"context_window": 262144, "reasoning": False},
     "ministral-3-8b-2512": {"context_window": 262144, "reasoning": False},
     "ministral-3-3b-2512": {"context_window": 131072, "reasoning": False},
-    "ministral-14b-2512": {"context_window": 256000, "reasoning": False},
-    "ministral-8b-2512": {"context_window": 256000, "reasoning": False},
+    "ministral-14b-2512": {"context_window": 262144, "reasoning": False},
+    "ministral-8b-2512": {"context_window": 262144, "reasoning": False},
     "ministral-3b-2512": {"context_window": 131072, "reasoning": False},
+    "ministral-14b-latest": {"context_window": 262144, "reasoning": False},
+    "ministral-8b-latest": {"context_window": 262144, "reasoning": False},
+    "ministral-3b-latest": {"context_window": 131072, "reasoning": False},
     "mixtral-8x7b-32768": {"context_window": 32768, "reasoning": False},
+    # Z.ai models served by Mistral (zai-glm-5-2 retires 2026-10-31)
+    "zai-glm-5-3": {"context_window": 1048576, "reasoning": True},
+    "zai-glm-5-3-flash": {"context_window": 1048576, "reasoning": True},
+    "zai-glm-latest": {"context_window": 1048576, "reasoning": True},  # -> zai-glm-5-3
+    "zai-glm-5-2": {"context_window": 1048576, "reasoning": True},  # deprecated 2026-09-29
     # --- MISTRAL (open weights) ---
     "devstral-2-2512": {"context_window": 256000, "reasoning": False},
     "devstral-small-1.1": {"context_window": 131072, "reasoning": False},
@@ -161,11 +201,16 @@ MODELS: dict[str, ModelInfo] = {
     "moonshot-v1-32k": {"context_window": 32000, "reasoning": False},  # sunset 2026-08-31
     "moonshot-v1-8k": {"context_window": 8000, "reasoning": False},  # sunset 2026-08-31
     # --- ALIBABA (QWEN, closed weights) ---
+    "qwen3.8-max": {"context_window": 1000000, "reasoning": True},  # 2026-08-03
+    "qwen3.8-flash": {"context_window": 1000000, "reasoning": True},  # hosted Qwen3.8-Flash-Next
     "qwen3.7-max": {"context_window": 1000000, "reasoning": True},
     "qwen3.7-plus": {"context_window": 1000000, "reasoning": True},
     "qwen3.6-flash": {"context_window": 1000000, "reasoning": True},
     # --- ALIBABA (QWEN, open weights, Apache-2.0) ---
-    # Qwen3.5/3.6 are 262144 native, extensible to ~1M via YaRN.
+    # Qwen3.5/3.6/3.8 are 262144 native, extensible to ~1M via YaRN.
+    "qwen3.8-2.4t-a95b": {"context_window": 262144, "reasoning": True},  # Qwen3.8-Max weights, thinking always on
+    "qwen3.8-flash-next": {"context_window": 262144, "reasoning": True},
+    "qwen3.8-27b": {"context_window": 262144, "reasoning": True},
     "qwen3.6-27b": {"context_window": 262144, "reasoning": True},
     "qwen3.6-35b-a3b": {"context_window": 262144, "reasoning": True},
     "qwen3.5-397b-a17b": {"context_window": 256000, "reasoning": True},
@@ -189,6 +234,9 @@ MODELS: dict[str, ModelInfo] = {
     "qwen3-vl-8b-instruct": {"context_window": 262144, "reasoning": False},
     "qwen3-vl-8b-thinking": {"context_window": 262144, "reasoning": True},
     # --- Z.AI (GLM) ---
+    "glm-5.3": {"context_window": 1000000, "reasoning": True},  # 2026-08-14, thinking always on
+    "glm-5.3-flash": {"context_window": 1000000, "reasoning": True},  # multimodal
+    "glm-5.3-flashx": {"context_window": 1000000, "reasoning": True},  # faster Flash tier
     "glm-5.2": {"context_window": 1000000, "reasoning": True},
     "glm-5.1": {"context_window": 200000, "reasoning": True},
 }

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from gwenflow.llms.base import ChatBase
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.types import (
     AudioContent,
     FileContent,
@@ -180,7 +180,7 @@ class ChatAnthropic(ChatBase):
         """Kept as a property: the telemetry layer reads it off the instance."""
         return self._get_model_params()
 
-    def _tool_to_anthropic(self, tool: Tool) -> Dict[str, Any]:
+    def _tool_to_anthropic(self, tool: BaseTool) -> Dict[str, Any]:
         return {
             "name": tool.name,
             "description": tool.description or "",

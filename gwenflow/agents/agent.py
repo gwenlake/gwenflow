@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import math
 import re
 import threading
 import uuid
@@ -24,8 +25,11 @@ from pydantic import BaseModel, ValidationError
 
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.llms import ChatBase, ChatOpenAI
+from gwenflow.llms.base import CONTEXT_SAFETY_RATIO
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
+from gwenflow.memory.chat_memory_buffer import DEFAULT_MAX_FRACTION
+from gwenflow.memory.compaction import PINNED_KEY, pin
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
@@ -39,6 +43,8 @@ from gwenflow.types import (
     AgentEventToolStarted,
     AgentResponse,
     AgentUsage,
+    ContextUsage,
+    ContextWindowInfo,
     Message,
     ModelResponse,
     RequestUsage,
@@ -47,8 +53,11 @@ from gwenflow.types import (
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
+from gwenflow.utils.tokens import keep_tokens_from_text
 
 FINAL_RESULT_TOOL = "final_result"
+READ_TOOL_OUTPUT = "read_tool_output"
+MAX_STORED_TOOL_OUTPUTS = 50
 
 
 @dataclass(kw_only=True)
@@ -140,6 +149,13 @@ class Agent:
     """Reasoning model."""
 
     history: ChatMemoryBuffer | None = None
+    """Conversation memory. None: a `ChatSummaryMemoryBuffer` on `max_fraction`
+    0.85 of the model's window, summarizing with `summarizer` or a copy of `llm`."""
+
+    summarizer: Optional[ChatBase] = None
+    """LLM used to summarize the history when it is compacted; a cheaper model
+    than `llm` is a good choice. None: a copy of `llm` without tools. Ignored
+    when `history` is given."""
     """Historical messages for the agent."""
 
     retriever: Optional[Retriever] = None
@@ -153,6 +169,29 @@ class Agent:
 
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
+
+    warn_near_limits: bool = False
+    """Tell the model, in the system prompt of the request, when the run is
+    close to a limit: `warning_threshold` of the context budget or of
+    `max_turns` (URGENT), compaction imminent or `critical_remaining_turns`
+    left (CRITICAL). Request-scoped: nothing is written in the history."""
+
+    warning_threshold: float = 0.7
+    critical_remaining_turns: int = 3
+
+    on_context_usage: Optional[Callable[[ContextUsage], None]] = None
+    """Called before every request with the size of the history against the
+    model's window (see `ContextUsage`)."""
+
+    max_tool_output_tokens: Optional[int] = None
+    """Cap on a single tool result. A longer result is stored aside: the model
+    gets its beginning plus a reference, and a `read_tool_output` tool to page
+    through the rest — instead of one grep or file read filling the context.
+    None (default) keeps results whole."""
+
+    _tool_outputs: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    """Full tool results set aside by `max_tool_output_tokens`, by reference.
+    Shared with clones, so a handoff's references stay readable."""
 
     skills: List[Skill] = field(default_factory=list)
 
@@ -200,21 +239,26 @@ class Agent:
             # is still shared (shallow copy).
             self.llm = copy.copy(self.llm)
         if self.history is None:
-            # Dedicated summarizer: same model, but stripped of the agent's
-            # tools and response_format (assigned on self.llm below) so the
-            # compaction calls stay plain text-in / text-out.
-            summarizer = copy.copy(self.llm)
+            # Dedicated summarizer: `summarizer`, or the same model stripped of
+            # the agent's tools and response_format (assigned on self.llm
+            # below) so the compaction calls stay plain text-in / text-out.
+            summarizer = copy.copy(self.summarizer if self.summarizer is not None else self.llm)
             summarizer.tools = []
             summarizer.tool_choice = None
             summarizer.response_format = None
+            # Fraction of the window, resolved on every request against the
+            # LLM actually called (see `_sync_context_window`).
             self.history = ChatSummaryMemoryBuffer(
-                token_limit=self.llm.get_context_size(),
+                max_fraction=DEFAULT_MAX_FRACTION,
                 llm=summarizer,
             )
+            self._sync_context_window()
         if self.response_model:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+        if self.max_tool_output_tokens and not any(t.name == READ_TOOL_OUTPUT for t in self.tools):
+            self.tools = list(self.tools) + [self._tool_output_reader()]
         if self.memory:
             self.tools = list(self.tools) + self.memory.get_tools()
         if self.team:
@@ -302,6 +346,9 @@ class Agent:
         """A new, empty buffer with the same configuration as `self.history`."""
         kwargs: Dict[str, Any] = {
             "token_limit": self.history.token_limit,
+            "max_fraction": self.history.max_fraction,
+            "context_window": self.history.context_window,
+            "context_window_resolved": self.history.context_window_resolved,
             "tokenizer_fn": self.history.tokenizer_fn,
         }
         summarizer = getattr(self.history, "llm", None)
@@ -317,10 +364,7 @@ class Agent:
         cumulative `delegation_usage` feeds the /cost breakdown.
         """
         usage = AgentUsage()
-        usage.add(response.usage)
-        compaction = getattr(worker.history, "usage", None)
-        if compaction is not None and compaction.requests:
-            usage.add(compaction)
+        usage.add(response.usage)  # the worker's compaction spend is already inside
         with self._delegation_lock:
             self._pending_delegation_usage.add(usage)
             self.delegation_usage.add(usage)
@@ -369,12 +413,18 @@ class Agent:
         agent_response.finish_reason = "stop"
         return agent_response
 
-    def _compact_report(self, folded_before: int) -> str:
-        folded = self.history._summarized_upto - folded_before
-        if folded == 0:
+    def _compact_report(self, record: Any) -> str:
+        if record is None:
             return "Nothing to compact: the conversation fits in the context window."
-        summary_tokens = self.history.tokenizer_fn(self.history.summary)
-        return f"Compacted {folded} message(s) into the running summary (~{summary_tokens} tokens)."
+        report = (
+            f"Compacted the history ({', '.join(record.strategies)}): "
+            f"{record.messages_before} -> {record.messages_after} message(s), "
+            f"~{record.tokens_before:,} -> ~{record.tokens_after:,} tokens."
+        )
+        summary = getattr(self.history, "summary", "")
+        if summary and "summarize_older" in record.strategies:
+            report += f" Running summary: ~{self.history.tokenizer_fn(summary)} tokens."
+        return report
 
     def _execute_command(self, command: str, args: str = "") -> str:
         if command == "/help":
@@ -386,11 +436,9 @@ class Agent:
             self.history.reset()
             return f"History cleared ({removed} message(s) removed)."
         if command == "/compact":
-            if not hasattr(self.history, "_summarized_upto"):
-                return "This agent's memory does not support compaction (plain ChatMemoryBuffer)."
-            before = self.history._summarized_upto
-            self.history.compact()
-            return self._compact_report(before)
+            record = self.history.compact()
+            self.total_usage.add(self.history.drain_usage())
+            return self._compact_report(record)
         if command == "/cost":
             return self._cost_report()
         if command == "/tools":
@@ -437,7 +485,7 @@ class Agent:
         if command == "/history":
             messages = self.history.messages
             tokens = self.history._token_count_for_messages(messages)
-            parts = [f"{len(messages)} message(s) stored, ~{tokens} tokens (limit {self.history.token_limit})."]
+            parts = [f"{len(messages)} message(s) stored, ~{tokens} tokens (limit {self.history.limit()})."]
             summary = getattr(self.history, "summary", "")
             if summary:
                 parts.append(f"Running summary: ~{self.history.tokenizer_fn(summary)} tokens.")
@@ -471,7 +519,7 @@ class Agent:
             lines.append(f"  response_model:  {model_name}")
         lines.append(
             f"  memory:          {type(self.history).__name__} "
-            f"(token_limit {self.history.token_limit:,}, reserved {self.history.reserved_tokens:,})"
+            f"(token_limit {self.history.limit():,}, reserved {self.history.reserved_tokens:,})"
         )
         summarizer = getattr(self.history, "llm", None)
         if summarizer is not None:
@@ -527,7 +575,7 @@ class Agent:
         summary_note = ""
         if hasattr(self.history, "summary"):
             self.history.summary = data.get("summary") or ""
-            self.history._summarized_upto = min(int(data.get("summarized_upto") or 0), len(messages))
+            self.history._summarized_upto = int(data.get("summarized_upto") or 0)
             if self.history.summary:
                 summary_note = ", summary restored"
         elif data.get("summary"):
@@ -558,8 +606,8 @@ class Agent:
 
         compaction_usage = getattr(self.history, "usage", None)
         if compaction_usage is not None and compaction_usage.requests:
-            combined.add(compaction_usage)
-            lines += block("Compaction:", compaction_usage)
+            # Breakdown only: summaries are folded into the run that triggered them.
+            lines += block("Compaction (included above):", compaction_usage)
 
         if self.pricing:
             cost = combined.input_tokens * self.pricing.get("input", 0.0)
@@ -574,10 +622,10 @@ class Agent:
         return "\n".join(lines)
 
     async def _aexecute_command(self, command: str, args: str = "") -> str:
-        if command == "/compact" and hasattr(self.history, "_summarized_upto"):
-            before = self.history._summarized_upto
-            await self.history.acompact()
-            return self._compact_report(before)
+        if command == "/compact":
+            record = await self.history.acompact()
+            self.total_usage.add(self.history.drain_usage())
+            return self._compact_report(record)
         return self._execute_command(command, args)
 
     def tool(self, func: Callable) -> Callable:
@@ -782,8 +830,90 @@ class Agent:
 
         The system prompt and the tool schemas sent alongside every request.
         """
-        self.history.system_prompt = self.get_system_prompt(task=task, context=context)
+        self._base_system_prompt = self.get_system_prompt(task=task, context=context)
+        self.history.system_prompt = self._base_system_prompt
         self.history.reserved_tokens = self._tools_token_count()
+        self._sync_context_window()
+
+    _base_system_prompt: str = field(default="", init=False, repr=False)
+
+    def _limit_warning(self, usage: ContextUsage, turns_left: int) -> Optional[str]:
+        """The context notice for this request, or None when nothing is close."""
+        if not self.warn_near_limits:
+            return None
+        lines: list[str] = []
+        budget_fraction = usage.used_tokens / usage.limit_tokens if usage.limit_tokens else 0.0
+        if budget_fraction >= 1.0:
+            lines.append(
+                f"[CRITICAL] The context budget is exhausted ({usage.fraction:.0%} of the window): older messages "
+                "are being compacted. Conclude: give your final answer now."
+            )
+        elif budget_fraction >= self.warning_threshold:
+            lines.append(
+                f"[URGENT] {usage.fraction:.0%} of the context window is used; older messages will be compacted "
+                "soon. Wrap up the task and give your final answer."
+            )
+        if self.max_turns:
+            if turns_left <= self.critical_remaining_turns:
+                lines.append(
+                    f"[CRITICAL] {turns_left} turn(s) left before the run stops without an answer. "
+                    "Give your final answer now."
+                )
+            elif 1 - turns_left / self.max_turns >= self.warning_threshold:
+                lines.append(f"[URGENT] {turns_left} of {self.max_turns} turns left. Wrap up and answer.")
+        if not lines:
+            return None
+        return "## Context notice\n\n" + "\n".join(lines)
+
+    def _before_request(self, turns_left: int) -> None:
+        """Per-request bookkeeping: window sync, usage report, limit notice."""
+        self._sync_context_window()
+        usage = self.history.context_usage()
+        if self.on_context_usage is not None:
+            self.on_context_usage(usage)
+        warning = self._limit_warning(usage, turns_left)
+        base = self._base_system_prompt or self.history.system_prompt or ""
+        self.history.system_prompt = f"{base}\n\n{warning}".strip() if warning else base
+
+    def _pin_task(self, messages: List[Message]) -> None:
+        """Pin the task of this run so that no compaction removes it.
+
+        The pin of the previous run's task is released: the first user message
+        of the history is protected on its own, and the running summary
+        covers the rest.
+        """
+        for message in self.history.messages:
+            if message.extra.get("pinned_by") == "agent":
+                message.extra.pop(PINNED_KEY, None)
+                message.extra.pop("pinned_by", None)
+        for message in reversed(messages):
+            if message.role == "user":
+                pin(message).extra["pinned_by"] = "agent"
+                break
+
+    def _sync_context_window(self) -> None:
+        """Tell the history the context window of the LLM about to be called.
+
+        Resolved on every request, so replacing `agent.llm` moves the budget.
+        An LLM without `context_window_info` (a stub) is read through
+        `get_context_size()`, which is `CONTEXT_SAFETY_RATIO` of its window.
+        """
+        info = None
+        info_fn = getattr(self.llm, "context_window_info", None)
+        if callable(info_fn):
+            info = info_fn()
+        if isinstance(info, ContextWindowInfo):
+            window, resolved = info.tokens, info.resolved
+        else:  # a stub (test double, custom class): its context size is the budget itself
+            fraction = self.history.max_fraction or CONTEXT_SAFETY_RATIO
+            window, resolved = math.ceil(self.llm.get_context_size() / fraction), True
+        self.history.context_window = window
+        self.history.context_window_resolved = resolved
+
+    def context_usage(self) -> ContextUsage:
+        """Size of the next request against the model's window (see `ContextUsage`)."""
+        self._sync_context_window()
+        return self.history.context_usage()
 
     def get_system_prompt(
         self,
@@ -931,6 +1061,64 @@ class Agent:
         return tools
 
     @tracer.tool(name="Tool Call")
+    def _calibrate_history(self, window: List[Message], usage: Any) -> None:
+        """Anchor the memory buffer on the provider's reported usage.
+
+        Called once the reply is stored, so the anchor covers the request and
+        its reply (see `ChatMemoryBuffer.observe_usage`).
+        """
+        observe = getattr(self.history, "observe_usage", None)
+        input_tokens = getattr(usage, "input_tokens", 0) if usage is not None else 0
+        output_tokens = getattr(usage, "output_tokens", 0) if usage is not None else 0
+        if observe is not None and input_tokens:
+            observe(window, input_tokens, output_tokens)
+
+    def _tool_output_reader(self) -> Tool:
+        store = self._tool_outputs
+        default_length = (self.max_tool_output_tokens or 1000) * 4
+
+        def read_tool_output(ref: str, offset: int = 0, length: int = default_length) -> str:
+            """Read part of a long tool result that was set aside.
+
+            Args:
+                ref: The reference given in the truncated result.
+                offset: Character offset to start reading from.
+                length: Number of characters to read.
+            """
+            text = store.get(ref)
+            if text is None:
+                return f"Unknown reference '{ref}'."
+            offset = max(int(offset or 0), 0)
+            length = min(max(int(length or default_length), 1), default_length)
+            chunk = text[offset : offset + length]
+            end = offset + len(chunk)
+            if end < len(text):
+                chunk += f"\n[{end} of {len(text)} characters read; continue with offset={end}]"
+            else:
+                chunk += f"\n[end of output, {len(text)} characters]"
+            return chunk
+
+        return Tool(read_tool_output)
+
+    def _set_aside_long_output(self, tool_name: str, content: str) -> str:
+        """Apply `max_tool_output_tokens` to one tool result."""
+        limit = self.max_tool_output_tokens
+        if not limit or tool_name == READ_TOOL_OUTPUT or not content:
+            return content
+        tokenizer_fn = self.history.tokenizer_fn
+        total = tokenizer_fn(content)
+        if total <= limit:
+            return content
+        ref = f"out_{uuid.uuid4().hex[:8]}"
+        self._tool_outputs[ref] = content
+        while len(self._tool_outputs) > MAX_STORED_TOOL_OUTPUTS:
+            self._tool_outputs.pop(next(iter(self._tool_outputs)))
+        head = keep_tokens_from_text(content, token_limit=limit, tokenizer_fn=tokenizer_fn)
+        return (
+            f"{head}\n[Output truncated: {total} tokens in total, {len(content)} characters. "
+            f"Read the rest with {READ_TOOL_OUTPUT}(ref='{ref}', offset={len(head)}).]"
+        )
+
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
@@ -985,6 +1173,7 @@ class Agent:
             tool_execution.content = result
         else:
             tool_execution.content = str(result)
+        tool_execution.content = self._set_aside_long_output(tool_call.name, tool_execution.content)
         return tool_execution.to_message()
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
@@ -1031,6 +1220,7 @@ class Agent:
 
         # history
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         # add reasoning
@@ -1058,10 +1248,12 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             # format messages
             self.history.compact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
@@ -1098,6 +1290,7 @@ class Agent:
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             _message.thinking_parts = self.llm.get_thinking_parts(response)
             self.history.add_message(_message)
+            self._calibrate_history(window, response.usage)
 
             # stop if not tool call
             if not response.tool_calls:
@@ -1174,6 +1367,9 @@ class Agent:
         )
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1200,6 +1396,7 @@ class Agent:
         )
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -1226,9 +1423,11 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             await self.history.acompact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             response = await self.llm.ainvoke(input=messages_for_model)
             self._absorb_answer_tool_call(response)
@@ -1262,6 +1461,7 @@ class Agent:
             _message = Message(role="assistant", content=response.content, tool_calls=tool_calls)
             _message.thinking_parts = self.llm.get_thinking_parts(response)
             self.history.add_message(_message)
+            self._calibrate_history(window, response.usage)
 
             if not response.tool_calls:
                 content_to_check = response.parsed if response.parsed else response.content
@@ -1337,6 +1537,9 @@ class Agent:
         )
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1367,6 +1570,7 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -1390,9 +1594,11 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             self.history.compact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             full_content = ""
             full_thinking = ""
@@ -1450,6 +1656,7 @@ class Agent:
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             _message.thinking_parts = self.llm.get_thinking_parts(turn_response)
             self.history.add_message(_message)
+            self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
                 if self.response_model:
@@ -1518,6 +1725,9 @@ class Agent:
         yield event
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
@@ -1548,6 +1758,7 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._pin_task(messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model:
@@ -1571,9 +1782,11 @@ class Agent:
         while num_turns_available > 0:
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
+            self._before_request(num_turns_available)
 
             await self.history.acompact()
-            messages_for_model = [m.to_dict() for m in self.history.get()]
+            window = self.history.get()
+            messages_for_model = [m.to_dict() for m in window]
 
             full_content = ""
             full_thinking = ""
@@ -1628,6 +1841,7 @@ class Agent:
             _message = Message(role="assistant", content=full_content, tool_calls=tool_calls_dicts)
             _message.thinking_parts = self.llm.get_thinking_parts(turn_response)
             self.history.add_message(_message)
+            self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
                 if self.response_model:
@@ -1696,6 +1910,9 @@ class Agent:
         yield event
 
         agent_response.finish_reason = "stop" if completed else "max_turns"
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())  # summaries made for this run
         self.total_usage.add(agent_response.usage)
 
         yield agent_response

@@ -23,7 +23,14 @@ from gwenflow.skills import Skill, SkillsDirectory, SkillsToolset
 # ---------------------------------------------------------------------------
 
 
-def _make_skill_dir(root: Path, name: str, description: str, body: str = "Some instructions.", with_resource: bool = False, with_script: bool = False) -> Path:
+def _make_skill_dir(
+    root: Path,
+    name: str,
+    description: str,
+    body: str = "Some instructions.",
+    with_resource: bool = False,
+    with_script: bool = False,
+) -> Path:
     d = root / name
     d.mkdir()
     (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {description}\n---\n{body}")

@@ -49,6 +49,12 @@ LLM_TOOL_CALLS = "llm.tool_calls"
 LLM_TOOLS_COUNT = "gwenflow.llm.tools.count"  # tools offered to the model
 LLM_TOOLS_SCHEMA_HASH = "gwenflow.llm.tools.schema_hash"  # identifies a toolset without its schema
 ORGANIZATION = "gwenflow.organization"  # tenant the service belongs to
+COMPACTION_STRATEGIES = "gwenflow.compaction.strategies"  # tiers applied, in order
+COMPACTION_MESSAGES_BEFORE = "gwenflow.compaction.messages_before"
+COMPACTION_MESSAGES_AFTER = "gwenflow.compaction.messages_after"
+COMPACTION_TOKENS_BEFORE = "gwenflow.compaction.tokens_before"
+COMPACTION_TOKENS_AFTER = "gwenflow.compaction.tokens_after"
+COMPACTION_NOTES = "gwenflow.compaction.notes"  # "summarized 12 message(s)", never the content
 
 # Resource attributes
 SERVICE_NAME = "service.name"

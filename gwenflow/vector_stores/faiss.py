@@ -1,9 +1,9 @@
+import dataclasses
 import hashlib
 import io
 import os
 import pickle
 from typing import Optional
-import dataclasses
 
 import numpy as np
 
@@ -121,7 +121,6 @@ class FAISS(VectorStoreBase):
         return documents
 
     def hybrid_search(self, query: str, limit: int = 5, k: int = 60) -> list[Document]:
-        
         def reciprocal_rank_fusion(ranked_lists: list[list[Document]], k: int = 60) -> list[Document]:
             scores: dict[str, float] = {}
             documents: dict[str, Document] = {}

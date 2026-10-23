@@ -63,10 +63,12 @@ def test_format_messages_assistant_to_model_role():
 
 def test_format_messages_system_instruction_extracted_not_in_contents():
     llm = ChatGoogle(api_key="test")
-    formatted = llm._format_messages([
-        Message(role="system", content="be terse"),
-        Message(role="user", content="hi"),
-    ])
+    formatted = llm._format_messages(
+        [
+            Message(role="system", content="be terse"),
+            Message(role="user", content="hi"),
+        ]
+    )
     assert llm.system_prompt == "be terse"
     assert len(formatted) == 1
     assert formatted[0].role == "user"

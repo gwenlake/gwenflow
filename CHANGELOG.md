@@ -4,6 +4,123 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-10-23
+
+### Fixed
+
+- `ChatOpenAI._parse_response` (and so `ChatGwenlake`, `ChatDeepSeek`, `ChatOllama`...)
+  crashed with `AttributeError: 'ReadFileTool' object has no attribute 'get'` whenever
+  the model answered in plain text while tools that inherit `BaseTool` but not `Tool`
+  were on offer — every `CodingAgent` run. The text-tool-call recovery now accepts any
+  `BaseTool`. Only the OpenAI family had the bug (the other providers have no text
+  recovery); every provider now types its tools as `BaseTool`, and
+  `tests/test_llm_base_tools.py` pins schema building and plain-text parsing with
+  BaseTool subclasses on offer for all nine LLM classes.
+- The context window of a model served under another name was silently the 128k
+  default: `lookup_model_info` now strips provider / organisation prefixes, ignores
+  case and falls back on the longest known name followed by a separator
+  (`mistral-small-3.2-24b-instruct-2506` -> `mistral-small-3.2-24b`). Matching ignores
+  case end to end (`qwen/qwen3.6-35B-A3B` -> `qwen3.6-35b-a3b`), and a test pins the
+  table keys to lowercase. An unknown model logs a warning once.
+- `MODELS` refreshed (2026-10-23): GPT-6 Astra / Sol / Luna and GPT-6.1 Sol, Claude
+  Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and Mythos 5.1, Gemini 4 Argon, 3.8 Flash,
+  3.6 Flash and 3.5 Flash-Lite, DeepSeek `deepseek-flash` / `deepseek-v4.1-flash` (dated
+  builds such as `deepseek-v4-flash-0731` resolve through the prefix rule), Grok 4.6 and
+  4.7, Mistral Large 4 (`mistral-large-4`), the Mistral `-latest` aliases, GLM 5.3 / 5.3
+  Flash / 5.3 FlashX (Z.ai and via Mistral),
+  Qwen3.8 Max / Flash and the Qwen3.8 open weights (27B, Flash-Next, 2.4T-A95B). Mistral
+  windows and reasoning flags now match the `/v1/models` listing: Medium 3.5, Small 4
+  and Ministral 14B / 8B are 262,144 tokens, Medium 3.5 and Small 4 are reasoning models.
+
+### Added
+
+- `context_window` on every LLM: an int overrides the table (a vLLM server started
+  with a smaller `--max-model-len`), `"auto"` reads it from the server's `/models`
+  listing (`max_model_len`, `context_length` or `context_window`) on OpenAI-compatible
+  clients and falls back on the table.
+- Token calibration: after each call the agent hands the provider's real prompt token
+  count to the memory buffer (`observe_prompt_tokens`), which scales its budget
+  (`token_scale`). tiktoken's `cl100k_base` under-counts for Mistral, Qwen or Gemma,
+  so the history overflowed before compaction kicked in.
+- Pass 0 of `ChatMemoryBuffer`, model-free and only when the history does not fit:
+  results of a call repeated later with the same arguments are replaced by a stub,
+  then the oldest tool results beyond `keep_recent_tool_results` (3) are replaced by
+  a one-line stub naming the call, oldest first, until the window fits. It also
+  works inside the live turn, where the summary never applies, and it spares
+  `ChatSummaryMemoryBuffer` an LLM call whenever clearing is enough.
+- `Agent.max_tool_output_tokens`: a longer tool result is set aside; the model gets
+  its beginning, a reference and a `read_tool_output(ref, offset, length)` tool to
+  page through the rest. Off by default.
+- Context measured on the provider's own counts. The memory buffer anchors its size on
+  the provider's last reported usage (`observe_usage`: prompt + completion tokens,
+  which cover the system prompt, tool schemas and files) and estimates only the
+  messages stored since; `used_tokens()` / `context_usage()` expose the result with
+  the window, the limit and whether the window is known. The agent anchors after
+  every reply, on all four run loops.
+- `ChatMemoryBuffer.max_fraction` (exclusive with `token_limit`): the budget as a
+  share of the model's context window, resolved on every request against the LLM
+  actually called. **Default behaviour change:** the buffer an agent creates for
+  itself now uses `max_fraction=0.75` instead of a `token_limit` frozen at
+  construction, so replacing `agent.llm` moves the budget. A buffer passed
+  explicitly is untouched.
+- `fallback_context_window` on every LLM: used only when the model is unknown
+  (`context_window` still overrides everything). `ChatBase.context_window_info()`
+  says where the value comes from and whether it is assumed.
+- `gwenflow.utils.tokens.hf_tokenizer(model)`: a `tokenizer_fn` backed by the Hugging
+  Face tokenizer of the served model (optional `transformers` dependency), for
+  buffers that must count like a Mistral, Qwen or Gemma server does.
+- Compaction in tiers (`gwenflow.memory.compaction`).
+  `ChatMemoryBuffer.compact()` now rewrites the stored history, cheapest
+  strategy first, re-measuring after each one and stopping once the history is back
+  under `target()`: `DeduplicateReads` (latest read of a file wins; on every request),
+  `ClampOversized` (head + tail of one oversized answer, tool result or tool argument),
+  `ClearToolResults` (`keep_pairs`, `exclude_tools`, `clear_tool_inputs`,
+  `min_clear_tokens`), `SummarizeOlder` (the summary tier of `ChatSummaryMemoryBuffer`,
+  now inside the live turn too, with a recent tail kept verbatim) and `SlidingWindow`.
+  Strategies never mutate the messages they receive; a tier that raises is skipped and
+  the sliding window always closes the chain. `strategies=[...]` replaces the tiers,
+  `default_strategies()` builds them.
+  **Default behaviour changes:** compaction is persisted in `messages` (the originals
+  of what was altered are kept in `compactions[-1].removed`), the plain
+  `ChatMemoryBuffer` compacts too (without summary), and compaction works in batches:
+  it triggers at `max_fraction` (0.85 of the window for the agent's default buffer)
+  and stops at `target()` (70 % of the limit by default, `target_fraction` /
+  `target_tokens` to set it), so the prefix sent to the model, and the provider's
+  prompt cache, stay stable between two batches. `get()` is unchanged as a last
+  resort when the stored history still does not fit.
+- Tool call / result pairing is guaranteed by construction (groups, see
+  `tool_groups`), checked by `validate_tool_pairs`. The first user message, the last
+  one (the live task, also pinned by the agent for the run) and any message marked
+  with `compaction.pin()` survive every strategy. The task now survives a
+  schema-validation retry.
+- `/compact` works on every buffer and reports the tiers applied, the message and
+  token counts before and after.
+- A better summary. The summarizer gets a `<message>`-tagged transcript where every
+  tool result is capped (`tool_result_max_chars`, 500) and text imitating the tags is
+  escaped; the previous summary is handed back as a `<previous-summary>` block to
+  update (keep what is still true, drop what is stale, add the new); user messages can
+  be kept verbatim beside the summary (`keep_user_messages`, each capped at
+  `keep_user_messages_max_chars`); an empty summary is retried once, then the sliding
+  window takes over for that batch. The summary message now says it is second-hand,
+  and a sliding-window cut leaves a one-line receipt (`SlidingWindow(receipt=True)`)
+  so the model does not assume continuity.
+- `Agent(summarizer=...)`: a (cheaper) model for the summaries. **Default behaviour
+  change:** the summaries' tokens are now folded into `AgentResponse.usage` and
+  `Agent.total_usage` of the run that triggered them (`/cost` shows the compaction
+  block as a breakdown, "included above"), and a delegated worker's compaction is no
+  longer counted twice.
+- Observability. `Agent.context_usage()` / `ChatMemoryBuffer.context_usage()` return a
+  `ContextUsage` (tokens used, window, limit, fraction, whether the window is known,
+  whether the count is anchored on the provider); `Agent(on_context_usage=...)` is
+  called with it before every request. `Agent(warn_near_limits=True)` adds a
+  request-scoped "Context notice" to the system prompt when `warning_threshold` of the
+  budget or of `max_turns` is reached (URGENT) and when compaction is imminent or
+  `critical_remaining_turns` are left (CRITICAL), so the model concludes instead of
+  seeing its history rewritten; nothing is written in the history. Each compaction
+  that triggers emits a `compact_messages` span with the strategies applied and the
+  message and token counts before and after, never the content
+  (`tracer.span(name)` is the generic helper behind it).
+
 ## [1.3.0] — 2026-10-12
 
 ### Added

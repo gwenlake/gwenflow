@@ -430,6 +430,64 @@ runner = FlowRunner("flows/news_summary.yaml")
 runner.run()
 ```
 
+## Context Management
+
+An agent that works for a long time on one task never exceeds the model's context window. Before every request the history is measured against the window of the LLM actually called (anchored on the provider's last reported usage, so a tokenizer mismatch cannot drift) and compacted in tiers, cheapest first, until it is back under a target well below the trigger. That hysteresis keeps the prefix sent to the model identical between two compaction batches, so the provider's prompt cache stays valid.
+
+| Tier | What it does | Cost |
+|---|---|---|
+| `DeduplicateReads` | keeps only the latest read of a file (coding tools), on every request | none |
+| `ClampOversized` | head + tail of one oversized answer, tool result or tool argument | none |
+| `ClearToolResults` | replaces old tool results by a one-line stub, the `keep_pairs` most recent kept | none |
+| `SummarizeOlder` | folds the oldest messages into a running summary, a recent tail kept verbatim | one LLM call |
+| `SlidingWindow` | drops the oldest messages, with a receipt | none |
+
+Tool calls and their results always move together, and the task of the run, the first user message and anything marked with `pin()` survive every tier. A summarizer that fails never fails the run: the sliding window takes over for that batch.
+
+Recommended configuration for a coding agent on a model served by vLLM with a 32K window:
+
+```python
+from gwenflow import Agent, ChatOpenAI
+from gwenflow.memory import ChatSummaryMemoryBuffer
+from gwenflow.memory.compaction import default_strategies
+from gwenflow.tools import EditFileTool, GrepTool, ReadFileTool, ShellTool
+from gwenflow.utils.tokens import hf_tokenizer
+
+llm = ChatOpenAI(
+    model="Qwen/Qwen3.6-27B",
+    base_url="http://vllm:8000/v1",
+    api_key="none",
+    context_window=32768,             # the server's --max-model-len: overrides the model's nominal 262K
+)
+# `context_window="auto"` reads max_model_len from /v1/models instead; `fallback_context_window`
+# only applies to a model that is in neither the table nor the server listing.
+summarizer = ChatOpenAI(model="Qwen/Qwen3.6-27B", base_url="http://vllm:8000/v1", api_key="none")
+
+history = ChatSummaryMemoryBuffer(
+    max_fraction=0.85,                # compaction triggers at 85 % of the window (~27.8K)
+    target_fraction=0.55,             # and stops at 55 % (~18K): a few batches, a stable prefix
+    tokenizer_fn=hf_tokenizer("Qwen/Qwen3.6-27B"),   # count like the server does (pip install transformers)
+    llm=summarizer,
+    strategies=default_strategies(
+        summarizer=summarizer,
+        clear={"keep_pairs": 4, "exclude_tools": frozenset({"EditFileTool"}), "min_clear_tokens": 200},
+        summarize={"keep_ratio": 0.4, "tool_result_max_chars": 400},
+    ),
+)
+
+agent = Agent(
+    name="coder",
+    llm=llm,
+    history=history,
+    tools=[ReadFileTool(base_dir="."), GrepTool(base_dir="."), EditFileTool(base_dir="."), ShellTool(base_dir=".")],
+    max_tool_output_tokens=2000,      # a long grep or file read is paged with read_tool_output
+    warn_near_limits=True,            # the model is told to conclude when a limit is close
+    on_context_usage=lambda u: print(f"context: {u.fraction:.0%} of {u.window_tokens:,} tokens"),
+)
+```
+
+Without any of this, `Agent(llm=llm)` already compacts at 85 % of the window and summarizes with a copy of `llm`; `Agent(summarizer=cheaper_llm)` picks a cheaper model for the summaries. `agent.context_usage()` reports where the history stands, `/compact` compacts on demand, and each compaction that triggers emits a `compact_messages` span with counts (never content).
+
 ## Telemetry & Observability
 
 Gwenflow ships with optional, standards-based tracing built on [OpenTelemetry](https://opentelemetry.io/) and the [OpenInference](https://github.com/Arize-ai/openinference) semantic conventions, so traces flow into **any** OTLP-compatible backend (Jaeger, Grafana Tempo, Arize Phoenix, Langfuse, Honeycomb, …).

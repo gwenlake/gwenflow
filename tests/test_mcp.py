@@ -267,14 +267,18 @@ def test_agent_with_mcp_server_lazy_fetches_tools(monkeypatch):
     from gwenflow import Agent, ChatOpenAI
 
     server = MCPServerSse(MCPServerSseParams(url="https://x"))
-    monkeypatch.setattr(server, "get_tools", lambda: [
-        _MCPTool(
-            _mcp_name="get_weather",
-            _mcp_description="weather",
-            _mcp_parameters={"type": "object"},
-            function=lambda **kw: "sunny",
-        )
-    ])
+    monkeypatch.setattr(
+        server,
+        "get_tools",
+        lambda: [
+            _MCPTool(
+                _mcp_name="get_weather",
+                _mcp_description="weather",
+                _mcp_parameters={"type": "object"},
+                function=lambda **kw: "sunny",
+            )
+        ],
+    )
 
     agent = Agent(name="test", llm=ChatOpenAI(api_key="test"), mcp_servers=[server])
     all_tools = agent.get_all_tools()

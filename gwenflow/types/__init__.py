@@ -1,3 +1,4 @@
+from gwenflow.types.context import ContextUsage, ContextWindowInfo
 from gwenflow.types.document import Document
 from gwenflow.types.message import (
     AudioContent,
@@ -27,6 +28,8 @@ from gwenflow.types.response import (
 from gwenflow.types.usage import AgentUsage, RequestUsage
 
 __all__ = [
+    "ContextUsage",
+    "ContextWindowInfo",
     "Document",
     "TextContent",
     "ThinkingContent",

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from gwenflow.llms.base import ChatBase
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
-from gwenflow.tools import Tool
+from gwenflow.tools import BaseTool
 from gwenflow.types import (
     AudioContent,
     Message,
@@ -354,7 +354,7 @@ class ChatOpenAI(ChatBase):
 
         return model_params
 
-    def _tool_to_openai(self, tool: Tool) -> dict:
+    def _tool_to_openai(self, tool: BaseTool) -> dict:
         return {
             "type": "function",
             "function": {
@@ -377,6 +377,30 @@ class ChatOpenAI(ChatBase):
         client_params = self._get_client_params()
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
+
+    _CONTEXT_WINDOW_KEYS = ("max_model_len", "context_length", "context_window", "max_context_length")
+
+    def discover_context_window(self) -> Optional[int]:
+        """Read the model's context window from the server's `/models` listing.
+
+        OpenAI itself does not publish it, but OpenAI-compatible servers do:
+        vLLM as `max_model_len` (the value actually enforced, which can be
+        lower than the model's nominal window), others as `context_length` or
+        `context_window`. Returns None when the server says nothing.
+        """
+        try:
+            for model in self.get_client().models.list():
+                if model.id != self.model:
+                    continue
+                extra = getattr(model, "model_extra", None) or {}
+                for key in self._CONTEXT_WINDOW_KEYS:
+                    value = extra.get(key)
+                    if isinstance(value, int) and value > 0:
+                        return value
+                return None
+        except Exception as e:  # noqa: BLE001 — discovery is best-effort
+            logger.warning(f"Could not read the context window of '{self.model}' from the server: {e}")
+        return None
 
     def _format_response(self, response: str, response_format: Any = None) -> Any:
         if response is None:
@@ -460,7 +484,9 @@ class ChatOpenAI(ChatBase):
                     logger.warning(f"Error processing tool calls: {e}")
 
         if self.tools and not any(isinstance(p, ToolCall) for p in parts):
-            names = {t.name if isinstance(t, Tool) else t.get("function", {}).get("name") for t in self.tools}
+            # Any BaseTool carries its name (Tool, but also ReadFileTool & co. from
+            # the coding bundle); only raw OpenAI-shaped dicts need unpacking.
+            names = {t.name if isinstance(t, BaseTool) else t.get("function", {}).get("name") for t in self.tools}
             recovered: list = []
             for part in parts:
                 calls, rest = _recover_tool_calls(part.content, names) if isinstance(part, TextContent) else ([], "")
