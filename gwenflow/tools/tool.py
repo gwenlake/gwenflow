@@ -157,6 +157,10 @@ class BaseTool(ABC):
     function_schema: dict[str, Any] = field(default=None)
     max_results: int = 50
     max_retries: int | None = 3
+    requires_approval: bool = False
+    """The agent runs the tool only after the user approved the call, and runs it once:
+    `max_retries` is ignored, since a failure after the side effect (a write that timed
+    out) would repeat a change the user approved a single time."""
 
     def __post_init__(self):
         self.function_schema = function_to_json_schema(self._run)
@@ -184,29 +188,35 @@ class BaseTool(ABC):
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
+    def _max_attempts(self) -> int | None:
+        """One attempt for a tool that requires approval (see `requires_approval`)."""
+        return 1 if self.requires_approval else self.max_retries
+
     def run(self, **kwargs: Any) -> str:
+        attempts = self._max_attempts()
         _retry = retry(
-            stop=stop_after_attempt(self.max_retries),
+            stop=stop_after_attempt(attempts),
             wait=wait_exponential(multiplier=1, min=1, max=10),
             reraise=True,
         )
         try:
             response = _retry(self._run)(**kwargs)
         except RetryError as e:
-            logger.error(f"Tool {self.name} failed after {self.max_retries} retries: {e}")
+            logger.error(f"Tool {self.name} failed after {attempts} retries: {e}")
             raise
         return self._cast_response_to_str(response)
 
     async def arun(self, **kwargs: Any) -> str:
+        attempts = self._max_attempts()
         _retry = retry(
-            stop=stop_after_attempt(self.max_retries),
+            stop=stop_after_attempt(attempts),
             wait=wait_exponential(multiplier=1, min=1, max=10),
             reraise=True,
         )
         try:
             response = await asyncio.to_thread(_retry(self._run), **kwargs)
         except RetryError as e:
-            logger.error(f"Tool {self.name} failed after {self.max_retries} retries: {e}")
+            logger.error(f"Tool {self.name} failed after {attempts} retries: {e}")
             raise
         return self._cast_response_to_str(response)
 
@@ -224,6 +234,7 @@ class Tool(BaseTool):
         parameters: dict[str, Any] | None = None,
         max_results: int = 50,
         max_retries: int | None = 3,
+        requires_approval: bool = False,
     ):
         self.function = function
         self.name = name
@@ -232,6 +243,7 @@ class Tool(BaseTool):
         self.function_schema = None
         self.max_results = max_results
         self.max_retries = max_retries
+        self.requires_approval = requires_approval
         self.__post_init__()
 
     def __post_init__(self):

@@ -39,9 +39,11 @@ from gwenflow.types import (
     AgentEventContent,
     AgentEventStarted,
     AgentEventThinking,
+    AgentEventToolApprovalRequired,
     AgentEventToolCompleted,
     AgentEventToolStarted,
     AgentResponse,
+    AgentResponseEvent,
     AgentUsage,
     ContextUsage,
     ContextWindowInfo,
@@ -49,7 +51,9 @@ from gwenflow.types import (
     ModelResponse,
     RequestUsage,
     TextContent,
+    ToolApprovalRequest,
     ToolCall,
+    ToolDenied,
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
@@ -111,6 +115,14 @@ MAX_VALIDATION_RETRIES = 3
 """How many times an invalid structured (`response_model`) answer is sent
 back to the model for correction before giving up (parsed=None, raw
 content kept)."""
+
+ToolApprovals = Dict[str, Union[bool, ToolDenied]]
+"""The user's decisions on the tool calls a run paused on, by tool call id:
+True runs the call, False or a `ToolDenied` (with the reason the model reads)
+refuses it. Only an explicit True approves."""
+
+UNANSWERED_APPROVAL = "The user did not answer this approval request and sent a new message instead."
+"""Tool result of a pending call left without a decision when the next run starts."""
 
 
 @dataclass
@@ -232,22 +244,12 @@ class Agent:
         if self.llm is None:
             self.llm = ChatOpenAI()
         else:
-            # The agent configures tools/tool_choice/response_format on its
-            # LLM below: take a private copy so that sharing one llm instance
-            # between several agents (orchestrator + team members) does not
-            # cross-contaminate their tool lists. The underlying HTTP client
-            # is still shared (shallow copy).
             self.llm = copy.copy(self.llm)
         if self.history is None:
-            # Dedicated summarizer: `summarizer`, or the same model stripped of
-            # the agent's tools and response_format (assigned on self.llm
-            # below) so the compaction calls stay plain text-in / text-out.
             summarizer = copy.copy(self.summarizer if self.summarizer is not None else self.llm)
             summarizer.tools = []
             summarizer.tool_choice = None
             summarizer.response_format = None
-            # Fraction of the window, resolved on every request against the
-            # LLM actually called (see `_sync_context_window`).
             self.history = ChatSummaryMemoryBuffer(
                 max_fraction=DEFAULT_MAX_FRACTION,
                 llm=summarizer,
@@ -295,6 +297,12 @@ class Agent:
                     return (
                         f"[handoff failed] The '{member.name or 'agent'}' agent stopped "
                         f"after reaching its max_turns limit without a final answer."
+                    )
+                if response.finish_reason == "approval_required":
+                    tools = ", ".join(r.tool_name for r in response.pending_approvals)
+                    return (
+                        f"[handoff failed] The '{member.name or 'agent'}' agent needs the user's "
+                        f"approval to run {tools}, which a delegated task cannot ask for."
                     )
                 return response.content or ""
 
@@ -460,7 +468,6 @@ class Agent:
         if command == "/system":
             if self.system_prompt:
                 return f"System prompt (fixed):\n\n{self.system_prompt.strip()}"
-            # Knowledge references are query-dependent: resolve without the retriever.
             retriever, self.retriever = self.retriever, None
             try:
                 prompt = self.get_system_prompt(task="")
@@ -628,13 +635,21 @@ class Agent:
             return self._compact_report(record)
         return self._execute_command(command, args)
 
-    def tool(self, func: Callable) -> Callable:
-        """Decorator that registers a function as a tool on this agent instance."""
-        # self.tools = list(self.tools) + [FunctionTool.from_function(func)]
-        self.tools = list(self.tools) + [Tool(func)]
-        self.llm.tools = self._llm_tools()
-        self.llm.tool_choice = self.tool_choice
-        return func
+    def tool(self, func: Optional[Callable] = None, *, requires_approval: bool = False) -> Callable:
+        """Decorator that registers a function as a tool on this agent instance.
+
+        Use it bare (`@agent.tool`) or with options (`@agent.tool(requires_approval=True)`).
+        """
+
+        def register(func: Callable) -> Callable:
+            self.tools = list(self.tools) + [Tool(func, requires_approval=requires_approval)]
+            self.llm.tools = self._llm_tools()
+            self.llm.tool_choice = self.tool_choice
+            return func
+
+        if func is None:
+            return register
+        return register(func)
 
     def _format_context(self, context: Optional[Union[str, Dict[str, str]]]) -> str:
         text = ""
@@ -904,7 +919,7 @@ class Agent:
             info = info_fn()
         if isinstance(info, ContextWindowInfo):
             window, resolved = info.tokens, info.resolved
-        else:  # a stub (test double, custom class): its context size is the budget itself
+        else:
             fraction = self.history.max_fraction or CONTEXT_SAFETY_RATIO
             window, resolved = math.ceil(self.llm.get_context_size() / fraction), True
         self.history.context_window = window
@@ -1195,15 +1210,190 @@ class Agent:
 
         return results
 
+    def _pending_tool_calls(self) -> List[ToolCall]:
+        """Tool calls of the last assistant turn that have no result yet.
+
+        Read from the history alone: a run paused on approvals keeps no other
+        state, so it can be resumed after a /save + /load or in another process.
+        """
+        answered: set[str] = set()
+        for message in reversed(self.history.messages):
+            if message.role == "tool":
+                answered.add(message.tool_call_id)
+                continue
+            if message.role != "assistant" or not message.tool_calls:
+                return []
+            return [
+                ToolCall(id=call["id"], name=call["function"]["name"], arguments=call["function"]["arguments"])
+                for call in message.tool_calls
+                if call["id"] not in answered
+            ]
+        return []
+
+    def _approval_request(self, tool_call: ToolCall) -> ToolApprovalRequest:
+        return ToolApprovalRequest(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            tool_args=self._parse_tool_args(tool_call),
+        )
+
+    def get_pending_approvals(self) -> List[ToolApprovalRequest]:
+        """The tool calls waiting for the user's approval, e.g. to ask again after reloading a session."""
+        return [self._approval_request(tool_call) for tool_call in self._pending_tool_calls()]
+
+    def _split_tool_calls(self, tool_calls: List[ToolCall]) -> tuple[List[ToolCall], List[ToolCall]]:
+        """Separate the tool calls to run now from those that wait for the user's approval."""
+        gated = {tool.name for tool in self.get_all_tools() if tool.requires_approval}
+        return [t for t in tool_calls if t.name not in gated], [t for t in tool_calls if t.name in gated]
+
+    def _decide_pending(self, approvals: Optional[ToolApprovals]) -> tuple[List[ToolCall], List[Message]]:
+        """Apply the user's decisions to the pending tool calls.
+
+        Returns the approved calls, to execute, and the tool results of the
+        denied ones. A pending call left without a decision is denied too: the
+        user moved on without answering, and the providers reject a history
+        where a tool call has no result.
+        """
+        approvals = approvals or {}
+        pending = self._pending_tool_calls()
+        unknown = set(approvals) - {tool_call.id for tool_call in pending}
+        if unknown:
+            logger.warning(f"Ignoring approvals for tool calls that are not pending: {sorted(unknown)}")
+
+        approved: List[ToolCall] = []
+        denials: List[Message] = []
+        for tool_call in pending:
+            decision = approvals.get(tool_call.id)
+            if decision is True:
+                approved.append(tool_call)
+                continue
+            if isinstance(decision, ToolDenied):
+                reason = decision.message
+            elif decision is False:
+                reason = ToolDenied().message
+            else:
+                reason = UNANSWERED_APPROVAL
+            logger.info(f"[Tool Call] '{tool_call.name}' denied: {reason}")
+            denials.append(
+                ToolResponse(tool_call_id=tool_call.id, tool_name=tool_call.name, content=reason).to_message()
+            )
+        return approved, denials
+
+    def _start_tool_calls(
+        self, tool_calls: List[ToolCall], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        for tool_call in tool_calls:
+            event = AgentEventToolStarted(
+                agent_id=self.id,
+                run_id=agent_response.run_id,
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                tool_args=self._parse_tool_args(tool_call),
+            )
+            agent_response.events.append(event)
+            yield event
+
+    def _record_tool_results(
+        self, tool_messages: List[Message], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        for m in tool_messages:
+            self.history.add_message(m)
+            agent_response.messages.append(m)
+            event = AgentEventToolCompleted(
+                agent_id=self.id, run_id=agent_response.run_id, tool_call_id=m.tool_call_id, content=m.content
+            )
+            agent_response.events.append(event)
+            yield event
+
+    def _run_tool_round(
+        self, tool_calls: List[ToolCall], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        """Execute `tool_calls` and record their results in the history and the response.
+
+        A generator so the streaming paths can yield each event as it happens;
+        the other paths just exhaust it.
+        """
+        if not tool_calls:
+            return
+        yield from self._start_tool_calls(tool_calls, agent_response)
+        tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
+        agent_response.usage.tool_calls += len(tool_messages)
+        yield from self._record_tool_results(tool_messages, agent_response)
+        if self.team:
+            # Fold the sub-agents' spend into this run's usage.
+            agent_response.usage.add(self._drain_delegation_usage())
+
+    async def _arun_tool_round(
+        self, tool_calls: List[ToolCall], agent_response: AgentResponse
+    ) -> AsyncIterator[AgentResponseEvent]:
+        """Async twin of `_run_tool_round`: the calls of the round run in parallel."""
+        if not tool_calls:
+            return
+        for event in self._start_tool_calls(tool_calls, agent_response):
+            yield event
+        tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
+        agent_response.usage.tool_calls += len(tool_messages)
+        for event in self._record_tool_results(tool_messages, agent_response):
+            yield event
+        if self.team:
+            agent_response.usage.add(self._drain_delegation_usage())
+
+    def _request_approvals(
+        self, tool_calls: List[ToolCall], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        """Register the tool calls the run pauses on, one event per call."""
+        for tool_call in tool_calls:
+            request = self._approval_request(tool_call)
+            agent_response.pending_approvals.append(request)
+            event = AgentEventToolApprovalRequired(
+                agent_id=self.id,
+                run_id=agent_response.run_id,
+                tool_call_id=request.tool_call_id,
+                tool_name=request.tool_name,
+                tool_args=request.tool_args,
+            )
+            agent_response.events.append(event)
+            yield event
+
+    def _resume_tool_calls(
+        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        """Settle the tool calls a previous run paused on, before new input reaches the history."""
+        approved, denials = self._decide_pending(approvals)
+        yield from self._run_tool_round(approved, agent_response)
+        yield from self._record_tool_results(denials, agent_response)
+
+    async def _aresume_tool_calls(
+        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse
+    ) -> AsyncIterator[AgentResponseEvent]:
+        approved, denials = self._decide_pending(approvals)
+        async for event in self._arun_tool_round(approved, agent_response):
+            yield event
+        for event in self._record_tool_results(denials, agent_response):
+            yield event
+
+    def _run_input(self, input: Union[str, List[Message], List[Dict[str, str]], None]) -> tuple[List[Message], Any]:
+        """The new messages of a run and its task.
+
+        Without `input`, the run resumes the tool calls waiting for approval
+        and the task (used for retrieval) is the last user message.
+        """
+        if input is not None:
+            messages = self.llm.input_to_message_list(input)
+            return messages, messages[-1].content
+        if not self._pending_tool_calls():
+            raise ValueError("`input` is required: no tool call is waiting for approval.")
+        task = next((m.content for m in reversed(self.history.messages) if m.role == "user"), None)
+        return [], task
+
     @tracer.agent(name="Agent Run")
     def run(
         self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]], None] = None,
         context: Optional[Union[str, Dict[str, str]]] = None,
+        approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
-        # prepare messages and task
-        messages = self.llm.input_to_message_list(input)
-        task = messages[-1].content
+        messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
@@ -1220,11 +1410,13 @@ class Agent:
 
         # history
         self._prepare_history(task=task, context=context)
-        self._pin_task(messages)
+        if messages:
+            self._pin_task(messages)
+        for _ in self._resume_tool_calls(approvals, agent_response):
+            pass
         self.history.add_messages(messages)
 
-        # add reasoning
-        if self.reasoning_model:
+        if self.reasoning_model and messages:
             self.history.compact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             response = self.reason(messages_for_reasoning_model)
@@ -1315,47 +1507,24 @@ class Agent:
                 completed = True
                 break
 
-            # handle tool calls
             if response.tool_calls and self.get_all_tools():
-                for tool_call in response.tool_calls:
-                    args = self._parse_tool_args(tool_call)
-                    agent_response.events.append(
-                        AgentEventToolStarted(
-                            agent_id=self.id,
-                            run_id=agent_response.run_id,
-                            tool_call_id=tool_call.id,
-                            tool_name=tool_call.name,
-                            tool_args=args,
-                        )
-                    )
-
-                tool_messages = self.execute_tool_calls(tool_calls=response.tool_calls)
-                for m in tool_messages:
-                    agent_response.usage.tool_calls += 1
-                    self.history.add_message(m)
-                    agent_response.messages.append(m)
-                    agent_response.events.append(
-                        AgentEventToolCompleted(
-                            agent_id=self.id,
-                            run_id=agent_response.run_id,
-                            tool_call_id=m.tool_call_id,
-                            content=m.content,
-                        )
-                    )
-                if self.team:
-                    # Fold the sub-agents' spend into this run's usage.
-                    agent_response.usage.add(self._drain_delegation_usage())
+                to_run, to_approve = self._split_tool_calls(response.tool_calls)
+                for _ in self._run_tool_round(to_run, agent_response):
+                    pass
+                for _ in self._request_approvals(to_approve, agent_response):
+                    pass
 
             if self.tool_choice == "required":
-                # The LLM reads its own tool_choice at request time: downgrade
-                # it too, otherwise every turn keeps forcing a tool call and
-                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
                 self.llm.tool_choice = "auto"
 
-        if not completed:
-            # max_turns exhausted without a final answer: don't report the
-            # partial state of the last (tool-calling) turn as a normal stop.
+            if agent_response.pending_approvals:
+                break
+
+        paused = bool(agent_response.pending_approvals)
+        if paused:
+            agent_response.content = response.content or None
+        elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
@@ -1366,10 +1535,10 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop" if completed else "max_turns"
+        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
         drain = getattr(self.history, "drain_usage", None)
         if drain is not None:
-            agent_response.usage.add(drain())  # summaries made for this run
+            agent_response.usage.add(drain())
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1377,11 +1546,11 @@ class Agent:
     @tracer.agent(name="Agent Arun")
     async def arun(
         self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]], None] = None,
         context: Optional[Union[str, Dict[str, str]]] = None,
+        approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
-        messages = self.llm.input_to_message_list(input)
-        task = messages[-1].content
+        messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
@@ -1396,14 +1565,17 @@ class Agent:
         )
 
         self._prepare_history(task=task, context=context)
-        self._pin_task(messages)
+        if messages:
+            self._pin_task(messages)
+        async for _ in self._aresume_tool_calls(approvals, agent_response):
+            pass
         self.history.add_messages(messages)
 
-        if self.reasoning_model:
+        if self.reasoning_model and messages:
             await self.history.acompact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
-            if reasoning_agent_response is not None:  # areason() returns None on an empty plan
+            if reasoning_agent_response is not None:
                 agent_response.reasoning_content = reasoning_agent_response.reasoning_content
                 agent_response.usage.add(reasoning_agent_response.usage)
                 if reasoning_agent_response.reasoning_content:
@@ -1485,47 +1657,24 @@ class Agent:
                 completed = True
                 break
 
-            # handle tool calls
             if response.tool_calls and self.get_all_tools():
-                for tool_call in response.tool_calls:
-                    args = self._parse_tool_args(tool_call)
-                    agent_response.events.append(
-                        AgentEventToolStarted(
-                            agent_id=self.id,
-                            run_id=agent_response.run_id,
-                            tool_call_id=tool_call.id,
-                            tool_name=tool_call.name,
-                            tool_args=args,
-                        )
-                    )
-
-                tool_messages = await self.aexecute_tool_calls(tool_calls=response.tool_calls)
-                for m in tool_messages:
-                    agent_response.usage.tool_calls += 1
-                    self.history.add_message(m)
-                    agent_response.messages.append(m)
-                    agent_response.events.append(
-                        AgentEventToolCompleted(
-                            agent_id=self.id,
-                            run_id=agent_response.run_id,
-                            tool_call_id=m.tool_call_id,
-                            content=m.content,
-                        )
-                    )
-                if self.team:
-                    # Fold the sub-agents' spend into this run's usage.
-                    agent_response.usage.add(self._drain_delegation_usage())
+                to_run, to_approve = self._split_tool_calls(response.tool_calls)
+                async for _ in self._arun_tool_round(to_run, agent_response):
+                    pass
+                for _ in self._request_approvals(to_approve, agent_response):
+                    pass
 
             if self.tool_choice == "required":
-                # The LLM reads its own tool_choice at request time: downgrade
-                # it too, otherwise every turn keeps forcing a tool call and
-                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
                 self.llm.tool_choice = "auto"
 
-        if not completed:
-            # max_turns exhausted without a final answer: don't report the
-            # partial state of the last (tool-calling) turn as a normal stop.
+            if agent_response.pending_approvals:
+                break
+
+        paused = bool(agent_response.pending_approvals)
+        if paused:
+            agent_response.content = response.content or None
+        elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
@@ -1536,10 +1685,10 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop" if completed else "max_turns"
+        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
         drain = getattr(self.history, "drain_usage", None)
         if drain is not None:
-            agent_response.usage.add(drain())  # summaries made for this run
+            agent_response.usage.add(drain())
         self.total_usage.add(agent_response.usage)
 
         return agent_response
@@ -1547,11 +1696,11 @@ class Agent:
     @tracer.agent(name="Agent Stream")
     def run_stream(
         self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]], None] = None,
         context: Optional[Union[str, Dict[str, str]]] = None,
+        approvals: Optional[ToolApprovals] = None,
     ) -> Iterator[AgentResponse]:
-        messages = self.llm.input_to_message_list(input)
-        task = messages[-1].content
+        messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
@@ -1570,10 +1719,12 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
-        self._pin_task(messages)
+        if messages:
+            self._pin_task(messages)
+        yield from self._resume_tool_calls(approvals, agent_response)
         self.history.add_messages(messages)
 
-        if self.reasoning_model:
+        if self.reasoning_model and messages:
             self.history.compact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_response = self.reason(messages_for_reasoning_model)
@@ -1604,8 +1755,6 @@ class Agent:
             full_thinking = ""
             final_tool_calls: List[ToolCall] = []
             turn_usage = RequestUsage()
-            # Accumulate raw thinking parts across the turn so we can re-derive
-            # provider-shaped echo blocks (signatures etc.) at the end.
             turn_response = ModelResponse()
 
             for chunk in self.llm.stream(input=messages_for_model):
@@ -1634,7 +1783,6 @@ class Agent:
                 if chunk.tool_calls:
                     final_tool_calls = chunk.tool_calls
 
-                # Stash raw parts (incl. ThinkingContent with signatures) for echo-back
                 turn_response.parts.extend(chunk.parts)
 
             agent_response.usage.add(turn_usage)
@@ -1678,42 +1826,21 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
-                for tool_call in final_tool_calls:
-                    args = self._parse_tool_args(tool_call)
-                    event = AgentEventToolStarted(
-                        agent_id=self.id,
-                        run_id=agent_response.run_id,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        tool_args=args,
-                    )
-                    agent_response.events.append(event)
-                    yield event
-
-                tool_messages = self.execute_tool_calls(tool_calls=final_tool_calls)
-                for m in tool_messages:
-                    agent_response.usage.tool_calls += 1
-                    self.history.add_message(m)
-                    agent_response.messages.append(m)
-                    event = AgentEventToolCompleted(
-                        agent_id=self.id, run_id=agent_response.run_id, tool_call_id=m.tool_call_id, content=m.content
-                    )
-                    agent_response.events.append(event)
-                    yield event
-                if self.team:
-                    # Fold the sub-agents' spend into this run's usage.
-                    agent_response.usage.add(self._drain_delegation_usage())
+                to_run, to_approve = self._split_tool_calls(final_tool_calls)
+                yield from self._run_tool_round(to_run, agent_response)
+                yield from self._request_approvals(to_approve, agent_response)
 
             if self.tool_choice == "required":
-                # The LLM reads its own tool_choice at request time: downgrade
-                # it too, otherwise every turn keeps forcing a tool call and
-                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
                 self.llm.tool_choice = "auto"
 
-        if not completed:
-            # max_turns exhausted without a final answer: don't leave the last
-            # streamed delta as content nor report a normal stop.
+            if agent_response.pending_approvals:
+                break
+
+        paused = bool(agent_response.pending_approvals)
+        if paused:
+            agent_response.content = full_content or None
+        elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
@@ -1724,10 +1851,10 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        agent_response.finish_reason = "stop" if completed else "max_turns"
+        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
         drain = getattr(self.history, "drain_usage", None)
         if drain is not None:
-            agent_response.usage.add(drain())  # summaries made for this run
+            agent_response.usage.add(drain())
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
@@ -1735,11 +1862,11 @@ class Agent:
     @tracer.agent(name="Agent Astream")
     async def arun_stream(
         self,
-        input: Union[str, List[Message], List[Dict[str, str]]],
+        input: Union[str, List[Message], List[Dict[str, str]], None] = None,
         context: Optional[Union[str, Dict[str, str]]] = None,
+        approvals: Optional[ToolApprovals] = None,
     ) -> AsyncIterator[AgentResponse]:
-        messages = self.llm.input_to_message_list(input)
-        task = messages[-1].content
+        messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
@@ -1758,10 +1885,13 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
-        self._pin_task(messages)
+        if messages:
+            self._pin_task(messages)
+        async for event in self._aresume_tool_calls(approvals, agent_response):
+            yield event
         self.history.add_messages(messages)
 
-        if self.reasoning_model:
+        if self.reasoning_model and messages:
             await self.history.acompact()
             messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
             reasoning_response = await self.areason(messages_for_reasoning_model)
@@ -1863,42 +1993,23 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
-                for tool_call in final_tool_calls:
-                    args = self._parse_tool_args(tool_call)
-                    event = AgentEventToolStarted(
-                        agent_id=self.id,
-                        run_id=agent_response.run_id,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        tool_args=args,
-                    )
-                    agent_response.events.append(event)
+                to_run, to_approve = self._split_tool_calls(final_tool_calls)
+                async for event in self._arun_tool_round(to_run, agent_response):
                     yield event
-
-                tool_messages = await self.aexecute_tool_calls(tool_calls=final_tool_calls)
-                for m in tool_messages:
-                    agent_response.usage.tool_calls += 1
-                    self.history.add_message(m)
-                    agent_response.messages.append(m)
-                    event = AgentEventToolCompleted(
-                        agent_id=self.id, run_id=agent_response.run_id, tool_call_id=m.tool_call_id, content=m.content
-                    )
-                    agent_response.events.append(event)
+                for event in self._request_approvals(to_approve, agent_response):
                     yield event
-                if self.team:
-                    # Fold the sub-agents' spend into this run's usage.
-                    agent_response.usage.add(self._drain_delegation_usage())
 
             if self.tool_choice == "required":
-                # The LLM reads its own tool_choice at request time: downgrade
-                # it too, otherwise every turn keeps forcing a tool call and
-                # the agent can never produce a final answer.
                 self.tool_choice = "auto"
                 self.llm.tool_choice = "auto"
 
-        if not completed:
-            # max_turns exhausted without a final answer: don't leave the last
-            # streamed delta as content nor report a normal stop.
+            if agent_response.pending_approvals:
+                break
+
+        paused = bool(agent_response.pending_approvals)
+        if paused:
+            agent_response.content = full_content or None
+        elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
@@ -1909,10 +2020,10 @@ class Agent:
         agent_response.events.append(event)
         yield event
 
-        agent_response.finish_reason = "stop" if completed else "max_turns"
+        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
         drain = getattr(self.history, "drain_usage", None)
         if drain is not None:
-            agent_response.usage.add(drain())  # summaries made for this run
+            agent_response.usage.add(drain())
         self.total_usage.add(agent_response.usage)
 
         yield agent_response
