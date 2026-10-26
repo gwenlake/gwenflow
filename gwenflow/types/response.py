@@ -49,6 +49,30 @@ class ToolResponse:
 
 
 @dataclass
+class ToolApprovalRequest:
+    """A tool call waiting for the user's approval before it runs.
+
+    Listed in `AgentResponse.pending_approvals` when a run pauses on a tool
+    declared with `requires_approval=True`. Answer it on the next run with
+    `approvals={tool_call_id: True | False | ToolDenied(...)}`.
+    """
+
+    tool_call_id: str
+    tool_name: str
+    tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ToolDenied:
+    """A refusal of a tool call. `message` is what the model reads in place of the tool result."""
+
+    message: str = "The user denied this tool call."
+
+
+@dataclass
 class ModelResponse:
     """The decomposed result of one LLM API call.
 
@@ -149,6 +173,7 @@ class AgentEventType(str, Enum):
     THINKING = "thinking"
     TOOL_STARTED = "tool_started"
     TOOL_COMPLETED = "tool_completed"
+    TOOL_APPROVAL_REQUIRED = "tool_approval_required"
 
 
 @dataclass(kw_only=True)
@@ -215,6 +240,14 @@ class AgentEventToolCompleted(BaseAgentEvent):
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
+@dataclass(kw_only=True)
+class AgentEventToolApprovalRequired(BaseAgentEvent):
+    event_type: str = AgentEventType.TOOL_APPROVAL_REQUIRED.value
+    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_name: str | None = None
+    tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
 AgentResponseEvent = Annotated[
     AgentEventStarted
     | AgentEventCompleted
@@ -223,7 +256,8 @@ AgentResponseEvent = Annotated[
     | AgentEventContent
     | AgentEventThinking
     | AgentEventToolStarted
-    | AgentEventToolCompleted,
+    | AgentEventToolCompleted
+    | AgentEventToolApprovalRequired,
     Discriminator("event_type"),
 ]
 
@@ -239,6 +273,10 @@ class AgentResponse:
     loop, and `events` is the full event log (also yielded live by
     `run_stream`). `usage` aggregates tokens, request counts, and tool calls
     over the whole run.
+
+    `finish_reason` is "stop", "max_turns", or "approval_required" when the
+    run paused on tools declared with `requires_approval=True`: the calls are
+    listed in `pending_approvals` and `content` holds the text of that turn.
     """
 
     agent_id: str
@@ -248,6 +286,7 @@ class AgentResponse:
     reasoning_content: str | None = None
     messages: list[Message] = field(default_factory=list)
     events: list[AgentResponseEvent] = field(default_factory=list)
+    pending_approvals: list[ToolApprovalRequest] = field(default_factory=list)
     finish_reason: str | None = None
     usage: AgentUsage = field(default_factory=AgentUsage)
     created_at: datetime = field(default_factory=now_utc)
