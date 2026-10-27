@@ -39,8 +39,7 @@ class SkillsToolset:
         toolset = SkillsToolset(skills)
         agent = Agent(
             name="MyAgent",
-            skills=skills,  # compact listing + management tools added automatically
-            tools=toolset.get_tools(),  # or pass explicitly
+            skills=skills,  # compact listing, management tools and script tools added automatically
         )
     """
 

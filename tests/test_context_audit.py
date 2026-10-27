@@ -151,6 +151,7 @@ def scripted_agent(**kwargs) -> Agent:
     from gwenflow.tools import Tool
 
     llm = kwargs.pop("llm", None) or ScriptedLLM()
+    kwargs.setdefault("commands", True)
     agent = Agent(name="auditor", instructions="Be terse.", llm=llm, tools=[Tool(search)], **kwargs)
     agent.history.tokenizer_fn = words
     return agent

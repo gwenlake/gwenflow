@@ -311,7 +311,7 @@ agent = Agent(
 print(agent.run("What's the weather like in Paris?").content)
 ```
 
-The agent automatically gets three management tools: `list_skills`, `load_skill`, and `read_skill_resource`. Any Python function defined in a skill's `scripts/` directory (with a docstring and type annotations) is auto-registered as a callable Tool.
+The agent automatically gets three management tools: `list_skills`, `load_skill`, and `read_skill_resource`. Any Python function defined in a skill's `scripts/` directory (with a docstring and type annotations) is auto-registered as a callable Tool as well. Passing `tools=skills.get_tools()` explicitly is still supported and does not create duplicates.
 
 ## Multi-Agent Orchestration
 
@@ -487,6 +487,18 @@ agent = Agent(
 ```
 
 Without any of this, `Agent(llm=llm)` already compacts at 85 % of the window and summarizes with a copy of `llm`; `Agent(summarizer=cheaper_llm)` picks a cheaper model for the summaries. `agent.context_usage()` reports where the history stands, `/compact` compacts on demand, and each compaction that triggers emits a `compact_messages` span with counts (never content).
+
+### Slash commands
+
+An agent can handle a few commands locally, without an LLM call: `/help`, `/compact`, `/reset`, `/history`, `/cost`, `/tools`, `/summary`, `/system`, `/config`, `/save <path>` and `/load <path>`. They are **off by default**: every input, slash included, goes to the model. Enable all of them with `commands=True`, or only some:
+
+```python
+agent = Agent(llm=llm, commands=True)                 # every command
+agent = Agent(llm=llm, commands={"/compact", "/cost"})  # just these
+print(agent.run("/help").content)
+```
+
+A bare command is intercepted; `/save` and `/load` also take an argument. Anything else that merely starts with a slash ("/reset the counter in my code") is treated as a normal request.
 
 ## Telemetry & Observability
 
