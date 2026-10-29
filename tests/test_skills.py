@@ -180,6 +180,42 @@ def test_get_tools_prefers_explicit_tools_list(tmp_path: Path):
     assert tools[0].function(x=3, y=4) == 12
 
 
+def test_get_tools_imports_scripts_once(tmp_path: Path):
+    """Script files are imported once per Skill; later calls reuse the cached tools."""
+    counter = tmp_path / "loads.txt"
+    d = _make_skill_dir(tmp_path, "counted", "Counts loads")
+    (d / "scripts").mkdir()
+    (d / "scripts" / "tools.py").write_text(
+        textwrap.dedent(
+            f"""
+            from pathlib import Path
+            Path({str(counter)!r}).open("a").write("x")
+
+            def ping() -> str:
+                \"\"\"Return pong.\"\"\"
+                return "pong"
+            """
+        ).strip()
+    )
+    skill = Skill.from_directory(str(d))
+    first = skill.get_tools()
+    second = skill.get_tools()
+    assert [t.name for t in first] == ["ping"]
+    assert first[0] is second[0]
+    assert counter.read_text() == "x"
+
+
+def test_get_tools_uses_a_unique_module_name(tmp_path: Path):
+    """Each skill's scripts load under their own module name and stay importable."""
+    import sys
+
+    _make_skill_dir(tmp_path, "math", "Do arithmetic", with_script=True)
+    skill = Skill.from_directory(str(tmp_path / "math"))
+    (fn_tool,) = skill.get_tools()
+    assert fn_tool.name == "add_numbers"
+    assert "gwenflow_skills.math.tools" in sys.modules
+
+
 def test_get_tools_no_scripts_returns_empty():
     skill = Skill(name="x", description="y")
     assert skill.get_tools() == []
@@ -306,3 +342,39 @@ def test_agent_with_skills_registers_management_tools(skill_root: Path):
     assert "list_skills" in tool_names
     assert "load_skill" in tool_names
     assert "read_skill_resource" in tool_names
+
+
+def test_agent_with_skills_registers_script_tools(tmp_path: Path):
+    """Script tools are registered on the agent automatically.
+
+    The README promised this but Agent only added the three management tools.
+    """
+    from gwenflow import Agent, ChatOpenAI
+
+    _make_skill_dir(tmp_path, "math", "Do arithmetic", with_script=True)
+    sd = SkillsDirectory(str(tmp_path))
+    agent = Agent(
+        name="test",
+        llm=ChatOpenAI(api_key="test"),
+        skills=sd.skills,
+    )
+    tool_names = [t.name for t in agent.tools]
+    assert "add_numbers" in tool_names
+    assert tool_names.count("add_numbers") == 1
+    assert "add_numbers" in [t.name for t in agent.llm.tools]
+
+
+def test_agent_with_skills_explicit_script_tools_not_duplicated(tmp_path: Path):
+    """Passing tools=sd.get_tools() explicitly does not register script tools twice."""
+    from gwenflow import Agent, ChatOpenAI
+
+    _make_skill_dir(tmp_path, "math", "Do arithmetic", with_script=True)
+    sd = SkillsDirectory(str(tmp_path))
+    agent = Agent(
+        name="test",
+        llm=ChatOpenAI(api_key="test"),
+        skills=sd.skills,
+        tools=sd.get_tools(),
+    )
+    tool_names = [t.name for t in agent.tools]
+    assert tool_names.count("add_numbers") == 1

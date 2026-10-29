@@ -13,6 +13,7 @@ from typing import (
     AsyncIterator,
     Callable,
     Dict,
+    Iterable,
     Iterator,
     List,
     Literal,
@@ -106,7 +107,7 @@ COMMANDS_WITH_ARGS = {"/save", "/load"}
 """Commands that accept an argument. Every other command is intercepted only
 when the message is exactly the bare command, so that a real request that
 merely starts with one ("/reset the counter in my code") still reaches the
-LLM."""
+LLM. Like every command, they are off unless enabled with `Agent(commands=...)`."""
 
 SESSION_FORMAT_VERSION = 1
 """Version of the /save JSON format."""
@@ -182,6 +183,14 @@ class Agent:
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
+    commands: bool | Iterable[str] = False
+    """Slash commands handled locally, without an LLM call (`/help`,
+    `/compact`, `/cost`, `/save <path>`...; see `AGENT_COMMANDS`). False
+    (default): none, every input goes to the model. True: all of them. A
+    collection of names enables only those, e.g. `{"/compact", "/cost"}`."""
+
+    _enabled_commands: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+
     warn_near_limits: bool = False
     """Tell the model, in the system prompt of the request, when the run is
     close to a limit: `warning_threshold` of the context budget or of
@@ -241,6 +250,7 @@ class Agent:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = str(uuid.uuid4())
+        self._enabled_commands = self._resolve_commands(self.commands)
         if self.llm is None:
             self.llm = ChatOpenAI()
         else:
@@ -259,6 +269,7 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
+            self.tools = list(self.tools) + self._skill_script_tools()
         if self.max_tool_output_tokens and not any(t.name == READ_TOOL_OUTPUT for t in self.tools):
             self.tools = list(self.tools) + [self._tool_output_reader()]
         if self.memory:
@@ -321,6 +332,22 @@ class Agent:
 
             desc = member.description or f"Delegate a task to the '{member.name or slug}' agent."
             tools.append(Tool(make_handoff(member), name=tool_name, description=desc))
+        return tools
+
+    def _skill_script_tools(self) -> List[BaseTool]:
+        """Tools defined in the skills' `scripts/` files, deduplicated by name.
+
+        A user passing `tools=sd.get_tools()` explicitly keeps working
+        without duplicates.
+        """
+        known = {t.name for t in self.tools}
+        tools: List[BaseTool] = []
+        for skill in self.skills:
+            for tool in skill.get_tools():
+                if tool.name in known:
+                    continue
+                known.add(tool.name)
+                tools.append(tool)
         return tools
 
     def clone(self) -> "Agent":
@@ -388,10 +415,26 @@ class Agent:
     # Slash commands (/help, /compact, /reset, ...)
     # ------------------------------------------------------------------
 
-    def _match_command(self, task: Any) -> tuple[str, str] | None:
-        """Return `(command, args)` if `task` is a known slash command.
+    @staticmethod
+    def _resolve_commands(commands: bool | Iterable[str]) -> frozenset[str]:
+        """The set of enabled slash commands for a `commands` setting."""
+        if commands is True:
+            return frozenset(AGENT_COMMANDS)
+        if commands is False or commands is None:
+            return frozenset()
+        if isinstance(commands, str):
+            commands = [commands]
+        enabled = {c.strip().lower() for c in commands}
+        unknown = sorted(enabled - set(AGENT_COMMANDS))
+        if unknown:
+            raise ValueError(f"Unknown command(s): {', '.join(unknown)}. Known: {', '.join(AGENT_COMMANDS)}")
+        return frozenset(enabled)
 
-        A bare known command ("/reset", "  /COMPACT  ") is always intercepted.
+    def _match_command(self, task: Any) -> tuple[str, str] | None:
+        """Return `(command, args)` if `task` is an enabled slash command.
+
+        Nothing is intercepted unless `commands` enables it (off by default).
+        A bare enabled command ("/reset", "  /COMPACT  ") is always intercepted.
         Extra text after the command is only allowed for COMMANDS_WITH_ARGS
         ("/save ./session.json"); for every other command a message that merely
         starts with one ("/reset the counter in my code") goes to the LLM like
@@ -406,7 +449,7 @@ class Agent:
         parts = stripped.split(maxsplit=1)
         command = parts[0].lower()
         args = parts[1].strip() if len(parts) > 1 else ""
-        if command not in AGENT_COMMANDS:
+        if command not in self._enabled_commands:
             return None
         if args and command not in COMMANDS_WITH_ARGS:
             return None
@@ -437,7 +480,7 @@ class Agent:
     def _execute_command(self, command: str, args: str = "") -> str:
         if command == "/help":
             lines = ["Available commands:"]
-            lines += [f"  {name:<10} {desc}" for name, desc in AGENT_COMMANDS.items()]
+            lines += [f"  {name:<10} {desc}" for name, desc in AGENT_COMMANDS.items() if name in self._enabled_commands]
             return "\n".join(lines)
         if command in ("/reset", "/clear"):
             removed = len(self.history.messages)
@@ -513,6 +556,7 @@ class Agent:
         lines.append(f"  max_turns:       {self.max_turns}")
         lines.append(f"  tool_choice:     {self.tool_choice or 'auto'}")
         lines.append(f"  tools:           {len(self.get_all_tools())}")
+        lines.append(f"  commands:        {', '.join(sorted(self._enabled_commands)) or '-'}")
         if self.skills:
             lines.append(f"  skills:          {', '.join(s.name for s in self.skills)}")
         if self.memory:

@@ -1,6 +1,8 @@
 import importlib.util
 import inspect
 import os
+import re
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
@@ -10,6 +12,11 @@ from gwenflow.utils.markdown import parse_frontmatter
 
 if TYPE_CHECKING:
     from gwenflow.tools import Tool
+
+
+def _identifier(text: str) -> str:
+    """`text` with every non-word character replaced, usable as a module name part."""
+    return re.sub(r"\W", "_", text)
 
 
 SKILL_TEMPLATE = """<skill>
@@ -45,6 +52,9 @@ class Skill:
     scripts: List[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
 
+    _tools: Optional[List["Tool"]] = field(default=None, init=False, repr=False, compare=False)
+    """Tools loaded from `scripts`, cached by `get_tools()`."""
+
     def to_dict(self) -> dict:
         result = {"name": self.name, "description": self.description}
         if self.uri is not None:
@@ -76,27 +86,46 @@ class Skill:
         )
 
     def get_tools(self) -> List["Tool"]:
-        """Dynamically load tools from this skill's script files.
+        """Tools defined in this skill's script files.
 
         Each script may expose tools in one of two ways:
         - A module-level ``tools`` list of ``Tool`` instances (preferred).
         - Any module-level function that has a docstring and type annotations
           (auto-wrapped via ``Tool(fn)``).
+
+        Script files are imported once per Skill instance and the resulting
+        tools cached; later calls return the same Tool objects. The tools
+        themselves run normally on every call.
         """
+        if self._tools is None:
+            self._tools = self._load_tools()
+        return list(self._tools)
+
+    def _script_module_name(self, script_path: str) -> str:
+        """A module name unique to this skill and script, e.g. `gwenflow_skills.weather.tools`."""
+        stem = os.path.splitext(os.path.basename(script_path))[0]
+        return f"gwenflow_skills.{_identifier(self.name)}.{_identifier(stem)}"
+
+    def _load_tools(self) -> List["Tool"]:
         from gwenflow.tools import Tool
 
         all_tools: List[Tool] = []
 
         for script_path in self.scripts:
-            spec = importlib.util.spec_from_file_location("_skill_script", script_path)
-            if spec is None:
+            module_name = self._script_module_name(script_path)
+            spec = importlib.util.spec_from_file_location(module_name, script_path)
+            if spec is None or spec.loader is None:
                 continue
             module = importlib.util.module_from_spec(spec)
+            # Register the module so functions defined in it can be pickled and
+            # introspected like those of any imported module.
+            sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
             except Exception as e:
                 from gwenflow.logger import logger
 
+                sys.modules.pop(module_name, None)
                 logger.warning(f"Failed to load skill script '{script_path}': {e}")
                 continue
 

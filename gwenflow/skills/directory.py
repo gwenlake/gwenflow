@@ -28,8 +28,7 @@ class SkillsDirectory:
         sd = SkillsDirectory("./skills/")
         agent = Agent(
             name="MyAgent",
-            skills=sd.skills,
-            tools=sd.get_tools(),
+            skills=sd.skills,  # script tools are registered automatically
         )
     """
 

@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from gwenflow.agents.agent import Agent
+from gwenflow.agents.agent import AGENT_COMMANDS, Agent
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from gwenflow.tools import Tool
 from gwenflow.types import (
@@ -131,6 +131,7 @@ def filled(buf, n=6):
 def make_agent(**kwargs) -> Agent:
     """Agent on a MiniLLM, with the word-count tokenizer wired into its memory."""
     kwargs.setdefault("llm", MiniLLM())
+    kwargs.setdefault("commands", True)
     agent = Agent(**kwargs)
     agent.history.tokenizer_fn = tok
     return agent
@@ -473,7 +474,9 @@ def test_an_unknown_command_goes_to_the_llm():
 
 
 def test_compact_on_a_plain_buffer_reports_what_it_did():
-    agent = Agent(name="cmd-base", llm=MiniLLM(), history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok))
+    agent = Agent(
+        name="cmd-base", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok)
+    )
     assert "Nothing to compact" in agent.run("/compact").content
     filled(agent.history)
     assert "sliding_window" in agent.run("/compact").content
@@ -571,6 +574,47 @@ def tooled_agent():
     return make_agent(name="lot2", instructions=["Reponds en francais"], tools=[Tool(meteo)])
 
 
+def last_user_input(agent: Agent) -> str:
+    return agent.llm.main_inputs[-1][-1]["content"]
+
+
+def test_commands_are_off_by_default():
+    """Without `commands`, a slash command is an ordinary input for the LLM."""
+    agent = Agent(llm=MiniLLM())
+    agent.run("/help")
+    assert last_user_input(agent) == "/help"
+    agent.run("/compact")
+    assert last_user_input(agent) == "/compact"
+    assert len(agent.history.messages) == 4
+
+
+def test_commands_true_enables_all(tooled_agent):
+    content = tooled_agent.run("/help").content
+    assert all(name in content for name in AGENT_COMMANDS)
+
+
+def test_commands_subset_enables_only_those():
+    agent = make_agent(commands={"/cost", "/help"})
+    assert "/cost" in agent.run("/help").content
+    assert "/compact" not in agent.run("/help").content
+    before = len(agent.llm.main_inputs)
+    agent.run("/compact")
+    assert last_user_input(agent) == "/compact"
+    assert len(agent.llm.main_inputs) == before + 1
+
+
+def test_commands_with_args_are_off_by_default(tmp_path):
+    agent = Agent(llm=MiniLLM())
+    agent.run(f"/save {tmp_path / 's.json'}")
+    assert last_user_input(agent).startswith("/save")
+    assert not (tmp_path / "s.json").exists()
+
+
+def test_commands_unknown_name_raises():
+    with pytest.raises(ValueError, match="Unknown command"):
+        Agent(llm=MiniLLM(), commands=["/nope"])
+
+
 def test_tools_command_lists_the_tools(tooled_agent):
     content = tooled_agent.run("/tools").content
     assert "meteo" in content
@@ -597,7 +641,7 @@ def test_summary_command_shows_the_summary(tooled_agent):
 
 
 def test_summary_command_on_a_plain_buffer():
-    agent = Agent(name="base", llm=MiniLLM(), history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok))
+    agent = Agent(name="base", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok))
     assert "does not keep a summary" in agent.run("/summary").content
 
 
@@ -679,7 +723,9 @@ def test_load_refuses_a_future_format_version(tmp_path):
 
 
 def test_save_on_a_plain_buffer_writes_no_summary(tmp_path):
-    agent = Agent(name="base-save", llm=MiniLLM(), history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok))
+    agent = Agent(
+        name="base-save", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok)
+    )
     path = tmp_path / "base_session.json"
     agent.run("bonjour " + "mot " * 5)
     agent.run(f"/save {path}")
@@ -691,7 +737,9 @@ def test_load_on_a_plain_buffer_ignores_the_summary(tooled_agent, tmp_path):
     path = tmp_path / "session.json"
     tooled_agent.run(f"/save {path}")
 
-    agent = Agent(name="base-load", llm=MiniLLM(), history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok))
+    agent = Agent(
+        name="base-load", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok)
+    )
     assert "summary in file ignored" in agent.run(f"/load {path}").content
 
 

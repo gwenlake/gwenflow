@@ -4,6 +4,38 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-10-27
+
+### Changed
+
+- Slash commands (`/help`, `/compact`, `/cost`, `/save <path>`, `/load <path>`...) are
+  now opt-in. `Agent(commands=True)` enables them all, `Agent(commands={"/compact",
+  "/cost"})` a subset; by default nothing is intercepted and every input reaches the
+  model. `/help` lists only the enabled commands and `/config` shows them. The
+  argument-taking commands follow the same switch.
+
+### Fixed
+
+- Tools defined in a skill's `scripts/` directory are now registered on the agent
+  automatically, as the README promised. `Agent.__post_init__` only added the three
+  management tools (`list_skills`, `load_skill`, `read_skill_resource`), so the script
+  functions were unreachable unless `tools=sd.get_tools()` was passed by hand. Passing
+  them explicitly still works and no longer matters: script tools are deduplicated by
+  name against the tools already on the agent.
+- `GwenlakeReranker` assigned relevance scores by position, but `/v1/rerank` returns
+  its entries sorted by score with an `index` per entry, so scores landed on the wrong
+  documents. Scores now follow `index` when present; entries without it are still
+  taken as positional. The test mock mirrors the live format.
+- `GwenlakeReranker.rerank` wrote the relevance scores on the caller's `Document`
+  objects (the list was copied, not the documents). It now returns copies and leaves
+  the input untouched.
+- `Skill.get_tools()` re-imported the skill's script files on every call, under one
+  shared module name (`_skill_script`). Script files are now imported once per `Skill`
+  and the tools cached (the automatic registration plus an explicit
+  `tools=sd.get_tools()` no longer load them twice), each under its own module name
+  (`gwenflow_skills.<skill>.<script>`) registered in `sys.modules`. Calling the tools
+  is unchanged.
+
 ## [1.4.0] — 2026-10-23
 
 ### Fixed

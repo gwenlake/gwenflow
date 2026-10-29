@@ -20,11 +20,24 @@ def _doc(content, score=None):
     return Document(content=content, score=score)
 
 
-def _make_fake_api(scores):
-    """Return a mock Api whose client.post returns the given relevance scores."""
+def _make_fake_api(scores, with_index=True):
+    """Return a mock Api whose client.post returns the given relevance scores.
+
+    Mirrors the live API: one entry per input, sorted by score descending, each
+    carrying the `index` of its input. `with_index=False` reproduces the older
+    positional format.
+    """
     fake_response = MagicMock()
     fake_response.status_code = 200
-    fake_response.json.return_value = {"data": [{"relevance_score": s} for s in scores]}
+    if with_index:
+        entries = sorted(
+            ({"index": i, "relevance_score": s} for i, s in enumerate(scores)),
+            key=lambda e: e["relevance_score"],
+            reverse=True,
+        )
+    else:
+        entries = [{"relevance_score": s} for s in scores]
+    fake_response.json.return_value = {"data": entries}
     fake_client = MagicMock()
     fake_client.post.return_value = fake_response
     fake_api = MagicMock()
@@ -156,6 +169,43 @@ def test_rerank_top_k_and_threshold_combined():
     # top_k=3 keeps top 3, then threshold removes those < 0.5 → 0.9 and 0.6
     assert len(result) == 2
     assert all(d.score >= 0.5 for d in result)
+
+
+def test_rerank_scores_follow_index_not_position():
+    """The API sorts its results by score; scores must land on the right document."""
+    r = GwenlakeReranker()
+    r.__dict__["_api"] = _make_fake_api([0.1, 0.9, 0.5])
+
+    docs = [_doc("low"), _doc("high"), _doc("mid")]
+    result = r.rerank("query", docs)
+
+    assert [d.content for d in result] == ["high", "mid", "low"]
+    assert [d.score for d in result] == [0.9, 0.5, 0.1]
+
+
+def test_rerank_does_not_mutate_input_documents():
+    """Scores are written on copies; the caller's documents keep their own."""
+    r = GwenlakeReranker()
+    r.__dict__["_api"] = _make_fake_api([0.2, 0.8])
+
+    docs = [_doc("a", score=0.5), _doc("b")]
+    result = r.rerank("query", docs)
+
+    assert [d.score for d in result] == [0.8, 0.2]
+    assert docs[0].score == 0.5
+    assert docs[1].score is None
+    assert all(res is not src for res in result for src in docs)
+    assert [d.content for d in docs] == ["a", "b"]
+
+
+def test_rerank_accepts_positional_format_without_index():
+    """Older positional format (no `index`) still maps scores by position."""
+    r = GwenlakeReranker()
+    r.__dict__["_api"] = _make_fake_api([0.1, 0.9], with_index=False)
+
+    result = r.rerank("query", [_doc("a"), _doc("b")])
+
+    assert [d.content for d in result] == ["b", "a"]
 
 
 # ---------------------------------------------------------------------------

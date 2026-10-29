@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from functools import cached_property
 from typing import List, Optional
@@ -35,12 +36,21 @@ class GwenlakeReranker(Reranker):
         parsed_response = response.json()
         if "data" not in parsed_response:
             raise ValueError("Error raised by inference API.")
+        entries = parsed_response["data"]
 
-        reranking = []
-        for e in parsed_response["data"]:
-            reranking.append(e)
+        # Entries may carry an `index` pointing back to the input (the API
+        # sorts them by score). Put them back in input order so the caller can
+        # assign scores by position (batches concatenate). Without `index`,
+        # entries are taken as already positional.
+        if entries and all("index" in e for e in entries):
+            reranking: List[Optional[dict]] = [None] * len(input)
+            for e in entries:
+                reranking[e["index"]] = e
+            if any(e is None for e in reranking):
+                raise ValueError("Error raised by inference API: incomplete reranking results.")
+            return reranking
 
-        return reranking
+        return list(entries)
 
     @tracer.reranker(name="Rerank")
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
@@ -62,10 +72,11 @@ class GwenlakeReranker(Reranker):
             return None
 
         if len(reranked_documents) > 0:
-            compressed_documents = documents.copy()
+            # Shallow-copy each document: the caller's objects keep their score.
+            compressed_documents = [copy.copy(d) for d in documents]
 
-            for i, _ in enumerate(compressed_documents):
-                compressed_documents[i].score = reranked_documents[i]["relevance_score"]
+            for i, document in enumerate(compressed_documents):
+                document.score = reranked_documents[i]["relevance_score"]
 
             compressed_documents.sort(
                 key=lambda x: x.score if x.score is not None else float("-inf"),
