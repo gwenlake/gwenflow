@@ -1,11 +1,15 @@
 import asyncio
+import contextvars
 import copy
 import json
 import math
+import queue
 import re
 import threading
+import time
 import uuid
-from dataclasses import dataclass, field
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
@@ -25,6 +29,18 @@ from typing import (
 from pydantic import BaseModel, ValidationError
 
 from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
+from gwenflow.agents.subagents import (
+    FAST_MODEL,
+    SPAWN_AGENT_TOOL,
+    SUBAGENT_ABANDONED,
+    SUBAGENT_EVENT_POLL_SECONDS,
+    SUBAGENT_INSTRUCTIONS,
+    SUBAGENT_MODELS,
+    SUBAGENT_NAME,
+    SUBAGENT_NAME_MAX_CHARS,
+    spawn_agent_description,
+    spawn_agent_parameters,
+)
 from gwenflow.llms import ChatBase, ChatOpenAI
 from gwenflow.llms.base import CONTEXT_SAFETY_RATIO
 from gwenflow.logger import logger
@@ -34,11 +50,22 @@ from gwenflow.memory.compaction import PINNED_KEY, pin
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
+from gwenflow.telemetry._semconv import (
+    DELEGATION_FINISH_REASON,
+    SUBAGENT_DESCRIPTION,
+    SUBAGENT_MODEL,
+    SUBAGENT_MODEL_NAME,
+    SUBAGENT_SKILLS,
+    SUBAGENT_STRUCTURED,
+    SUBAGENT_TOOLS,
+)
 from gwenflow.tools import BaseTool, MCPServer, Tool
 from gwenflow.types import (
     AgentEventCompleted,
     AgentEventContent,
     AgentEventStarted,
+    AgentEventSubagentCompleted,
+    AgentEventSubagentStarted,
     AgentEventThinking,
     AgentEventToolApprovalRequired,
     AgentEventToolCompleted,
@@ -59,6 +86,10 @@ from gwenflow.types import (
 )
 from gwenflow.utils import extract_json_str
 from gwenflow.utils.tokens import keep_tokens_from_text
+
+_CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "gwenflow_current_tool_call_id", default=None
+)
 
 FINAL_RESULT_TOOL = "final_result"
 READ_TOOL_OUTPUT = "read_tool_output"
@@ -122,6 +153,19 @@ ToolApprovals = Dict[str, Union[bool, ToolDenied]]
 True runs the call, False or a `ToolDenied` (with the reason the model reads)
 refuses it. Only an explicit True approves."""
 
+
+class _SubagentPausedError(Exception):
+    pass
+
+
+@dataclass
+class _PausedSubagent:
+    worker: "Agent"
+    description: str
+    requests: List[ToolApprovalRequest]
+    elapsed: float
+
+
 UNANSWERED_APPROVAL = "The user did not answer this approval request and sent a new message instead."
 """Tool result of a pending call left without a decision when the next run starts."""
 
@@ -179,6 +223,16 @@ class Agent:
     `ask_<name>` tool. Every handoff runs on a fresh clone of the member
     (same configuration, empty history): delegated tasks must therefore be
     self-contained — the member never sees the parent conversation."""
+
+    subagents: bool = False
+
+    subagent_llm: Optional[ChatBase] = None
+
+    subagent_max_turns: Optional[int] = 25
+
+    subagent_max_concurrency: Optional[int] = 4
+
+    subagent_timeout: Optional[float] = None
 
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
@@ -247,6 +301,22 @@ class Agent:
     """The subset of `tools` that wraps team members, kept separate so
     `clone()` can rebuild them bound to the clone."""
 
+    _spawn_tools: List[BaseTool] = field(default_factory=list, init=False, repr=False)
+
+    _subagent_slots: Optional[threading.BoundedSemaphore] = field(default=None, init=False, repr=False)
+
+    _stop_requested: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+
+    _paused_subagents: Dict[str, _PausedSubagent] = field(default_factory=dict, init=False, repr=False)
+
+    _subagent_approvals: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+
+    _subagent_events: Optional[queue.SimpleQueue] = field(default=None, init=False, repr=False)
+
+    _stream_subagent_events: bool = field(default=False, init=False, repr=False)
+
+    _subagent_run_id: Optional[str] = field(default=None, init=False, repr=False)
+
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = str(uuid.uuid4())
@@ -277,6 +347,11 @@ class Agent:
         if self.team:
             self._handoff_tools = self._build_handoff_tools()
             self.tools = list(self.tools) + self._handoff_tools
+        if self.subagents:
+            self._check_subagent_limits()
+            self._subagent_slots = self._new_subagent_slots()
+            self._spawn_tools = self._build_spawn_tools()
+            self.tools = list(self.tools) + self._spawn_tools
         if self.tools or self.mcp_servers:
             self.llm.tools = self._llm_tools()
             self.llm.tool_choice = self.tool_choice
@@ -304,18 +379,7 @@ class Agent:
                 worker = member.clone()
                 response = worker.run(task)
                 self._record_delegation_usage(worker, response)
-                if response.finish_reason == "max_turns":
-                    return (
-                        f"[handoff failed] The '{member.name or 'agent'}' agent stopped "
-                        f"after reaching its max_turns limit without a final answer."
-                    )
-                if response.finish_reason == "approval_required":
-                    tools = ", ".join(r.tool_name for r in response.pending_approvals)
-                    return (
-                        f"[handoff failed] The '{member.name or 'agent'}' agent needs the user's "
-                        f"approval to run {tools}, which a delegated task cannot ask for."
-                    )
-                return response.content or ""
+                return self._delegation_result("handoff", member.name or "agent", response)
 
             return _handoff
 
@@ -333,6 +397,278 @@ class Agent:
             desc = member.description or f"Delegate a task to the '{member.name or slug}' agent."
             tools.append(Tool(make_handoff(member), name=tool_name, description=desc))
         return tools
+
+    @staticmethod
+    def _delegation_result(kind: str, agent_name: str, response: AgentResponse) -> str:
+        tracer.set_attributes({DELEGATION_FINISH_REASON: response.finish_reason})
+        if response.finish_reason == "max_turns":
+            tracer.mark_error(message=f"{agent_name} reached max_turns", error_type="delegation_max_turns")
+            return (
+                f"[{kind} failed] The '{agent_name}' agent stopped "
+                f"after reaching its max_turns limit without a final answer."
+            )
+        if response.finish_reason == "approval_required":
+            tools = ", ".join(r.tool_name for r in response.pending_approvals)
+            tracer.mark_error(
+                message=f"{agent_name} needs approval to run {tools}", error_type="delegation_approval_required"
+            )
+            return (
+                f"[{kind} failed] The '{agent_name}' agent needs the user's "
+                f"approval to run {tools}, which a delegated task cannot ask for."
+            )
+        if isinstance(response.parsed, BaseModel):
+            return response.parsed.model_dump_json()
+        if isinstance(response.parsed, (dict, list)):
+            return json.dumps(response.parsed, ensure_ascii=False)
+        return response.content or ""
+
+    def _build_spawn_tools(self) -> List[BaseTool]:
+        def spawn_agent(
+            description: str,
+            prompt: str,
+            tools: Optional[List[str]] = None,
+            skills: Optional[List[str]] = None,
+            model: str = FAST_MODEL,
+            output_schema: Optional[Dict[str, Any]] = None,
+        ) -> str:
+            return self._spawn_subagent(description, prompt, tools or [], skills or [], model, output_schema)
+
+        tool = Tool(spawn_agent, name=SPAWN_AGENT_TOOL, max_retries=1)
+        self._describe_spawn_tool(tool)
+        return [tool]
+
+    def _describe_spawn_tool(self, tool: BaseTool) -> None:
+        with_model = self.subagent_llm is not None
+        skill_names = list(dict.fromkeys(s.name for s in self.skills))
+        tool.description = spawn_agent_description(with_model, with_skills=bool(skill_names))
+        tool.parameters = spawn_agent_parameters([t.name for t in self._delegable_tools()], skill_names, with_model)
+
+    def _spawn_subagent(
+        self,
+        description: str,
+        prompt: str,
+        tool_names: List[str],
+        skill_names: List[str],
+        model: str,
+        output_schema: Optional[Dict[str, Any]],
+    ) -> str:
+        call_id = _CURRENT_TOOL_CALL_ID.get()
+        paused = self._paused_subagents.pop(call_id, None) if call_id else None
+        if paused is not None:
+            worker, description, elapsed = paused.worker, paused.description, paused.elapsed
+            approvals = {
+                r.tool_call_id: self._subagent_approvals[r.tool_call_id]
+                for r in paused.requests
+                if r.tool_call_id in self._subagent_approvals
+            }
+            response, elapsed = self._run_subagent(worker, None, approvals, call_id, elapsed)
+        else:
+            tracer.set_attributes(
+                {
+                    SUBAGENT_DESCRIPTION: description,
+                    SUBAGENT_TOOLS: tool_names,
+                    SUBAGENT_SKILLS: skill_names,
+                    SUBAGENT_MODEL: model,
+                    SUBAGENT_STRUCTURED: output_schema is not None,
+                }
+            )
+            error = self._subagent_request_error(tool_names, skill_names, model, output_schema)
+            if error:
+                tracer.mark_error(message=error, error_type="invalid_subagent_request")
+                return f"[sub-agent failed] {error}"
+            available = {t.name: t for t in self._delegable_tools()}
+            available_skills = {skill.name: skill for skill in self.skills}
+            llm = self.subagent_llm if model == FAST_MODEL and self.subagent_llm is not None else self.llm
+            tools = [available[name] for name in dict.fromkeys(tool_names)]
+            skills = [available_skills[name] for name in dict.fromkeys(skill_names)]
+            worker = self._build_subagent(description, tools, skills, llm, output_schema)
+            tracer.set_attributes({SUBAGENT_MODEL_NAME: getattr(llm, "model", None)})
+            logger.info(
+                f"[Sub-agent] {description} (tools: {', '.join(t.name for t in tools) or 'none'}; "
+                f"skills: {', '.join(s.name for s in skills) or 'none'})"
+            )
+            self._emit_subagent_event(
+                AgentEventSubagentStarted(
+                    agent_id=self.id,
+                    run_id=self._subagent_run_id or "",
+                    tool_call_id=call_id,
+                    subagent_id=worker.id,
+                    description=description,
+                    tools=[t.name for t in tools],
+                    skills=[s.name for s in skills],
+                    model=getattr(llm, "model", None),
+                )
+            )
+            response, elapsed = self._run_subagent(worker, prompt, None, call_id, 0.0)
+
+        if response is None:
+            reason = f"The sub-agent did not finish within {self.subagent_timeout:g}s and was stopped."
+            tracer.set_attributes({DELEGATION_FINISH_REASON: "timeout"})
+            tracer.mark_error(message=reason, error_type="delegation_timeout")
+            self._emit_subagent_completed(call_id, worker, description, "timeout", None, elapsed)
+            return f"[sub-agent failed] {reason} Do the task yourself, or split it into smaller tasks."
+        if response.finish_reason == "approval_required" and call_id:
+            requests = [replace(r, subagent_call_id=call_id) for r in response.pending_approvals]
+            self._paused_subagents[call_id] = _PausedSubagent(worker, description, requests, elapsed)
+            tracer.set_attributes({DELEGATION_FINISH_REASON: "approval_required"})
+            raise _SubagentPausedError()
+        self._emit_subagent_completed(call_id, worker, description, response.finish_reason, response.usage, elapsed)
+        return self._delegation_result("sub-agent", worker.name, response)
+
+    def _run_subagent(
+        self,
+        worker: "Agent",
+        prompt: Optional[str],
+        approvals: Optional[ToolApprovals],
+        call_id: Optional[str],
+        elapsed: float,
+    ) -> tuple[Optional[AgentResponse], float]:
+        def execute() -> AgentResponse:
+            if not self._stream_subagent_events:
+                return worker.run(prompt, approvals=approvals)
+            response = None
+            for item in worker.run_stream(prompt, approvals=approvals):
+                if isinstance(item, AgentResponse):
+                    response = item
+                elif not worker._stop_requested.is_set():
+                    item.metadata["subagent_call_id"] = call_id
+                    self._emit_subagent_event(item)
+            return response
+
+        def work() -> AgentResponse:
+            response = execute()
+            self._record_delegation_usage(worker, response)
+            return response
+
+        if self._subagent_slots is not None:
+            self._subagent_slots.acquire()
+        started = time.monotonic()
+        if self.subagent_timeout is None:
+            try:
+                return work(), elapsed + time.monotonic() - started
+            finally:
+                if self._subagent_slots is not None:
+                    self._subagent_slots.release()
+
+        done = threading.Event()
+        outcome: Dict[str, Any] = {}
+
+        def target() -> None:
+            try:
+                outcome["response"] = work()
+            except BaseException as e:
+                outcome["error"] = e
+            finally:
+                if self._subagent_slots is not None:
+                    self._subagent_slots.release()
+                done.set()
+
+        threading.Thread(target=contextvars.copy_context().run, args=(target,), daemon=True).start()
+        finished = done.wait(self.subagent_timeout)
+        elapsed += time.monotonic() - started
+        if not finished:
+            worker._stop_requested.set()
+            return None, elapsed
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["response"], elapsed
+
+    def _emit_subagent_event(self, event: AgentResponseEvent) -> None:
+        if self._subagent_events is not None:
+            self._subagent_events.put(event)
+
+    def _emit_subagent_completed(
+        self,
+        call_id: Optional[str],
+        worker: "Agent",
+        description: str,
+        finish_reason: Optional[str],
+        usage: Optional[AgentUsage],
+        elapsed: float,
+    ) -> None:
+        self._emit_subagent_event(
+            AgentEventSubagentCompleted(
+                agent_id=self.id,
+                run_id=self._subagent_run_id or "",
+                tool_call_id=call_id,
+                subagent_id=worker.id,
+                description=description,
+                finish_reason=finish_reason,
+                usage=usage,
+                duration_seconds=round(elapsed, 3),
+            )
+        )
+
+    def _subagent_request_error(
+        self,
+        tool_names: List[str],
+        skill_names: List[str],
+        model: str,
+        output_schema: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        delegable = [t.name for t in self._delegable_tools()]
+        unknown = [name for name in tool_names if name not in delegable]
+        if unknown:
+            return f"Unknown or non-delegable tools: {', '.join(unknown)}. Delegable tools: {', '.join(delegable) or 'none'}."
+        skills = [skill.name for skill in self.skills]
+        unknown = [name for name in skill_names if name not in skills]
+        if unknown:
+            return f"Unknown skills: {', '.join(unknown)}. Available skills: {', '.join(skills) or 'none'}."
+        if model not in SUBAGENT_MODELS:
+            return f"Unknown model '{model}'. Use one of: {', '.join(SUBAGENT_MODELS)}."
+        if output_schema is not None and not (
+            isinstance(output_schema, dict) and ("type" in output_schema or "properties" in output_schema)
+        ):
+            return "output_schema must be a JSON Schema object, with a 'type' or 'properties' key."
+        return None
+
+    def _check_subagent_limits(self) -> None:
+        value = self.subagent_max_concurrency
+        if value is not None and value < 1:
+            raise ValueError(f"`subagent_max_concurrency` must be at least 1, or None for no limit (got {value}).")
+        if self.subagent_timeout is not None and self.subagent_timeout <= 0:
+            raise ValueError(
+                f"`subagent_timeout` must be positive, or None for no limit (got {self.subagent_timeout})."
+            )
+
+    def _new_subagent_slots(self) -> Optional[threading.BoundedSemaphore]:
+        if not self.subagents or self.subagent_max_concurrency is None:
+            return None
+        return threading.BoundedSemaphore(self.subagent_max_concurrency)
+
+    def _build_subagent(
+        self,
+        description: str,
+        tools: List[BaseTool],
+        skills: List[Skill],
+        llm: ChatBase,
+        output_schema: Optional[Dict[str, Any]] = None,
+    ) -> "Agent":
+        llm = copy.copy(llm)
+        llm.tools = None
+        llm.tool_choice = None
+        llm.response_format = None
+        label = " ".join(description.split())[:SUBAGENT_NAME_MAX_CHARS]
+        return Agent(
+            name=f"{SUBAGENT_NAME}: {label}" if label else SUBAGENT_NAME,
+            instructions=list(SUBAGENT_INSTRUCTIONS),
+            llm=llm,
+            tools=tools,
+            skills=skills,
+            response_model=output_schema,
+            max_turns=self.subagent_max_turns,
+            max_tool_output_tokens=self.max_tool_output_tokens,
+            pricing=self.pricing,
+        )
+
+    def _delegable_tools(self) -> List[BaseTool]:
+        excluded = {SPAWN_AGENT_TOOL, READ_TOOL_OUTPUT}
+        if self.skills:
+            excluded |= {t.name for t in SkillsToolset(self.skills).get_tools()}
+        if self.memory:
+            excluded |= {t.name for t in self.memory.get_tools()}
+        delegation_ids = {id(t) for t in self._handoff_tools + self._spawn_tools}
+        return [t for t in self.get_all_tools() if t.name not in excluded and id(t) not in delegation_ids]
 
     def _skill_script_tools(self) -> List[BaseTool]:
         """Tools defined in the skills' `scripts/` files, deduplicated by name.
@@ -369,11 +705,19 @@ class Agent:
         worker.delegation_usage = AgentUsage()
         worker._pending_delegation_usage = AgentUsage()
         worker._delegation_lock = threading.Lock()
-        if self.team:
-            worker._handoff_tools = worker._build_handoff_tools()
-            handoff_ids = {id(t) for t in self._handoff_tools}
-            base_tools = [t for t in self.tools if id(t) not in handoff_ids]
+        worker._stop_requested = threading.Event()
+        if self.team or self.subagents:
+            delegation_ids = {id(t) for t in self._handoff_tools + self._spawn_tools}
+            base_tools = [t for t in self.tools if id(t) not in delegation_ids]
+            worker._handoff_tools = worker._build_handoff_tools() if self.team else []
+            worker._spawn_tools = []
             worker.tools = base_tools + worker._handoff_tools
+            worker._subagent_slots = worker._new_subagent_slots()
+            worker._paused_subagents = {}
+            worker._subagent_approvals = {}
+            worker._subagent_events = None
+            worker._spawn_tools = worker._build_spawn_tools() if self.subagents else []
+            worker.tools = worker.tools + worker._spawn_tools
             worker.llm.tools = worker.get_all_tools()
         return worker
 
@@ -403,6 +747,26 @@ class Agent:
         with self._delegation_lock:
             self._pending_delegation_usage.add(usage)
             self.delegation_usage.add(usage)
+
+    def _fold_delegation_usage(self, agent_response: AgentResponse) -> None:
+        drained = self._drain_delegation_usage()
+        agent_response.usage.add(drained)
+        agent_response.delegation_usage.add(drained)
+
+    def _finish_run(self, agent_response: AgentResponse, finish_reason: str) -> None:
+        agent_response.finish_reason = finish_reason
+        drain = getattr(self.history, "drain_usage", None)
+        if drain is not None:
+            agent_response.usage.add(drain())
+        self.total_usage.add(agent_response.usage)
+
+    def _interrupt_run(self, agent_response: AgentResponse) -> None:
+        if agent_response.finish_reason is not None:
+            return
+        if self.team or self.subagents:
+            self._fold_delegation_usage(agent_response)
+        self._finish_run(agent_response, "interrupted")
+        tracer.record_agent_result(agent_response)
 
     def _drain_delegation_usage(self) -> AgentUsage:
         """Take and reset the delegation usage accumulated by handoffs."""
@@ -455,8 +819,8 @@ class Agent:
             return None
         return command, args
 
-    def _command_response(self, content: str) -> AgentResponse:
-        agent_response = AgentResponse(agent_id=self.id)
+    def _command_response(self, content: str, agent_response: Optional[AgentResponse] = None) -> AgentResponse:
+        agent_response = agent_response or AgentResponse(agent_id=self.id)
         agent_response.events.append(AgentEventStarted(agent_id=self.id, run_id=agent_response.run_id))
         agent_response.events.append(AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=content))
         agent_response.content = content
@@ -565,6 +929,13 @@ class Agent:
             )
         if self.team:
             lines.append(f"  team:            {', '.join(m.name or m.id for m in self.team)}")
+        if self.subagents:
+            model = getattr(self.subagent_llm or self.llm, "model", "?")
+            lines.append(
+                f"  subagents:       on (model {model}, max_turns {self.subagent_max_turns}, "
+                f"max_concurrency {self.subagent_max_concurrency or 'unlimited'}, "
+                f"timeout {self.subagent_timeout or 'none'})"
+            )
         if self.response_model is not None:
             model_name = self.response_model.__name__ if isinstance(self.response_model, type) else "dict schema"
             lines.append(f"  response_model:  {model_name}")
@@ -891,6 +1262,8 @@ class Agent:
         """
         self._base_system_prompt = self.get_system_prompt(task=task, context=context)
         self.history.system_prompt = self._base_system_prompt
+        for tool in self._spawn_tools:
+            self._describe_spawn_tool(tool)
         self.history.reserved_tokens = self._tools_token_count()
         self._sync_context_window()
 
@@ -1119,7 +1492,6 @@ class Agent:
             tools += server.get_tools()
         return tools
 
-    @tracer.tool(name="Tool Call")
     def _calibrate_history(self, window: List[Message], usage: Any) -> None:
         """Anchor the memory buffer on the provider's reported usage.
 
@@ -1178,6 +1550,7 @@ class Agent:
             f"Read the rest with {READ_TOOL_OUTPUT}(ref='{ref}', offset={len(head)}).]"
         )
 
+    @tracer.tool(name="Tool Call")
     def run_tool(self, tool_call: ToolCall) -> Message:
         tool_execution = ToolResponse(
             tool_call_id=tool_call.id,
@@ -1219,7 +1592,13 @@ class Agent:
             if not isinstance(arguments, dict):
                 arguments = json.loads(arguments) if arguments and arguments.strip() else {}
             logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
-            result = tool.run(**arguments)
+            token = _CURRENT_TOOL_CALL_ID.set(tool_call.id)
+            try:
+                result = tool.run(**arguments)
+            finally:
+                _CURRENT_TOOL_CALL_ID.reset(token)
+        except _SubagentPausedError:
+            return None
         except Exception as e:
             logger.error(f"Error executing tool '{tool_call.name}': {e}")
             tracer.mark_error(e)
@@ -1236,12 +1615,20 @@ class Agent:
         return tool_execution.to_message()
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
-        results = []
-        for tool_call in tool_calls:
-            result = self.run_tool(tool_call)
-            if result:
-                results.append(result)
+        delegation_names = {t.name for t in self._handoff_tools + self._spawn_tools}
+        concurrent = [i for i, tool_call in enumerate(tool_calls) if tool_call.name in delegation_names]
+        if len(concurrent) < 2:
+            return [result for result in (self.run_tool(tool_call) for tool_call in tool_calls) if result]
 
+        with ThreadPoolExecutor(max_workers=len(concurrent)) as pool:
+            futures: Dict[int, Future] = {
+                i: pool.submit(contextvars.copy_context().run, self.run_tool, tool_calls[i]) for i in concurrent
+            }
+            results = []
+            for i, tool_call in enumerate(tool_calls):
+                result = futures[i].result() if i in futures else self.run_tool(tool_call)
+                if result:
+                    results.append(result)
         return results
 
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
@@ -1252,7 +1639,7 @@ class Agent:
 
         results = await asyncio.gather(*tasks)
 
-        return results
+        return [result for result in results if result]
 
     def _pending_tool_calls(self) -> List[ToolCall]:
         """Tool calls of the last assistant turn that have no result yet.
@@ -1283,14 +1670,20 @@ class Agent:
 
     def get_pending_approvals(self) -> List[ToolApprovalRequest]:
         """The tool calls waiting for the user's approval, e.g. to ask again after reloading a session."""
-        return [self._approval_request(tool_call) for tool_call in self._pending_tool_calls()]
+        requests: List[ToolApprovalRequest] = []
+        for tool_call in self._pending_tool_calls():
+            paused = self._paused_subagents.get(tool_call.id)
+            requests.extend(paused.requests if paused else [self._approval_request(tool_call)])
+        return requests
 
     def _split_tool_calls(self, tool_calls: List[ToolCall]) -> tuple[List[ToolCall], List[ToolCall]]:
         """Separate the tool calls to run now from those that wait for the user's approval."""
         gated = {tool.name for tool in self.get_all_tools() if tool.requires_approval}
         return [t for t in tool_calls if t.name not in gated], [t for t in tool_calls if t.name in gated]
 
-    def _decide_pending(self, approvals: Optional[ToolApprovals]) -> tuple[List[ToolCall], List[Message]]:
+    def _decide_pending(
+        self, approvals: Optional[ToolApprovals], resuming: bool = True
+    ) -> tuple[List[ToolCall], List[Message]]:
         """Apply the user's decisions to the pending tool calls.
 
         Returns the approved calls, to execute, and the tool results of the
@@ -1300,13 +1693,29 @@ class Agent:
         """
         approvals = approvals or {}
         pending = self._pending_tool_calls()
-        unknown = set(approvals) - {tool_call.id for tool_call in pending}
+        pending_ids = {tool_call.id for tool_call in pending}
+        for call_id in [key for key in self._paused_subagents if key not in pending_ids]:
+            self._paused_subagents.pop(call_id)
+        subagent_ids = {r.tool_call_id for paused in self._paused_subagents.values() for r in paused.requests}
+        self._subagent_approvals = {key: value for key, value in approvals.items() if key in subagent_ids}
+        unknown = set(approvals) - pending_ids - subagent_ids
         if unknown:
             logger.warning(f"Ignoring approvals for tool calls that are not pending: {sorted(unknown)}")
 
         approved: List[ToolCall] = []
         denials: List[Message] = []
         for tool_call in pending:
+            if tool_call.id in self._paused_subagents:
+                if resuming:
+                    approved.append(tool_call)
+                    continue
+                self._paused_subagents.pop(tool_call.id)
+                denials.append(
+                    ToolResponse(
+                        tool_call_id=tool_call.id, tool_name=tool_call.name, content=SUBAGENT_ABANDONED
+                    ).to_message()
+                )
+                continue
             decision = approvals.get(tool_call.id)
             if decision is True:
                 approved.append(tool_call)
@@ -1360,12 +1769,81 @@ class Agent:
         if not tool_calls:
             return
         yield from self._start_tool_calls(tool_calls, agent_response)
-        tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
+        tool_messages = yield from self._execute_with_subagent_events(tool_calls, agent_response)
         agent_response.usage.tool_calls += len(tool_messages)
         yield from self._record_tool_results(tool_messages, agent_response)
-        if self.team:
+        if self.team or self.subagents:
             # Fold the sub-agents' spend into this run's usage.
-            agent_response.usage.add(self._drain_delegation_usage())
+            self._fold_delegation_usage(agent_response)
+        yield from self._request_subagent_approvals(tool_calls, agent_response)
+
+    def _execute_with_subagent_events(self, tool_calls: List[ToolCall], agent_response: AgentResponse):
+        live = self._stream_subagent_events and any(t.name == SPAWN_AGENT_TOOL for t in tool_calls)
+        if not live:
+            tool_messages = self.execute_tool_calls(tool_calls=tool_calls)
+            yield from self._drain_subagent_events(agent_response)
+            return tool_messages
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(contextvars.copy_context().run, self.execute_tool_calls, tool_calls)
+            while not future.done():
+                try:
+                    event = self._subagent_events.get(timeout=SUBAGENT_EVENT_POLL_SECONDS)
+                except queue.Empty:
+                    continue
+                agent_response.events.append(event)
+                yield event
+            tool_messages = future.result()
+        finally:
+            pool.shutdown(wait=False)
+        yield from self._drain_subagent_events(agent_response)
+        return tool_messages
+
+    def _drain_subagent_events(self, agent_response: AgentResponse) -> Iterator[AgentResponseEvent]:
+        if self._subagent_events is None:
+            return
+        while True:
+            try:
+                event = self._subagent_events.get_nowait()
+            except queue.Empty:
+                return
+            agent_response.events.append(event)
+            yield event
+
+    def _request_subagent_approvals(
+        self, tool_calls: List[ToolCall], agent_response: AgentResponse
+    ) -> Iterator[AgentResponseEvent]:
+        for tool_call in tool_calls:
+            paused = self._paused_subagents.get(tool_call.id)
+            if paused is None:
+                continue
+            for request in paused.requests:
+                agent_response.pending_approvals.append(request)
+                event = AgentEventToolApprovalRequired(
+                    agent_id=self.id,
+                    run_id=agent_response.run_id,
+                    tool_call_id=request.tool_call_id,
+                    tool_name=request.tool_name,
+                    tool_args=request.tool_args,
+                    metadata={"subagent_call_id": tool_call.id},
+                )
+                agent_response.events.append(event)
+                yield event
+
+    def _open_subagent_events(self, agent_response: AgentResponse, stream: bool) -> None:
+        self._subagent_events = queue.SimpleQueue() if self.subagents else None
+        self._stream_subagent_events = stream and bool(self.subagents)
+        self._subagent_run_id = agent_response.run_id
+
+    def _can_continue(self, agent_response: AgentResponse) -> bool:
+        return not agent_response.pending_approvals and not self._stop_requested.is_set()
+
+    def _end_reason(self, completed: bool, paused: bool) -> str:
+        if completed:
+            return "stop"
+        if paused:
+            return "approval_required"
+        return "interrupted" if self._stop_requested.is_set() else "max_turns"
 
     async def _arun_tool_round(
         self, tool_calls: List[ToolCall], agent_response: AgentResponse
@@ -1375,12 +1853,25 @@ class Agent:
             return
         for event in self._start_tool_calls(tool_calls, agent_response):
             yield event
-        tool_messages = await self.aexecute_tool_calls(tool_calls=tool_calls)
+        task = asyncio.ensure_future(self.aexecute_tool_calls(tool_calls=tool_calls))
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=SUBAGENT_EVENT_POLL_SECONDS)
+                for event in self._drain_subagent_events(agent_response):
+                    yield event
+        except BaseException:
+            task.cancel()
+            raise
+        tool_messages = task.result()
+        for event in self._drain_subagent_events(agent_response):
+            yield event
         agent_response.usage.tool_calls += len(tool_messages)
         for event in self._record_tool_results(tool_messages, agent_response):
             yield event
-        if self.team:
-            agent_response.usage.add(self._drain_delegation_usage())
+        if self.team or self.subagents:
+            self._fold_delegation_usage(agent_response)
+        for event in self._request_subagent_approvals(tool_calls, agent_response):
+            yield event
 
     def _request_approvals(
         self, tool_calls: List[ToolCall], agent_response: AgentResponse
@@ -1400,17 +1891,17 @@ class Agent:
             yield event
 
     def _resume_tool_calls(
-        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse
+        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse, resuming: bool = True
     ) -> Iterator[AgentResponseEvent]:
         """Settle the tool calls a previous run paused on, before new input reaches the history."""
-        approved, denials = self._decide_pending(approvals)
+        approved, denials = self._decide_pending(approvals, resuming)
         yield from self._run_tool_round(approved, agent_response)
         yield from self._record_tool_results(denials, agent_response)
 
     async def _aresume_tool_calls(
-        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse
+        self, approvals: Optional[ToolApprovals], agent_response: AgentResponse, resuming: bool = True
     ) -> AsyncIterator[AgentResponseEvent]:
-        approved, denials = self._decide_pending(approvals)
+        approved, denials = self._decide_pending(approvals, resuming)
         async for event in self._arun_tool_round(approved, agent_response):
             yield event
         for event in self._record_tool_results(denials, agent_response):
@@ -1454,9 +1945,10 @@ class Agent:
 
         # history
         self._prepare_history(task=task, context=context)
+        self._open_subagent_events(agent_response, stream=False)
         if messages:
             self._pin_task(messages)
-        for _ in self._resume_tool_calls(approvals, agent_response):
+        for _ in self._resume_tool_calls(approvals, agent_response, resuming=not messages):
             pass
         self.history.add_messages(messages)
 
@@ -1480,8 +1972,9 @@ class Agent:
         validation_retries_left = MAX_VALIDATION_RETRIES
         force_structured = False
         completed = False
+        response = None
 
-        while num_turns_available > 0:
+        while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
             self._before_request(num_turns_available)
@@ -1567,7 +2060,7 @@ class Agent:
 
         paused = bool(agent_response.pending_approvals)
         if paused:
-            agent_response.content = response.content or None
+            agent_response.content = (response.content or None) if response is not None else None
         elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
@@ -1579,11 +2072,7 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
-        drain = getattr(self.history, "drain_usage", None)
-        if drain is not None:
-            agent_response.usage.add(drain())
-        self.total_usage.add(agent_response.usage)
+        self._finish_run(agent_response, self._end_reason(completed, paused))
 
         return agent_response
 
@@ -1609,9 +2098,10 @@ class Agent:
         )
 
         self._prepare_history(task=task, context=context)
+        self._open_subagent_events(agent_response, stream=False)
         if messages:
             self._pin_task(messages)
-        async for _ in self._aresume_tool_calls(approvals, agent_response):
+        async for _ in self._aresume_tool_calls(approvals, agent_response, resuming=not messages):
             pass
         self.history.add_messages(messages)
 
@@ -1635,8 +2125,9 @@ class Agent:
         validation_retries_left = MAX_VALIDATION_RETRIES
         force_structured = False
         completed = False
+        response = None
 
-        while num_turns_available > 0:
+        while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
             self._before_request(num_turns_available)
@@ -1717,7 +2208,7 @@ class Agent:
 
         paused = bool(agent_response.pending_approvals)
         if paused:
-            agent_response.content = response.content or None
+            agent_response.content = (response.content or None) if response is not None else None
         elif not completed:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
@@ -1729,11 +2220,7 @@ class Agent:
             )
         )
 
-        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
-        drain = getattr(self.history, "drain_usage", None)
-        if drain is not None:
-            agent_response.usage.add(drain())
-        self.total_usage.add(agent_response.usage)
+        self._finish_run(agent_response, self._end_reason(completed, paused))
 
         return agent_response
 
@@ -1744,17 +2231,33 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> Iterator[AgentResponse]:
+        agent_response = AgentResponse(agent_id=self.id)
+        events = self._run_stream(agent_response, input, context, approvals)
+        try:
+            yield from events
+        except GeneratorExit:
+            self._interrupt_run(agent_response)
+            raise
+        finally:
+            events.close()
+
+    def _run_stream(
+        self,
+        agent_response: AgentResponse,
+        input: Union[str, List[Message], List[Dict[str, str]], None],
+        context: Optional[Union[str, Dict[str, str]]],
+        approvals: Optional[ToolApprovals],
+    ) -> Iterator[AgentResponse]:
         messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
-            agent_response = self._command_response(self._execute_command(*command))
+            self._command_response(self._execute_command(*command), agent_response)
             for event in agent_response.events:
                 yield event
             yield agent_response
             return
 
-        agent_response = AgentResponse(agent_id=self.id)
         event = AgentEventStarted(
             agent_id=self.id,
             run_id=agent_response.run_id,
@@ -1763,9 +2266,10 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._open_subagent_events(agent_response, stream=True)
         if messages:
             self._pin_task(messages)
-        yield from self._resume_tool_calls(approvals, agent_response)
+        yield from self._resume_tool_calls(approvals, agent_response, resuming=not messages)
         self.history.add_messages(messages)
 
         if self.reasoning_model and messages:
@@ -1785,8 +2289,9 @@ class Agent:
         validation_retries_left = MAX_VALIDATION_RETRIES
         force_structured = False
         completed = False
+        full_content = ""
 
-        while num_turns_available > 0:
+        while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
             self._before_request(num_turns_available)
@@ -1888,18 +2393,14 @@ class Agent:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
+        self._finish_run(agent_response, self._end_reason(completed, paused))
+        tracer.record_agent_result(agent_response)
         event = AgentEventCompleted(
             agent_id=self.id,
             run_id=agent_response.run_id,
         )
         agent_response.events.append(event)
         yield event
-
-        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
-        drain = getattr(self.history, "drain_usage", None)
-        if drain is not None:
-            agent_response.usage.add(drain())
-        self.total_usage.add(agent_response.usage)
 
         yield agent_response
 
@@ -1910,17 +2411,34 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AsyncIterator[AgentResponse]:
+        agent_response = AgentResponse(agent_id=self.id)
+        events = self._arun_stream(agent_response, input, context, approvals)
+        try:
+            async for event in events:
+                yield event
+        except (GeneratorExit, asyncio.CancelledError):
+            self._interrupt_run(agent_response)
+            raise
+        finally:
+            await events.aclose()
+
+    async def _arun_stream(
+        self,
+        agent_response: AgentResponse,
+        input: Union[str, List[Message], List[Dict[str, str]], None],
+        context: Optional[Union[str, Dict[str, str]]],
+        approvals: Optional[ToolApprovals],
+    ) -> AsyncIterator[AgentResponse]:
         messages, task = self._run_input(input)
 
         command = self._match_command(task)
         if command:
-            agent_response = self._command_response(await self._aexecute_command(*command))
+            self._command_response(await self._aexecute_command(*command), agent_response)
             for event in agent_response.events:
                 yield event
             yield agent_response
             return
 
-        agent_response = AgentResponse(agent_id=self.id)
         event = AgentEventStarted(
             agent_id=self.id,
             run_id=agent_response.run_id,
@@ -1929,9 +2447,10 @@ class Agent:
         yield event
 
         self._prepare_history(task=task, context=context)
+        self._open_subagent_events(agent_response, stream=True)
         if messages:
             self._pin_task(messages)
-        async for event in self._aresume_tool_calls(approvals, agent_response):
+        async for event in self._aresume_tool_calls(approvals, agent_response, resuming=not messages):
             yield event
         self.history.add_messages(messages)
 
@@ -1952,8 +2471,9 @@ class Agent:
         validation_retries_left = MAX_VALIDATION_RETRIES
         force_structured = False
         completed = False
+        full_content = ""
 
-        while num_turns_available > 0:
+        while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
             self._configure_llm_for_turn(structured=force_structured)
             self._before_request(num_turns_available)
@@ -2057,17 +2577,13 @@ class Agent:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
 
+        self._finish_run(agent_response, self._end_reason(completed, paused))
+        tracer.record_agent_result(agent_response)
         event = AgentEventCompleted(
             agent_id=self.id,
             run_id=agent_response.run_id,
         )
         agent_response.events.append(event)
         yield event
-
-        agent_response.finish_reason = "stop" if completed else "approval_required" if paused else "max_turns"
-        drain = getattr(self.history, "drain_usage", None)
-        if drain is not None:
-            agent_response.usage.add(drain())
-        self.total_usage.add(agent_response.usage)
 
         yield agent_response

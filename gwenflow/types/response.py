@@ -60,6 +60,7 @@ class ToolApprovalRequest:
     tool_call_id: str
     tool_name: str
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+    subagent_call_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -175,6 +176,9 @@ class AgentEventType(str, Enum):
     TOOL_COMPLETED = "tool_completed"
     TOOL_APPROVAL_REQUIRED = "tool_approval_required"
 
+    SUBAGENT_STARTED = "subagent_started"
+    SUBAGENT_COMPLETED = "subagent_completed"
+
 
 @dataclass(kw_only=True)
 class BaseAgentEvent:
@@ -248,6 +252,28 @@ class AgentEventToolApprovalRequired(BaseAgentEvent):
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
+@dataclass(kw_only=True)
+class AgentEventSubagentStarted(BaseAgentEvent):
+    event_type: str = AgentEventType.SUBAGENT_STARTED.value
+    tool_call_id: str | None = None
+    subagent_id: str | None = None
+    description: str | None = None
+    tools: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    model: str | None = None
+
+
+@dataclass(kw_only=True)
+class AgentEventSubagentCompleted(BaseAgentEvent):
+    event_type: str = AgentEventType.SUBAGENT_COMPLETED.value
+    tool_call_id: str | None = None
+    subagent_id: str | None = None
+    description: str | None = None
+    finish_reason: str | None = None
+    usage: AgentUsage | None = None
+    duration_seconds: float | None = None
+
+
 AgentResponseEvent = Annotated[
     AgentEventStarted
     | AgentEventCompleted
@@ -257,7 +283,9 @@ AgentResponseEvent = Annotated[
     | AgentEventThinking
     | AgentEventToolStarted
     | AgentEventToolCompleted
-    | AgentEventToolApprovalRequired,
+    | AgentEventToolApprovalRequired
+    | AgentEventSubagentStarted
+    | AgentEventSubagentCompleted,
     Discriminator("event_type"),
 ]
 
@@ -277,6 +305,7 @@ class AgentResponse:
     `finish_reason` is "stop", "max_turns", or "approval_required" when the
     run paused on tools declared with `requires_approval=True`: the calls are
     listed in `pending_approvals` and `content` holds the text of that turn.
+    A stream closed or cancelled before the run ended gets "interrupted".
     """
 
     agent_id: str
@@ -289,6 +318,7 @@ class AgentResponse:
     pending_approvals: list[ToolApprovalRequest] = field(default_factory=list)
     finish_reason: str | None = None
     usage: AgentUsage = field(default_factory=AgentUsage)
+    delegation_usage: AgentUsage = field(default_factory=AgentUsage)
     created_at: datetime = field(default_factory=now_utc)
 
     def to_dict(self) -> dict[str, Any]:

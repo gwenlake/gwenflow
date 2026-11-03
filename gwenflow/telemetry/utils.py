@@ -197,6 +197,10 @@ def capture_agent_usage(span, result: Any) -> None:
         return
     _set_int(span, sc.AGENT_LLM_REQUESTS, getattr(usage, "requests", None))
     _set_int(span, sc.AGENT_TOOL_CALLS, getattr(usage, "tool_calls", None))
+    delegated = getattr(result, "delegation_usage", None)
+    if delegated:
+        _set_int(span, sc.AGENT_DELEGATED_LLM_REQUESTS, getattr(delegated, "requests", None))
+        _set_int(span, sc.AGENT_DELEGATED_TOOL_CALLS, getattr(delegated, "tool_calls", None))
 
 
 def _set_int(span, key: str, value: Any) -> None:
