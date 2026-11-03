@@ -4,6 +4,79 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Sub-agents created on demand: `Agent(subagents=True)` adds a `spawn_agent` tool with
+  which the model launches a fresh agent for a self-contained task and gets back only
+  its final report. In each call the model writes the `description` and `prompt` and
+  picks the sub-agent's `tools` among its own (nothing else is handed down; `spawn_agent`
+  and the memory tools never are), the `skills` it may load among its own and, when
+  `subagent_llm` is set, its `model` (`"fast"`: `subagent_llm`, `"strong"`: the
+  orchestrator's model). An optional `output_schema` (a JSON Schema) makes the sub-agent
+  answer in JSON, which the orchestrator gets back as such.
+  Several calls in one turn run in parallel. `subagent_max_turns` caps each sub-agent.
+  The spend is folded into the run's usage and `/cost`.
+- `subagent_max_concurrency` (default 4, `None` for no limit, at least 1) caps the
+  sub-agents running at once; the others wait for a slot, none is refused.
+- `subagent_timeout` (seconds, default `None`): a sub-agent still running after it is
+  stopped at its next turn and the orchestrator gets a failure it can act on
+  (`delegation_timeout` in the trace). The clock starts once the sub-agent has a slot.
+- Sub-agent events: `AgentEventSubagentStarted` (call id, sub-agent id, description,
+  tools, skills, model) and `AgentEventSubagentCompleted` (finish reason, usage,
+  duration) in every run's events; in `run_stream` / `arun_stream`, the sub-agents' own
+  events are also forwarded live, tagged with `metadata["subagent_call_id"]`.
+- Approvals inside sub-agents: a sub-agent may use tools declared with
+  `requires_approval=True`. When it calls one, the orchestrator's run pauses with
+  `finish_reason="approval_required"`; the requests are listed in `pending_approvals`
+  with `ToolApprovalRequest.subagent_call_id` set to the `spawn_agent` call. The next
+  `run(approvals={...})` hands the decisions to the sub-agent, which resumes where it
+  stopped. A new message instead of an answer stops the paused sub-agent. Its state
+  lives in memory: a paused sub-agent does not survive `/save` + `/load`.
+
+- Telemetry of delegations: the `spawn_agent` tool span records the request
+  (`gwenflow.subagent.description`, `.tools`, `.skills`, `.model`, `.model_name`), and
+  every delegation span (`spawn_agent` and team `ask_*`) records
+  `gwenflow.delegation.finish_reason` and is marked as failed when the delegated run hits
+  `max_turns` or needs an approval; a refused `spawn_agent` request is marked
+  `invalid_subagent_request`. A sub-agent is named `sub-agent: <description>`.
+  `tracer.set_attributes({...})` sets attributes on the current gwenflow span.
+- `AgentResponse.delegation_usage`: the share of `usage` spent by delegated agents (team
+  handoffs and sub-agents) during the run. The `Agent Run` span reports it as
+  `gwenflow.agent.delegated_llm_requests` and `gwenflow.agent.delegated_tool_calls`;
+  `gwenflow.agent.llm_requests` and `gwenflow.agent.tool_calls` keep including it.
+
+### Changed
+
+- `Agent.run` and `Agent.run_stream` now run the delegation calls of one turn (team
+  handoffs and `spawn_agent`) in parallel threads, as `arun` already did. Other tool
+  calls still run one after the other, in order, and results keep the order of the calls.
+
+- `finish_reason="interrupted"`: a stream (`run_stream`, `arun_stream`) closed or
+  cancelled before the run ended. The spend so far still goes into `total_usage` and
+  `/cost`, and the `Agent Stream` / `Agent Astream` span records it with that finish
+  reason. `tracer.record_agent_result(response)` writes a run's counts on the current span.
+
+### Fixed
+
+- Tool calls had no span since 1.4.0: the `@tracer.tool` decorator had slid from
+  `Agent.run_tool` onto `_calibrate_history`, so every "Tool Call" span wrapped a memory
+  computation, with no `tool.name`, and no tool execution was traced. A delegated
+  agent's spans therefore hung off the parent agent instead of the call that launched
+  it, and a tool error handed back to the model (`tracer.mark_error`) marked the whole
+  `Agent Run` span as failed even when the run recovered. Each tool call has its span
+  again, and its errors stay on it.
+- The `output.value` of `Agent Stream` / `Agent Astream` spans concatenated the content of
+  every streamed event, tool results included (a sub-agent's whole report, every file
+  read), then the final answer a second time. It now holds the run's answer only.
+- A stream whose consumer stopped at the `completed` event (`if event.event_type ==
+  "completed": break`), or left mid-run, lost the run's accounting: `finish_reason`,
+  compaction usage and the `total_usage` update ran after that event, so they never ran,
+  `/cost` missed the whole run, and the span ended as interrupted with no counts. The
+  run is now settled before `completed` is emitted, and an interruption still records
+  what was spent; a span whose stream stops after `completed` ends as OK.
+
 ## [1.5.0] — 2026-10-27
 
 ### Changed
