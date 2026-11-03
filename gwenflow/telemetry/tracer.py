@@ -96,11 +96,27 @@ def _suppressed() -> bool:
 
 
 def _update_stream_state(chunk: Any, content: str, tool_calls: Any) -> tuple[str, Any]:
+    if getattr(chunk, "event_type", "content") != "content" or _is_run_result(chunk):
+        return content, tool_calls
     if getattr(chunk, "content", None):
         content += chunk.content
     if getattr(chunk, "tool_calls", None):
         tool_calls = chunk.tool_calls
     return content, tool_calls
+
+
+def _is_run_result(chunk: Any) -> bool:
+    return hasattr(chunk, "finish_reason") and hasattr(chunk, "events")
+
+
+def _stream_completed(last: Any) -> bool:
+    return getattr(last, "event_type", None) == "completed"
+
+
+def _final_content(last: Any, content: str) -> str:
+    if _is_run_result(last) and last.content is not None:
+        return last.content
+    return content
 
 
 class _NoopSpan:
@@ -262,6 +278,12 @@ class DecoratorTracer:
         """
         span.set_attribute(sc.INTERRUPTED, type(exc).__name__)
 
+    def _end_stream_early(self, span, exc: BaseException, last: Any) -> None:
+        if _stream_completed(last):
+            self._ok(span)
+        else:
+            self._interrupted(span, exc)
+
     def mark_error(
         self,
         exc: BaseException | None = None,
@@ -295,6 +317,42 @@ class DecoratorTracer:
                 span.set_attribute(sc.ERROR_TYPE, error_type)
         except Exception as e:
             logger.debug(f"Telemetry failed to record a handled error: {e}")
+
+    def record_agent_result(self, result: Any) -> None:
+        if not is_tracing_enabled() or _suppressed():
+            return
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            return
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        try:
+            capture_agent_usage(span, result)
+            capture_agent_finish_reason(span, result)
+            content = getattr(result, "content", None)
+            if content:
+                record_outputs(span, content, None, None)
+        except Exception as e:
+            logger.debug(f"Telemetry failed to record the agent result: {e}")
+
+    def set_attributes(self, attributes: dict[str, Any]) -> None:
+        if not is_tracing_enabled() or _suppressed():
+            return
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            return
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        try:
+            for key, value in attributes.items():
+                if value is not None:
+                    span.set_attribute(key, attribute_value(value))
+        except Exception as e:
+            logger.debug(f"Telemetry failed to set span attributes: {e}")
 
     def _wrap_logic(self, name_attr: str, kind_name: str, name_override: str | None = None):
         def decorator(func):
@@ -336,13 +394,18 @@ class DecoratorTracer:
                             last = chunk
                             content, tool_calls = _update_stream_state(chunk, content, tool_calls)
                             yield chunk
-                        self._record_finish(span, kind_name, last, content, tool_calls)
+                        self._record_finish(span, kind_name, last, _final_content(last, content), tool_calls)
                         self._ok(span)
                     except Exception as e:
                         self._error(span, e)
                         raise
                     except BaseException as e:
-                        self._interrupted(span, e)
+                        token = otel_context.attach(ctx)
+                        try:
+                            await agen.aclose()
+                        finally:
+                            otel_context.detach(token)
+                        self._end_stream_early(span, e, last)
                         raise
                     finally:
                         span.end()
@@ -414,13 +477,18 @@ class DecoratorTracer:
                             last = chunk
                             content, tool_calls = _update_stream_state(chunk, content, tool_calls)
                             yield chunk
-                        self._record_finish(span, kind_name, last, content, tool_calls)
+                        self._record_finish(span, kind_name, last, _final_content(last, content), tool_calls)
                         self._ok(span)
                     except Exception as e:
                         self._error(span, e)
                         raise
                     except BaseException as e:
-                        self._interrupted(span, e)
+                        token = otel_context.attach(ctx)
+                        try:
+                            gen.close()
+                        finally:
+                            otel_context.detach(token)
+                        self._end_stream_early(span, e, last)
                         raise
                     finally:
                         span.end()
