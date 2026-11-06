@@ -2,7 +2,7 @@
 
 pip install 'gwenflow[temporal]'
 temporal server start-dev
-python examples/demo_flow_temporal.py
+python examples/flow_temporal.py
 """
 
 import asyncio
@@ -19,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
 
 dotenv.load_dotenv(override=True)
 
-# The same flow as in demo_flow_yaml.py: durable only when it runs inside a workflow.
+# The same flow as in flow_yaml.py: durable only when it runs inside a workflow.
 flow = Flow.from_file("examples/flows/news_summary.yaml", durability=TemporalDurability())
 
 

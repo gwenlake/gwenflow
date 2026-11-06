@@ -19,7 +19,7 @@ Examples:
   agent, the simplest setup.
 - [examples/agent_temporal_human_approval.py](../examples/agent_temporal_human_approval.py):
   a durable agent whose trade-booking tool waits for a human approval.
-- [examples/demo_flow_temporal.py](../examples/demo_flow_temporal.py): a YAML flow run
+- [examples/flow_temporal.py](../examples/flow_temporal.py): a YAML flow run
   durably, then scheduled every day.
 
 ## How it works
@@ -216,7 +216,7 @@ of retries with a `FlowNodeError` one.
 ### Scheduling
 
 A durable flow is an ordinary workflow, so Temporal schedules run it on a timer; see
-[examples/demo_flow_temporal.py](../examples/demo_flow_temporal.py):
+[examples/flow_temporal.py](../examples/flow_temporal.py):
 
 ```python
 await client.create_schedule(

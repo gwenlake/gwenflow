@@ -5,7 +5,7 @@ topological order. The output of each node is passed as input to its
 downstream nodes.
 
 Run:
-    uv run python examples/demo_flow_yaml.py
+    uv run python examples/flow_yaml.py
 """
 
 import dotenv

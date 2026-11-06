@@ -497,7 +497,7 @@ Examples: [examples/agent_temporal.py](examples/agent_temporal.py) (a durable ag
 the simplest setup),
 [examples/agent_temporal_human_approval.py](examples/agent_temporal_human_approval.py)
 (a durable agent whose tool waits for a human approval) and
-[examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) (a flow run and
+[examples/flow_temporal.py](examples/flow_temporal.py) (a flow run and
 scheduled on Temporal). The full guide (activity timeouts and retries, approvals,
 `continue_as_new`, `DurableFlow`, large payloads) is in
 [docs/durability.md](docs/durability.md).
