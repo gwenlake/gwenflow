@@ -313,6 +313,61 @@ print(agent.run("What's the weather like in Paris?").content)
 
 The agent automatically gets three management tools: `list_skills`, `load_skill`, and `read_skill_resource`. Any Python function defined in a skill's `scripts/` directory (with a docstring and type annotations) is auto-registered as a callable Tool as well. Passing `tools=skills.get_tools()` explicitly is still supported and does not create duplicates.
 
+## Harness
+
+A harness describes an agent with files instead of construction code. Its definition uses the key names of the [Pydantic AI agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) (`model`, `name`, `description`, `instructions`, `model_settings`, `capabilities`, `output_schema`, `metadata`), so a Pydantic AI `agent.yaml` loads as is.
+
+```
+my_harness/
+├── harness.yaml              # the definition, every key optional (below)
+├── system_prompt.md          # the parts of the prompt, in this order: each one written in
+├── guardrails.md             # harness.yaml or in its file, not both
+├── knowledge.md
+├── tool_guidance.md
+├── output_schema.json        # or `output_schema` in harness.yaml
+├── skills/<name>/SKILL.md
+├── subagents/<name>/AGENT.md # team members: frontmatter = definition, body = instructions
+└── tools/*.py                # a module-level `tools` list, else every public function
+                              # with a docstring and type annotations
+```
+
+```yaml
+# harness.yaml
+name: question_generation
+version: "1"
+description: Writes exam questions.
+model: google/gemma-4-26b-a4b-it   # runs on the `llm` given in code, else on Gwenlake
+instructions: You write medical exam questions.   # or system_prompt.md
+guardrails: Never give the answer in the stem.    # or guardrails.md
+knowledge: Potassium above 5.5 mmol/L is hyperkalaemia.  # or knowledge.md: fixed facts
+model_settings:
+  temperature: 0.2
+max_turns: 8
+capabilities:
+  - Thinking: {effort: none}       # sets reasoning_effort
+  - Skills: {directories: ../shared/skills, include: [distractor-design], mode: inline}
+  - MCP: {id: docs, url: https://mcp.example.com/sse, headers: {Authorization: "Bearer ${DOCS_TOKEN}"}}
+  - WebSearch                      # DuckDuckGoSearchTool; WebFetch: WebsiteReaderTool
+  - PubMedTool: {max_results: 5, requires_approval: true}   # any tool of gwenflow.tools
+long_term_memory:                  # the memory the agent writes itself, across conversations
+  path: .memories/{{ user_id }}
+  always: [/memories/user/MEMORY.md]
+metadata: {}                       # free keys for your application
+```
+
+```python
+from gwenflow import Agent, ChatGwenlake, Harness
+
+agent = Agent.from_harness("my_harness")                    # a directory
+agent = Agent.from_file("agent.yaml")                       # one file: a Pydantic AI spec, or a .md
+agent = Agent.from_harness("my_harness", llm=ChatGwenlake(model="x", default_headers=headers))
+
+harness = Harness.load("my_harness")                        # read once,
+agent = harness.build_agent(variables={"user_id": "u42"})   # one agent per run
+```
+
+`{{ name }}` in the prompt is replaced by `variables` (`date` and `datetime` are always defined). The model runs on a copy of the `llm` given in code (key, base URL, headers), else on `ChatGwenlake`. What the code passes wins over the files; `tools`, `skills`, `team` and `mcp_servers` are added to the harness ones. `knowledge` holds fixed facts written by the authors; `long_term_memory` is what the agent writes itself (call `await agent.memory.aload()` before a run and `aflush()` after). Unknown keys and unknown capabilities are refused. `gwenflow harness check <path>` loads a harness and lists what it holds; a flow runs one with `harness: <path>` in a `gwenflow.Agent` node.
+
 ## Multi-Agent Orchestration
 
 Give an agent a `team` of specialist agents and it becomes an orchestrator. Each teammate is exposed to the orchestrator's LLM as a handoff tool named `ask_<slug>`, with the teammate's `description` as the tool description. The orchestrator decides who to delegate to, calls them, and synthesises the final answer.

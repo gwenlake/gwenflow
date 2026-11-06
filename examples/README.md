@@ -379,6 +379,42 @@ broadening sector mix elsewhere.
 
 ---
 
+## 📁 Agents described by files (harness)
+
+An agent can be written in files instead of Python: the model, the instructions, the tools, the skills, the subagents. The code only brings the connection, the variables and the conversation. The definition uses the key names of the Pydantic AI agent spec.
+
+### 1. One file — [`agent_from_file.py`](agent_from_file.py) + [`agents/recipe_writer.yaml`](agents/recipe_writer.yaml)
+
+A recipe writer in a single YAML file: `model`, `instructions` with `{{ servings }}` and `{{ diet }}` variables, `model_settings`, a `Thinking` capability and an `output_schema`. The code loads it with `Agent.from_file(...)`, fills the variables, and reads the answer in `response.parsed`. The second agent shows that what the code passes (variables, `model_settings`) wins over the file.
+
+```bash
+uv run python examples/agent_from_file.py
+```
+
+### 2. A directory — [`agent_from_harness.py`](agent_from_harness.py) + [`harness/customer_support/`](harness/customer_support/)
+
+A customer-support agent for a bike shop, as a directory with fixed file names:
+
+```
+customer_support/
+├── harness.yaml               # name, model, model_settings, max_turns, capabilities, long_term_memory
+├── system_prompt.md           # the prompt, in four parts: role and method,
+├── guardrails.md              #   rules that always apply,
+├── knowledge.md               #   lasting facts written by us,
+├── tool_guidance.md           #   how to use the tools and the subagent
+├── tools/orders.py            # order_status, start_return: plain Python functions
+├── skills/return-policy/SKILL.md
+└── subagents/technician/AGENT.md   # a team member, reached through the ask_technician tool
+```
+
+The code loads the directory once with `Harness.load(...)`, builds one agent per customer with `build_agent(variables=...)`, and runs a short conversation: an order lookup (tool), a malfunction (handed to the technician), a return (skill). The long-term memory is one directory per customer, loaded before each run and saved after; a new agent for the same customer starts with it in its prompt.
+
+```bash
+uv run python examples/agent_from_harness.py
+```
+
+---
+
 ## 🧰 Other examples in this directory
 
 | File | What it shows |
