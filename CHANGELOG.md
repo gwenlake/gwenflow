@@ -29,6 +29,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (a node out of retries) fails the run instead of retrying the workflow task forever.
 - `gwenflow[temporal]` optional extra (`temporalio>=1.35.0`). `import gwenflow` does not
   need it; only `import gwenflow.durability` does.
+- Durable execution guide, `docs/durability.md`, and durable agent examples:
+  `examples/demo_agent_temporal.py` (the simplest setup) and `examples/agent_temporal.py`
+  (tool approvals).
 - `Flow.arun()` and `Flow.run()` return every node's result, keyed by node name;
   `Flow.from_dict()` and `Flow.to_dict()` build and serialize a flow definition.
 - Per-node `settings` (`timeout` in seconds, `retries`) and `credentials` (parameter

@@ -491,15 +491,22 @@ worker = Worker(client, task_queue="briefs", **worker_options(MorningBrief, agen
 Each workflow run gets its own copy of the agent, with its own history, rebuilt
 identically on replay. `AgentWorkflow` (tool approvals through a query and a signal),
 `DurableFlow` (a flow definition as input, node progress as a query) and
-`ClaimCheckCodec` (large payloads in S3 instead of the history) are ready to use. See
-[examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) for a flow run and
-scheduled on Temporal.
+`ClaimCheckCodec` (large payloads in S3 instead of the history) are ready to use.
+
+Examples: [examples/demo_agent_temporal.py](examples/demo_agent_temporal.py) (a durable
+agent, the simplest setup), [examples/agent_temporal.py](examples/agent_temporal.py) (a
+durable agent whose tool waits for a human approval) and
+[examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) (a flow run and
+scheduled on Temporal). The full guide (activity timeouts and retries, approvals,
+`continue_as_new`, `DurableFlow`, large payloads) is in
+[docs/durability.md](docs/durability.md).
 
 A node that exhausts its retries raises `FlowNodeError` in the workflow: catch it, or let
 it fail the run (`worker_options()` declares it as a workflow failure).
 
-Not supported yet inside a workflow (an explicit error is raised): team and sub-agents,
-MCP servers, skills, long-term memory and streaming.
+Not supported yet: a durable agent cannot have a team or sub-agents, MCP servers, skills
+or long-term memory (an explicit error is raised when it is built), and streaming raises
+inside a workflow.
 
 ## Context Management
 
