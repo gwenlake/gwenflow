@@ -38,7 +38,7 @@ class ChatSummaryMemoryBuffer(ChatMemoryBuffer):
     """Rolling summary of the messages already folded."""
 
     _summarized_upto: int = 0
-    """Number of messages folded into the summary so far (reports, /save)."""
+    """Number of messages folded into the summary so far (reports, persistence)."""
 
     def reset(self):
         super().reset()

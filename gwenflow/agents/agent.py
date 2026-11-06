@@ -7,17 +7,14 @@ import queue
 import re
 import threading
 import time
-import uuid
+import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import (
     Any,
     AsyncIterator,
     Callable,
     Dict,
-    Iterable,
     Iterator,
     List,
     Literal,
@@ -28,7 +25,6 @@ from typing import (
 
 from pydantic import BaseModel, ValidationError
 
-from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.agents.subagents import (
     FAST_MODEL,
     SPAWN_AGENT_TOOL,
@@ -85,7 +81,16 @@ from gwenflow.types import (
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
+from gwenflow.utils.durable import in_workflow, new_id
 from gwenflow.utils.tokens import keep_tokens_from_text
+
+try:
+    from temporalio.exceptions import ActivityError
+except ImportError:  # temporal is optional
+
+    class ActivityError(Exception):  # type: ignore[no-redef]
+        pass
+
 
 _CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "gwenflow_current_tool_call_id", default=None
@@ -94,6 +99,30 @@ _CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.Conte
 FINAL_RESULT_TOOL = "final_result"
 READ_TOOL_OUTPUT = "read_tool_output"
 MAX_STORED_TOOL_OUTPUTS = 50
+
+PROMPT_KNOWLEDGE = """\
+## Use the following references from the knowledge base if it helps:
+
+<references>
+{references}
+</references>
+"""
+
+PROMPT_CONTEXT = """\
+## Use the following context if it helps:
+
+<context>
+{context}
+</context>
+"""
+
+PROMPT_JSON_SCHEMA = """\
+## Provide your output using the following JSON schema:
+
+<json_schema>
+{json_schema}
+</json_schema>
+"""
 
 
 @dataclass(kw_only=True)
@@ -118,30 +147,6 @@ class FinalResultTool(BaseTool):
     def _run(self, **kwargs: Any) -> Any:  # never executed: see Agent._answer_from_tool_calls
         return kwargs
 
-
-AGENT_COMMANDS = {
-    "/help": "Show the available commands.",
-    "/compact": "Fold older messages into the running summary now.",
-    "/reset": "Clear the conversation history and summary.",
-    "/clear": "Alias of /reset.",
-    "/history": "Show conversation memory statistics.",
-    "/cost": "Show cumulative token usage and estimated cost.",
-    "/tools": "List the registered tools.",
-    "/summary": "Show the current running summary.",
-    "/system": "Show the resolved system prompt.",
-    "/config": "Show the agent configuration.",
-    "/save": "Save the conversation (history + summary) to JSON: /save <path>.",
-    "/load": "Load a conversation saved with /save: /load <path>.",
-}
-
-COMMANDS_WITH_ARGS = {"/save", "/load"}
-"""Commands that accept an argument. Every other command is intercepted only
-when the message is exactly the bare command, so that a real request that
-merely starts with one ("/reset the counter in my code") still reaches the
-LLM. Like every command, they are off unless enabled with `Agent(commands=...)`."""
-
-SESSION_FORMAT_VERSION = 1
-"""Version of the /save JSON format."""
 
 MAX_VALIDATION_RETRIES = 3
 """How many times an invalid structured (`response_model`) answer is sent
@@ -237,13 +242,8 @@ class Agent:
     max_turns: Optional[int] = 100
     """Maximum turn (tool calls, llm calls) an agent can do."""
 
-    commands: bool | Iterable[str] = False
-    """Slash commands handled locally, without an LLM call (`/help`,
-    `/compact`, `/cost`, `/save <path>`...; see `AGENT_COMMANDS`). False
-    (default): none, every input goes to the model. True: all of them. A
-    collection of names enables only those, e.g. `{"/compact", "/cost"}`."""
-
-    _enabled_commands: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+    commands: Any = None
+    """Deprecated and ignored: slash commands were removed in 1.6.0."""
 
     warn_near_limits: bool = False
     """Tell the model, in the system prompt of the request, when the run is
@@ -279,16 +279,17 @@ class Agent:
 
     total_usage: AgentUsage = field(default_factory=AgentUsage)
     """Cumulative usage across every run of this agent, team delegations
-    included (see /cost)."""
+    included."""
 
     pricing: Optional[Dict[str, float]] = None
     """Optional price grid in dollars per MILLION tokens, e.g.
     {"input": 3.0, "output": 15.0} (optional keys: "cache_read",
-    "cache_write"). When set, /cost adds an estimated dollar amount."""
+    "cache_write"). Not used by gwenflow itself since slash commands were
+    removed; kept for callers that estimate costs from `total_usage`."""
 
     delegation_usage: AgentUsage = field(default_factory=AgentUsage)
     """Cumulative usage of team handoffs (sub-agent runs). Informational
-    breakdown for /cost: this spend is already folded into `total_usage`."""
+    breakdown: this spend is already folded into `total_usage`."""
 
     _pending_delegation_usage: AgentUsage = field(default_factory=AgentUsage, init=False, repr=False)
     """Delegation usage accumulated since the last drain. Guarded by
@@ -317,10 +318,19 @@ class Agent:
 
     _subagent_run_id: Optional[str] = field(default=None, init=False, repr=False)
 
+    durability: Optional[Any] = None
+    """Durable execution backend, e.g. `TemporalDurability()`. None: plain in-process runs.
+    Last field on purpose: existing positional arguments keep their meaning."""
+
     def __post_init__(self) -> None:
         if self.id is None:
-            self.id = str(uuid.uuid4())
-        self._enabled_commands = self._resolve_commands(self.commands)
+            self.id = new_id()
+        if self.commands is not None:
+            warnings.warn(
+                "Agent(commands=...) is deprecated and ignored: slash commands were removed in gwenflow 1.6.0.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
         if self.llm is None:
             self.llm = ChatOpenAI()
         else:
@@ -358,6 +368,8 @@ class Agent:
         else:
             self.llm.tools = None
             self.llm.tool_choice = None
+        if self.durability is not None:
+            self.durability.bind(self)
 
     def _build_handoff_tools(self) -> List[BaseTool]:
         """Expose each team member as a callable tool the orchestrator can invoke.
@@ -698,7 +710,7 @@ class Agent:
         the same agent concurrently by hand.
         """
         worker = copy.copy(self)
-        worker.id = str(uuid.uuid4())
+        worker.id = new_id()
         worker.llm = copy.copy(self.llm)
         worker.history = self._fresh_history()
         worker.total_usage = AgentUsage()
@@ -740,7 +752,7 @@ class Agent:
 
         Thread-safe: handoffs may run in parallel threads. The pending bucket
         is drained into the current run's usage after each tool round; the
-        cumulative `delegation_usage` feeds the /cost breakdown.
+        cumulative `delegation_usage` keeps the breakdown.
         """
         usage = AgentUsage()
         usage.add(response.usage)  # the worker's compaction spend is already inside
@@ -774,281 +786,6 @@ class Agent:
             drained = self._pending_delegation_usage
             self._pending_delegation_usage = AgentUsage()
         return drained
-
-    # ------------------------------------------------------------------
-    # Slash commands (/help, /compact, /reset, ...)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _resolve_commands(commands: bool | Iterable[str]) -> frozenset[str]:
-        """The set of enabled slash commands for a `commands` setting."""
-        if commands is True:
-            return frozenset(AGENT_COMMANDS)
-        if commands is False or commands is None:
-            return frozenset()
-        if isinstance(commands, str):
-            commands = [commands]
-        enabled = {c.strip().lower() for c in commands}
-        unknown = sorted(enabled - set(AGENT_COMMANDS))
-        if unknown:
-            raise ValueError(f"Unknown command(s): {', '.join(unknown)}. Known: {', '.join(AGENT_COMMANDS)}")
-        return frozenset(enabled)
-
-    def _match_command(self, task: Any) -> tuple[str, str] | None:
-        """Return `(command, args)` if `task` is an enabled slash command.
-
-        Nothing is intercepted unless `commands` enables it (off by default).
-        A bare enabled command ("/reset", "  /COMPACT  ") is always intercepted.
-        Extra text after the command is only allowed for COMMANDS_WITH_ARGS
-        ("/save ./session.json"); for every other command a message that merely
-        starts with one ("/reset the counter in my code") goes to the LLM like
-        any other input. Commands are handled locally, without an LLM call, and
-        are never added to the history.
-        """
-        if not isinstance(task, str):
-            return None
-        stripped = task.strip()
-        if not stripped.startswith("/"):
-            return None
-        parts = stripped.split(maxsplit=1)
-        command = parts[0].lower()
-        args = parts[1].strip() if len(parts) > 1 else ""
-        if command not in self._enabled_commands:
-            return None
-        if args and command not in COMMANDS_WITH_ARGS:
-            return None
-        return command, args
-
-    def _command_response(self, content: str, agent_response: Optional[AgentResponse] = None) -> AgentResponse:
-        agent_response = agent_response or AgentResponse(agent_id=self.id)
-        agent_response.events.append(AgentEventStarted(agent_id=self.id, run_id=agent_response.run_id))
-        agent_response.events.append(AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=content))
-        agent_response.content = content
-        agent_response.events.append(AgentEventCompleted(agent_id=self.id, run_id=agent_response.run_id))
-        agent_response.finish_reason = "stop"
-        return agent_response
-
-    def _compact_report(self, record: Any) -> str:
-        if record is None:
-            return "Nothing to compact: the conversation fits in the context window."
-        report = (
-            f"Compacted the history ({', '.join(record.strategies)}): "
-            f"{record.messages_before} -> {record.messages_after} message(s), "
-            f"~{record.tokens_before:,} -> ~{record.tokens_after:,} tokens."
-        )
-        summary = getattr(self.history, "summary", "")
-        if summary and "summarize_older" in record.strategies:
-            report += f" Running summary: ~{self.history.tokenizer_fn(summary)} tokens."
-        return report
-
-    def _execute_command(self, command: str, args: str = "") -> str:
-        if command == "/help":
-            lines = ["Available commands:"]
-            lines += [f"  {name:<10} {desc}" for name, desc in AGENT_COMMANDS.items() if name in self._enabled_commands]
-            return "\n".join(lines)
-        if command in ("/reset", "/clear"):
-            removed = len(self.history.messages)
-            self.history.reset()
-            return f"History cleared ({removed} message(s) removed)."
-        if command == "/compact":
-            record = self.history.compact()
-            self.total_usage.add(self.history.drain_usage())
-            return self._compact_report(record)
-        if command == "/cost":
-            return self._cost_report()
-        if command == "/tools":
-            tools = self.get_all_tools()
-            if not tools:
-                return "No tools registered."
-            lines = [f"{len(tools)} tool(s) available:"]
-            for tool in tools:
-                first_line = (tool.description or "").strip().split("\n")[0]
-                lines.append(f"  {tool.name}: {first_line}" if first_line else f"  {tool.name}")
-            return "\n".join(lines)
-        if command == "/summary":
-            summary = getattr(self.history, "summary", None)
-            if summary is None:
-                return "This agent's memory does not keep a summary (plain ChatMemoryBuffer)."
-            if not summary:
-                return "The running summary is empty (nothing has been compacted yet)."
-            return f"Running summary:\n\n{summary}"
-        if command == "/system":
-            if self.system_prompt:
-                return f"System prompt (fixed):\n\n{self.system_prompt.strip()}"
-            retriever, self.retriever = self.retriever, None
-            try:
-                prompt = self.get_system_prompt(task="")
-            finally:
-                self.retriever = retriever
-            note = (
-                "\n\n(Knowledge references from the retriever are injected per task and are not shown here.)"
-                if retriever
-                else ""
-            )
-            return (f"System prompt:\n\n{prompt}" if prompt else "System prompt is empty.") + note
-        if command == "/config":
-            return self._config_report()
-        if command == "/save":
-            if not args:
-                return "Usage: /save <path>"
-            return self._save_session(args)
-        if command == "/load":
-            if not args:
-                return "Usage: /load <path>"
-            return self._load_session(args)
-        if command == "/history":
-            messages = self.history.messages
-            tokens = self.history._token_count_for_messages(messages)
-            parts = [f"{len(messages)} message(s) stored, ~{tokens} tokens (limit {self.history.limit()})."]
-            summary = getattr(self.history, "summary", "")
-            if summary:
-                parts.append(f"Running summary: ~{self.history.tokenizer_fn(summary)} tokens.")
-            folded = getattr(self.history, "_summarized_upto", 0)
-            if folded:
-                parts.append(f"{folded} message(s) already folded into the summary.")
-            return " ".join(parts)
-        return f"Unknown command: {command}"
-
-    def _config_report(self) -> str:
-        lines = ["Agent configuration:"]
-        lines.append(f"  name:            {self.name or '-'}")
-        lines.append(f"  model:           {getattr(self.llm, 'model', type(self.llm).__name__)}")
-        if self.reasoning_model is not None:
-            lines.append(
-                f"  reasoning model: {getattr(self.reasoning_model, 'model', type(self.reasoning_model).__name__)}"
-            )
-        lines.append(f"  max_turns:       {self.max_turns}")
-        lines.append(f"  tool_choice:     {self.tool_choice or 'auto'}")
-        lines.append(f"  tools:           {len(self.get_all_tools())}")
-        lines.append(f"  commands:        {', '.join(sorted(self._enabled_commands)) or '-'}")
-        if self.skills:
-            lines.append(f"  skills:          {', '.join(s.name for s in self.skills)}")
-        if self.memory:
-            lines.append(
-                f"  memory:          {len(self.memory.always)} core file(s), {len(self.memory.index())} topic file(s)"
-            )
-        if self.team:
-            lines.append(f"  team:            {', '.join(m.name or m.id for m in self.team)}")
-        if self.subagents:
-            model = getattr(self.subagent_llm or self.llm, "model", "?")
-            lines.append(
-                f"  subagents:       on (model {model}, max_turns {self.subagent_max_turns}, "
-                f"max_concurrency {self.subagent_max_concurrency or 'unlimited'}, "
-                f"timeout {self.subagent_timeout or 'none'})"
-            )
-        if self.response_model is not None:
-            model_name = self.response_model.__name__ if isinstance(self.response_model, type) else "dict schema"
-            lines.append(f"  response_model:  {model_name}")
-        lines.append(
-            f"  memory:          {type(self.history).__name__} "
-            f"(token_limit {self.history.limit():,}, reserved {self.history.reserved_tokens:,})"
-        )
-        summarizer = getattr(self.history, "llm", None)
-        if summarizer is not None:
-            lines.append(f"  summarizer:      {getattr(summarizer, 'model', type(summarizer).__name__)}")
-        return "\n".join(lines)
-
-    def _save_session(self, path: str) -> str:
-        data: Dict[str, Any] = {
-            "format": "gwenflow.session",
-            "version": SESSION_FORMAT_VERSION,
-            "saved_at": datetime.now(timezone.utc).isoformat(),
-            "agent": {"id": self.id, "name": self.name},
-            "messages": [m.to_dict() for m in self.history.messages],
-        }
-        summary = getattr(self.history, "summary", None)
-        if summary is not None:
-            data["summary"] = summary
-            data["summarized_upto"] = self.history._summarized_upto
-        try:
-            file = Path(path).expanduser()
-            if file.parent != Path("."):
-                file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text(
-                json.dumps(
-                    data,
-                    indent=2,
-                    ensure_ascii=False,
-                    default=lambda o: o.to_dict() if hasattr(o, "to_dict") else str(o),
-                ),
-                encoding="utf-8",
-            )
-        except OSError as e:
-            return f"Could not save session: {e}"
-        return f"Session saved to {file} ({len(self.history.messages)} message(s))."
-
-    def _load_session(self, path: str) -> str:
-        file = Path(path).expanduser()
-        try:
-            data = json.loads(file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
-            return f"Could not load session: {e}"
-        if not isinstance(data, dict) or data.get("format") != "gwenflow.session":
-            return f"Could not load session: {file} is not a gwenflow session file."
-        version = data.get("version", 0)
-        if version > SESSION_FORMAT_VERSION:
-            return f"Could not load session: file version {version} is newer than supported ({SESSION_FORMAT_VERSION})."
-
-        messages = data.get("messages", [])
-        self.history.reset()
-        for message in messages:
-            self.history.add_message(message)
-
-        summary_note = ""
-        if hasattr(self.history, "summary"):
-            self.history.summary = data.get("summary") or ""
-            self.history._summarized_upto = int(data.get("summarized_upto") or 0)
-            if self.history.summary:
-                summary_note = ", summary restored"
-        elif data.get("summary"):
-            summary_note = ", summary in file ignored (plain ChatMemoryBuffer)"
-        return f"Session loaded from {file} ({len(messages)} message(s){summary_note})."
-
-    def _cost_report(self) -> str:
-        def block(title: str, usage: AgentUsage) -> list[str]:
-            lines = [title]
-            requests = f"  requests:      {usage.requests:,}"
-            if usage.tool_calls:
-                requests += f"  (tool calls: {usage.tool_calls:,})"
-            lines.append(requests)
-            input_line = f"  input tokens:  {usage.input_tokens:,}"
-            if usage.cache_read_tokens:
-                input_line += f"  (cache read: {usage.cache_read_tokens:,})"
-            lines.append(input_line)
-            lines.append(f"  output tokens: {usage.output_tokens:,}")
-            return lines
-
-        combined = AgentUsage()
-        combined.add(self.total_usage)
-        lines = block("Session usage:", self.total_usage)
-
-        if self.delegation_usage.requests:
-            # Breakdown only: this spend is already inside the session usage.
-            lines += block("Team delegations (included above):", self.delegation_usage)
-
-        compaction_usage = getattr(self.history, "usage", None)
-        if compaction_usage is not None and compaction_usage.requests:
-            # Breakdown only: summaries are folded into the run that triggered them.
-            lines += block("Compaction (included above):", compaction_usage)
-
-        if self.pricing:
-            cost = combined.input_tokens * self.pricing.get("input", 0.0)
-            cost += combined.output_tokens * self.pricing.get("output", 0.0)
-            cost += combined.cache_read_tokens * self.pricing.get("cache_read", 0.0)
-            cost += combined.cache_write_tokens * self.pricing.get("cache_write", 0.0)
-            lines.append(f"Estimated cost:  ${cost / 1_000_000:.4f}")
-        else:
-            lines.append(
-                'Estimated cost:  unavailable (set agent.pricing = {"input": ..., "output": ...} in $ per million tokens).'
-            )
-        return "\n".join(lines)
-
-    async def _aexecute_command(self, command: str, args: str = "") -> str:
-        if command == "/compact":
-            record = await self.history.acompact()
-            self.total_usage.add(self.history.drain_usage())
-            return self._compact_report(record)
-        return self._execute_command(command, args)
 
     def tool(self, func: Optional[Callable] = None, *, requires_approval: bool = False) -> Callable:
         """Decorator that registers a function as a tool on this agent instance.
@@ -1299,6 +1036,8 @@ class Agent:
 
     def _before_request(self, turns_left: int) -> None:
         """Per-request bookkeeping: window sync, usage report, limit notice."""
+        if self.durability is not None and in_workflow():
+            self.durability.before_model_request(self)
         self._sync_context_window()
         usage = self.history.context_usage()
         if self.on_context_usage is not None:
@@ -1540,7 +1279,7 @@ class Agent:
         total = tokenizer_fn(content)
         if total <= limit:
             return content
-        ref = f"out_{uuid.uuid4().hex[:8]}"
+        ref = f"out_{new_id().replace('-', '')[-8:]}"  # random tail: a uuid7 starts with the clock
         self._tool_outputs[ref] = content
         while len(self._tool_outputs) > MAX_STORED_TOOL_OUTPUTS:
             self._tool_outputs.pop(next(iter(self._tool_outputs)))
@@ -1614,6 +1353,25 @@ class Agent:
         tool_execution.content = self._set_aside_long_output(tool_call.name, tool_execution.content)
         return tool_execution.to_message()
 
+    async def arun_tool(self, tool_call: ToolCall) -> Message:
+        """Async twin of `run_tool` for tools whose `arun` does the work (durable proxies)."""
+        tool_execution = ToolResponse(tool_call_id=tool_call.id, tool_name=tool_call.name)
+        tool_map = {tool.name: tool for tool in self.get_all_tools()}
+        if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
+            return self.run_tool(tool_call)  # pure validation, no I/O
+        if tool_call.name not in tool_map:
+            return self.run_tool(tool_call)  # error message, no I/O
+        try:
+            result = await tool_map[tool_call.name].arun(**self._parse_tool_args(tool_call))
+        except Exception as e:
+            if in_workflow() and not isinstance(e, ActivityError):
+                raise  # a bug in workflow code must fail the task, not be shown to the model
+            logger.error(f"Error executing tool '{tool_call.name}': {e}")
+            tool_execution.content = f"Error executing tool '{tool_call.name}': {getattr(e, 'cause', None) or e}"
+            return tool_execution.to_message()
+        tool_execution.content = self._set_aside_long_output(tool_call.name, result or "")
+        return tool_execution.to_message()
+
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         delegation_names = {t.name for t in self._handoff_tools + self._spawn_tools}
         concurrent = [i for i, tool_call in enumerate(tool_calls) if tool_call.name in delegation_names]
@@ -1632,6 +1390,10 @@ class Agent:
         return results
 
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
+        if in_workflow():
+            # No threads in workflow code: the calls are awaited, each one an activity.
+            results = await asyncio.gather(*(self.arun_tool(tool_call) for tool_call in tool_calls))
+            return [result for result in results if result]
         tasks = []
         for tool_call in tool_calls:
             task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
@@ -1645,7 +1407,7 @@ class Agent:
         """Tool calls of the last assistant turn that have no result yet.
 
         Read from the history alone: a run paused on approvals keeps no other
-        state, so it can be resumed after a /save + /load or in another process.
+        state, so it can be resumed from a restored history or in another process.
         """
         answered: set[str] = set()
         for message in reversed(self.history.messages):
@@ -1928,11 +1690,11 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         messages, task = self._run_input(input)
-
-        command = self._match_command(task)
-        if command:
-            return self._command_response(self._execute_command(*command))
 
         # init agent response
         agent_response = AgentResponse(agent_id=self.id)
@@ -2083,11 +1845,16 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
+        if in_workflow():
+            if self.durability is None:
+                raise RuntimeError(
+                    f"Agent '{self.name}' runs inside a workflow without durability: "
+                    "give it `durability=TemporalDurability()` so its I/O runs in activities."
+                )
+            if not getattr(self, "_workflow_copy", False):
+                # Each workflow run gets its own copy (own history), rebuilt identically on replay.
+                return await self.durability.workflow_agent(self).arun(input, context=context, approvals=approvals)
         messages, task = self._run_input(input)
-
-        command = self._match_command(task)
-        if command:
-            return self._command_response(await self._aexecute_command(*command))
 
         agent_response = AgentResponse(agent_id=self.id)
         agent_response.events.append(
@@ -2231,6 +1998,10 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> Iterator[AgentResponse]:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         agent_response = AgentResponse(agent_id=self.id)
         events = self._run_stream(agent_response, input, context, approvals)
         try:
@@ -2249,14 +2020,6 @@ class Agent:
         approvals: Optional[ToolApprovals],
     ) -> Iterator[AgentResponse]:
         messages, task = self._run_input(input)
-
-        command = self._match_command(task)
-        if command:
-            self._command_response(self._execute_command(*command), agent_response)
-            for event in agent_response.events:
-                yield event
-            yield agent_response
-            return
 
         event = AgentEventStarted(
             agent_id=self.id,
@@ -2411,6 +2174,10 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AsyncIterator[AgentResponse]:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         agent_response = AgentResponse(agent_id=self.id)
         events = self._arun_stream(agent_response, input, context, approvals)
         try:
@@ -2430,14 +2197,6 @@ class Agent:
         approvals: Optional[ToolApprovals],
     ) -> AsyncIterator[AgentResponse]:
         messages, task = self._run_input(input)
-
-        command = self._match_command(task)
-        if command:
-            self._command_response(await self._aexecute_command(*command), agent_response)
-            for event in agent_response.events:
-                yield event
-            yield agent_response
-            return
 
         event = AgentEventStarted(
             agent_id=self.id,

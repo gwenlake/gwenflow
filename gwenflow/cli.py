@@ -1,74 +1,26 @@
-import importlib
-
 import click
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
 
+from gwenflow.registry import DEFAULT_MODEL, make_llm, make_tools
+from gwenflow.registry import TOOLS as _TOOLS
+
 console = Console()
-
-DEFAULT_MODEL = "openai/gpt-4o-mini"
-
-_PROVIDERS = {
-    "openai": ("gwenflow.llms.openai", "ChatOpenAI"),
-    "anthropic": ("gwenflow.llms.anthropic", "ChatAnthropic"),
-    "azure": ("gwenflow.llms.azure", "ChatAzureOpenAI"),
-    "google": ("gwenflow.llms.google", "ChatGoogle"),
-    "gemini": ("gwenflow.llms.google", "ChatGoogle"),
-    "mistral": ("gwenflow.llms.mistral", "ChatMistral"),
-    "ollama": ("gwenflow.llms.ollama", "ChatOllama"),
-    "deepseek": ("gwenflow.llms.deepseek", "ChatDeepSeek"),
-    "gwenlake": ("gwenflow.llms.gwenlake", "ChatGwenlake"),
-}
-
-_TOOLS = {
-    "wikipedia": ("gwenflow.tools.wikipedia", "WikipediaTool"),
-    "duckduckgo": ("gwenflow.tools.duckduckgo", "DuckDuckGoSearchTool"),
-    "duckduckgo-news": ("gwenflow.tools.duckduckgo", "DuckDuckGoNewsTool"),
-    "tavily": ("gwenflow.tools.tavily", "TavilyWebSearchTool"),
-    "python": ("gwenflow.tools.python", "PythonCodeTool"),
-    "shell": ("gwenflow.tools.shell", "ShellTool"),
-    "website": ("gwenflow.tools.website", "WebsiteReaderTool"),
-    "pdf": ("gwenflow.tools.pdf", "PDFReaderTool"),
-    "yahoo-stock": ("gwenflow.tools.yahoofinance", "YahooFinanceStock"),
-    "yahoo-news": ("gwenflow.tools.yahoofinance", "YahooFinanceNews"),
-    "yahoo-screen": ("gwenflow.tools.yahoofinance", "YahooFinanceScreen"),
-}
 
 
 def _make_llm(model: str):
-    provider, _, model_name = model.partition("/")
-    if not model_name:
-        model_name = provider
-        provider = "openai"
-
-    entry = _PROVIDERS.get(provider.lower())
-    if entry is None:
-        raise click.BadParameter(
-            f"Unknown provider '{provider}'. Choose from: {', '.join(_PROVIDERS)}",
-            param_hint="--model",
-        )
-
-    module_path, cls_name = entry
-    mod = importlib.import_module(module_path)
-    cls = getattr(mod, cls_name)
-    return cls(model=model_name)
+    try:
+        return make_llm(model)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--model") from e
 
 
 def _make_tools(tool_names: tuple[str, ...]) -> list:
-    tools = []
-    for name in tool_names:
-        entry = _TOOLS.get(name.lower())
-        if entry is None:
-            raise click.BadParameter(
-                f"Unknown tool '{name}'. Run 'gwenflow tools' to list available tools.",
-                param_hint="--tools",
-            )
-        module_path, cls_name = entry
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, cls_name)
-        tools.append(cls())
-    return tools
+    try:
+        return make_tools(tool_names)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--tools") from e
 
 
 @click.group()
@@ -83,7 +35,7 @@ def main():
 @click.option("--interactive", is_flag=True, help="Open an interactive HTML flow graph (requires pyvis).")
 def run(flow_file, plot, interactive):
     """Run a flow from a JSON or YAML file."""
-    from gwenflow.flows import FlowRunner
+    from gwenflow.flows import FlowError, FlowRunner
 
     runner = FlowRunner(flow_file)
     if interactive:
@@ -91,7 +43,14 @@ def run(flow_file, plot, interactive):
     elif plot:
         runner.plot()
     else:
-        runner.run()
+        try:
+            results = runner.run()
+        except FlowError as e:
+            console.print(f"[red]{e}[/red]")
+            raise SystemExit(1) from e
+        for name in runner.flow.sinks():
+            value = results[name]
+            console.print(Markdown(value) if isinstance(value, str) else value)
 
 
 @main.command()

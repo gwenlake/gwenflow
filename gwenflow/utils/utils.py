@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    from gwenflow.utils.durable import now_utc as _now_utc
+
+    return _now_utc()

@@ -389,9 +389,12 @@ broadening sector mix elsewhere.
 | [`agent_structured_output.py`](agent_structured_output.py) | Pydantic `response_model` pattern (non-finance domain) |
 | [`agent_web.py`](agent_web.py), [`agent_websearch_*.py`](.) | Tavily + website readers |
 | [`agent_wikipedia.py`](agent_wikipedia.py) | Wikipedia tool |
-| [`demo_flow_sequential.py`](demo_flow_sequential.py), [`demo_flow_yaml.py`](demo_flow_yaml.py) | `Flow` DAG examples |
-| [`demo_telemetry.py`](demo_telemetry.py) | OpenTelemetry tracing |
-| [`demo_tools_app.py`](demo_tools_app.py) | Tool catalogue / inspector |
+| [`flow_sequential.py`](flow_sequential.py), [`flow_yaml.py`](flow_yaml.py) | `Flow` DAG examples |
+| [`flow_temporal.py`](flow_temporal.py) | A YAML flow run durably on Temporal, then scheduled every day |
+| [`agent_temporal.py`](agent_temporal.py) | A durable agent on Temporal, the simplest setup |
+| [`agent_temporal_human_approval.py`](agent_temporal_human_approval.py) | A durable agent whose tool waits for a human approval (`AgentWorkflow`) |
+| [`telemetry.py`](telemetry.py) | OpenTelemetry tracing |
+| [`tools_app.py`](tools_app.py) | Tool catalogue / inspector |
 
 ---
 

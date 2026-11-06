@@ -157,7 +157,7 @@ class ChatMemoryBuffer(BaseChatMemory):
     usage: AgentUsage = field(default_factory=AgentUsage)
     """Cumulative usage of the LLM calls made by compaction (summaries).
     Deliberately NOT cleared by `reset()`: tokens already spent stay
-    accounted for (see /cost)."""
+    accounted for."""
 
     _pending_usage: AgentUsage = field(default_factory=AgentUsage)
     """Compaction usage not yet folded into a run (see `drain_usage`)."""
@@ -619,6 +619,16 @@ class ChatMemoryBuffer(BaseChatMemory):
     async def acompact(self) -> CompactionRecord | None:
         """Async variant of `compact()`: the (sync) LLM calls run in a worker thread."""
         import asyncio
+
+        from gwenflow.utils.durable import in_workflow
+
+        if in_workflow():
+            # No threads in workflow code. Cheap tiers run inline; a compaction that
+            # needs the summarizer is delegated to the durable backend (an activity).
+            compactor = getattr(self, "durable_compactor", None)
+            if compactor is not None and self.messages and self.used_tokens() > self.limit():
+                return await compactor(self)
+            return self.compact()
 
         return await asyncio.to_thread(self.compact)
 

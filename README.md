@@ -27,6 +27,13 @@ Gwenflow, a framework designed by [Gwenlake](https://gwenlake.com), streamlines 
 pip install gwenflow
 ```
 
+Optional extras:
+
+```bash
+pip install "gwenflow[telemetry]"   # OpenTelemetry tracing
+pip install "gwenflow[temporal]"    # durable execution with Temporal
+```
+
 Install the latest from the main branch:
 
 ```bash
@@ -427,8 +434,80 @@ connections:
 from gwenflow import FlowRunner
 
 runner = FlowRunner("flows/news_summary.yaml")
-runner.run()
+results = runner.run()  # every node's result, keyed by node name
+print(results["summarize"])
 ```
+
+Independent branches run in parallel. Each node accepts `settings` (`timeout` in seconds,
+`retries`) and `credentials` (parameter name → environment variable, resolved only when
+the node runs).
+
+**Migrating from 1.5:** `FlowRunner.run()` used to print the result and exit with
+`SystemExit(1)` when a node failed. It now returns a dict of every node's result, keyed
+by node name, and a failing node raises `FlowNodeError` (a subclass of `FlowError`, also
+raised for invalid flows: cycles, duplicate names, unknown connections). Print the
+result yourself and catch `FlowError` where you relied on the exit:
+
+```python
+from gwenflow.flows import FlowError, FlowRunner
+
+try:
+    results = FlowRunner("flows/news_summary.yaml").run()
+except FlowError as e:
+    print(e)
+```
+
+## Durable execution with Temporal
+
+Install the extra with `pip install "gwenflow[temporal]"`. Attach `TemporalDurability` to
+an agent or a flow and use them in an ordinary Temporal workflow: outside a workflow they
+behave as usual; inside one, model requests, tool calls and flow nodes run as
+activities, so a run survives worker crashes and restarts where it stopped.
+
+```python
+from temporalio import workflow
+from temporalio.worker import Worker
+
+with workflow.unsafe.imports_passed_through():
+    from gwenflow import Agent
+    from gwenflow.durability import TemporalDurability, worker_options
+    from gwenflow.flows import Flow
+
+agent = Agent(name="finance", llm=..., tools=[...], durability=TemporalDurability())
+flow = Flow.from_file("news.yaml", durability=TemporalDurability())
+
+
+@workflow.defn
+class MorningBrief:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        news = await flow.arun()                   # each node is an activity
+        return (await agent.arun(prompt)).content  # model and tools too
+
+
+worker = Worker(client, task_queue="briefs", **worker_options(MorningBrief, agents=[agent]))
+```
+
+Each workflow run gets its own copy of the agent, with its own history, rebuilt
+identically on replay. `AgentWorkflow` (tool approvals through a query and a signal),
+`DurableFlow` (a flow definition as input, node progress as a query) and
+`ClaimCheckCodec` (large payloads in S3 instead of the history) are ready to use.
+
+Examples: [examples/agent_temporal.py](examples/agent_temporal.py) (a durable agent,
+the simplest setup),
+[examples/agent_temporal_human_approval.py](examples/agent_temporal_human_approval.py)
+(a durable agent whose tool waits for a human approval) and
+[examples/flow_temporal.py](examples/flow_temporal.py) (a flow run and
+scheduled on Temporal). The full guide (activity timeouts and retries, approvals,
+`continue_as_new`, `DurableFlow`, large payloads) is in
+[docs/durability.md](docs/durability.md).
+
+A node that exhausts its retries raises `FlowNodeError` in the workflow: catch it, or let
+it fail the run (`worker_options()` declares it as a workflow failure).
+
+Not supported yet: a durable agent cannot have a team or sub-agents, MCP servers, skills
+or long-term memory (an explicit error is raised when it is built), and streaming raises
+inside a workflow.
 
 ## Context Management
 
@@ -486,19 +565,7 @@ agent = Agent(
 )
 ```
 
-Without any of this, `Agent(llm=llm)` already compacts at 85 % of the window and summarizes with a copy of `llm`; `Agent(summarizer=cheaper_llm)` picks a cheaper model for the summaries. `agent.context_usage()` reports where the history stands, `/compact` compacts on demand, and each compaction that triggers emits a `compact_messages` span with counts (never content).
-
-### Slash commands
-
-An agent can handle a few commands locally, without an LLM call: `/help`, `/compact`, `/reset`, `/history`, `/cost`, `/tools`, `/summary`, `/system`, `/config`, `/save <path>` and `/load <path>`. They are **off by default**: every input, slash included, goes to the model. Enable all of them with `commands=True`, or only some:
-
-```python
-agent = Agent(llm=llm, commands=True)                 # every command
-agent = Agent(llm=llm, commands={"/compact", "/cost"})  # just these
-print(agent.run("/help").content)
-```
-
-A bare command is intercepted; `/save` and `/load` also take an argument. Anything else that merely starts with a slash ("/reset the counter in my code") is treated as a normal request.
+Without any of this, `Agent(llm=llm)` already compacts at 85 % of the window and summarizes with a copy of `llm`; `Agent(summarizer=cheaper_llm)` picks a cheaper model for the summaries. `agent.context_usage()` reports where the history stands, `agent.history.compact()` compacts on demand, and each compaction that triggers emits a `compact_messages` span with counts (never content).
 
 ## Telemetry & Observability
 
