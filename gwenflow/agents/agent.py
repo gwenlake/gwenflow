@@ -27,7 +27,6 @@ from typing import (
 
 from pydantic import BaseModel, ValidationError
 
-from gwenflow.agents.prompts import PROMPT_CONTEXT, PROMPT_JSON_SCHEMA, PROMPT_KNOWLEDGE
 from gwenflow.agents.subagents import (
     FAST_MODEL,
     SPAWN_AGENT_TOOL,
@@ -102,6 +101,30 @@ _CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.Conte
 FINAL_RESULT_TOOL = "final_result"
 READ_TOOL_OUTPUT = "read_tool_output"
 MAX_STORED_TOOL_OUTPUTS = 50
+
+PROMPT_KNOWLEDGE = """\
+## Use the following references from the knowledge base if it helps:
+
+<references>
+{references}
+</references>
+"""
+
+PROMPT_CONTEXT = """\
+## Use the following context if it helps:
+
+<context>
+{context}
+</context>
+"""
+
+PROMPT_JSON_SCHEMA = """\
+## Provide your output using the following JSON schema:
+
+<json_schema>
+{json_schema}
+</json_schema>
+"""
 
 
 @dataclass(kw_only=True)
