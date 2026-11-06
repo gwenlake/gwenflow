@@ -620,6 +620,16 @@ class ChatMemoryBuffer(BaseChatMemory):
         """Async variant of `compact()`: the (sync) LLM calls run in a worker thread."""
         import asyncio
 
+        from gwenflow.utils.durable import in_workflow
+
+        if in_workflow():
+            # No threads in workflow code. Cheap tiers run inline; a compaction that
+            # needs the summarizer is delegated to the durable backend (an activity).
+            compactor = getattr(self, "durable_compactor", None)
+            if compactor is not None and self.messages and self.used_tokens() > self.limit():
+                return await compactor(self)
+            return self.compact()
+
         return await asyncio.to_thread(self.compact)
 
     # ------------------------------------------------------------------

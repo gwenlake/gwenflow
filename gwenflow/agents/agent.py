@@ -7,7 +7,6 @@ import queue
 import re
 import threading
 import time
-import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -85,7 +84,16 @@ from gwenflow.types import (
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
+from gwenflow.utils.durable import in_workflow, new_id
 from gwenflow.utils.tokens import keep_tokens_from_text
+
+try:
+    from temporalio.exceptions import ActivityError
+except ImportError:  # temporal is optional
+
+    class ActivityError(Exception):  # type: ignore[no-redef]
+        pass
+
 
 _CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "gwenflow_current_tool_call_id", default=None
@@ -317,9 +325,13 @@ class Agent:
 
     _subagent_run_id: Optional[str] = field(default=None, init=False, repr=False)
 
+    durability: Optional[Any] = None
+    """Durable execution backend, e.g. `TemporalDurability()`. None: plain in-process runs.
+    Last field on purpose: existing positional arguments keep their meaning."""
+
     def __post_init__(self) -> None:
         if self.id is None:
-            self.id = str(uuid.uuid4())
+            self.id = new_id()
         self._enabled_commands = self._resolve_commands(self.commands)
         if self.llm is None:
             self.llm = ChatOpenAI()
@@ -358,6 +370,8 @@ class Agent:
         else:
             self.llm.tools = None
             self.llm.tool_choice = None
+        if self.durability is not None:
+            self.durability.bind(self)
 
     def _build_handoff_tools(self) -> List[BaseTool]:
         """Expose each team member as a callable tool the orchestrator can invoke.
@@ -698,7 +712,7 @@ class Agent:
         the same agent concurrently by hand.
         """
         worker = copy.copy(self)
-        worker.id = str(uuid.uuid4())
+        worker.id = new_id()
         worker.llm = copy.copy(self.llm)
         worker.history = self._fresh_history()
         worker.total_usage = AgentUsage()
@@ -1299,6 +1313,8 @@ class Agent:
 
     def _before_request(self, turns_left: int) -> None:
         """Per-request bookkeeping: window sync, usage report, limit notice."""
+        if self.durability is not None and in_workflow():
+            self.durability.before_model_request(self)
         self._sync_context_window()
         usage = self.history.context_usage()
         if self.on_context_usage is not None:
@@ -1540,7 +1556,7 @@ class Agent:
         total = tokenizer_fn(content)
         if total <= limit:
             return content
-        ref = f"out_{uuid.uuid4().hex[:8]}"
+        ref = f"out_{new_id().replace('-', '')[-8:]}"  # random tail: a uuid7 starts with the clock
         self._tool_outputs[ref] = content
         while len(self._tool_outputs) > MAX_STORED_TOOL_OUTPUTS:
             self._tool_outputs.pop(next(iter(self._tool_outputs)))
@@ -1614,6 +1630,25 @@ class Agent:
         tool_execution.content = self._set_aside_long_output(tool_call.name, tool_execution.content)
         return tool_execution.to_message()
 
+    async def arun_tool(self, tool_call: ToolCall) -> Message:
+        """Async twin of `run_tool` for tools whose `arun` does the work (durable proxies)."""
+        tool_execution = ToolResponse(tool_call_id=tool_call.id, tool_name=tool_call.name)
+        tool_map = {tool.name: tool for tool in self.get_all_tools()}
+        if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
+            return self.run_tool(tool_call)  # pure validation, no I/O
+        if tool_call.name not in tool_map:
+            return self.run_tool(tool_call)  # error message, no I/O
+        try:
+            result = await tool_map[tool_call.name].arun(**self._parse_tool_args(tool_call))
+        except Exception as e:
+            if in_workflow() and not isinstance(e, ActivityError):
+                raise  # a bug in workflow code must fail the task, not be shown to the model
+            logger.error(f"Error executing tool '{tool_call.name}': {e}")
+            tool_execution.content = f"Error executing tool '{tool_call.name}': {getattr(e, 'cause', None) or e}"
+            return tool_execution.to_message()
+        tool_execution.content = self._set_aside_long_output(tool_call.name, result or "")
+        return tool_execution.to_message()
+
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         delegation_names = {t.name for t in self._handoff_tools + self._spawn_tools}
         concurrent = [i for i, tool_call in enumerate(tool_calls) if tool_call.name in delegation_names]
@@ -1632,6 +1667,10 @@ class Agent:
         return results
 
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
+        if in_workflow():
+            # No threads in workflow code: the calls are awaited, each one an activity.
+            results = await asyncio.gather(*(self.arun_tool(tool_call) for tool_call in tool_calls))
+            return [result for result in results if result]
         tasks = []
         for tool_call in tool_calls:
             task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
@@ -1928,6 +1967,10 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         messages, task = self._run_input(input)
 
         command = self._match_command(task)
@@ -2083,6 +2126,15 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AgentResponse:
+        if in_workflow():
+            if self.durability is None:
+                raise RuntimeError(
+                    f"Agent '{self.name}' runs inside a workflow without durability: "
+                    "give it `durability=TemporalDurability()` so its I/O runs in activities."
+                )
+            if not getattr(self, "_workflow_copy", False):
+                # Each workflow run gets its own copy (own history), rebuilt identically on replay.
+                return await self.durability.workflow_agent(self).arun(input, context=context, approvals=approvals)
         messages, task = self._run_input(input)
 
         command = self._match_command(task)
@@ -2231,6 +2283,10 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> Iterator[AgentResponse]:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         agent_response = AgentResponse(agent_id=self.id)
         events = self._run_stream(agent_response, input, context, approvals)
         try:
@@ -2411,6 +2467,10 @@ class Agent:
         context: Optional[Union[str, Dict[str, str]]] = None,
         approvals: Optional[ToolApprovals] = None,
     ) -> AsyncIterator[AgentResponse]:
+        if in_workflow():
+            raise RuntimeError(
+                "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
+            )
         agent_response = AgentResponse(agent_id=self.id)
         events = self._arun_stream(agent_response, input, context, approvals)
         try:
