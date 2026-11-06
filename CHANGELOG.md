@@ -59,6 +59,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `gwenflow.Agent` flow node ignored the provider of its `model` and could not be
   given tools (it now accepts `tools`, built-in tool names).
 
+### Deprecated
+
+- `Agent(commands=...)` is accepted but ignored, with a `DeprecationWarning`; it will be
+  removed in a later release.
+
+### Removed
+
+- Slash commands (`/help`, `/compact`, `/reset`, `/clear`, `/history`, `/cost`, `/tools`,
+  `/summary`, `/system`, `/config`, `/save`, `/load`) and `AGENT_COMMANDS`: an input
+  starting with a slash now always goes to the model. Use `agent.history.compact()`,
+  `agent.history.reset()` and `agent.total_usage` directly.
+- `gwenflow.agents.prompts`: its prompts now live in `gwenflow.agents.agent`
+  (`PROMPT_PREVIOUS_INTERACTIONS`, unused, is gone).
+
 ## [Unreleased]
 
 ### Added

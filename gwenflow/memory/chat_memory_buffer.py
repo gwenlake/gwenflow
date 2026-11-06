@@ -157,7 +157,7 @@ class ChatMemoryBuffer(BaseChatMemory):
     usage: AgentUsage = field(default_factory=AgentUsage)
     """Cumulative usage of the LLM calls made by compaction (summaries).
     Deliberately NOT cleared by `reset()`: tokens already spent stay
-    accounted for (see /cost)."""
+    accounted for."""
 
     _pending_usage: AgentUsage = field(default_factory=AgentUsage)
     """Compaction usage not yet folded into a run (see `drain_usage`)."""

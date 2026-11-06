@@ -50,7 +50,7 @@ def test_agent_with_memory_registers_tools_and_prompt_block():
     i_instr, i_mem, i_ctx = prompt.index("## Instructions:"), prompt.index("## Memory:"), prompt.index("<context>")
     assert i_instr < i_mem < i_ctx
     assert "- sales rep" in prompt
-    assert "memory:          1 core file(s), 0 topic file(s)" in agent._config_report()
+    assert (len(agent.memory.always), len(agent.memory.index())) == (1, 0)
 
 
 def test_agent_run_sends_memory_block_once_per_run():
@@ -67,7 +67,7 @@ def test_agent_without_memory_is_unchanged():
     assert agent.tools == []
     prompt = agent.get_system_prompt(task="hi")
     assert "## Memory:" not in prompt
-    assert "memory:          " not in agent._config_report().replace("memory:          ChatSummary", "")
+    assert not agent.memory
 
 
 def test_system_prompt_override_skips_memory_block_like_skills():
