@@ -15,10 +15,10 @@ temporal server start-dev   # local Temporal server for development
 
 Examples:
 
-- [examples/demo_agent_temporal.py](../examples/demo_agent_temporal.py): a durable
+- [examples/agent_temporal.py](../examples/agent_temporal.py): a durable
   agent, the simplest setup.
-- [examples/agent_temporal.py](../examples/agent_temporal.py): a durable agent whose
-  trade-booking tool waits for a human approval.
+- [examples/agent_temporal_human_approval.py](../examples/agent_temporal_human_approval.py):
+  a durable agent whose trade-booking tool waits for a human approval.
 - [examples/demo_flow_temporal.py](../examples/demo_flow_temporal.py): a YAML flow run
   durably, then scheduled every day.
 

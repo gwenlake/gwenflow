@@ -493,9 +493,10 @@ identically on replay. `AgentWorkflow` (tool approvals through a query and a sig
 `DurableFlow` (a flow definition as input, node progress as a query) and
 `ClaimCheckCodec` (large payloads in S3 instead of the history) are ready to use.
 
-Examples: [examples/demo_agent_temporal.py](examples/demo_agent_temporal.py) (a durable
-agent, the simplest setup), [examples/agent_temporal.py](examples/agent_temporal.py) (a
-durable agent whose tool waits for a human approval) and
+Examples: [examples/agent_temporal.py](examples/agent_temporal.py) (a durable agent,
+the simplest setup),
+[examples/agent_temporal_human_approval.py](examples/agent_temporal_human_approval.py)
+(a durable agent whose tool waits for a human approval) and
 [examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) (a flow run and
 scheduled on Temporal). The full guide (activity timeouts and retries, approvals,
 `continue_as_new`, `DurableFlow`, large payloads) is in
