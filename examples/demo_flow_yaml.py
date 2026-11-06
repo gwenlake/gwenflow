@@ -15,4 +15,5 @@ from gwenflow import FlowRunner
 dotenv.load_dotenv(override=True)
 
 runner = FlowRunner("examples/flows/news_summary.yaml")
-runner.run()
+results = runner.run()
+print(results["summarize"])

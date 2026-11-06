@@ -1,7 +1,11 @@
+import asyncio
 import json
 
 from gwenflow.agents import Agent
+from gwenflow.flows.flows import Flow, execute_flow
+from gwenflow.flows.handlers import compose_task
 from gwenflow.logger import logger
+from gwenflow.registry import model_id, tool_key
 from gwenflow.utils.json import parse_json_markdown
 
 EXAMPLE = [
@@ -98,13 +102,19 @@ Now, please create the list of AI Agents based on the provided tasks.
 
 
 class AutoFlow:
+    """Ask an LLM to plan a team of agents for a query, then run it as a `Flow`.
+
+    `plan()` returns the flow without running it: it can be saved as YAML,
+    reviewed, edited, or run durably like any other flow (built-in llm and tools
+    are referenced by name; others need `run()`, which uses the instances).
+    """
+
     def __init__(self, llm, tools=None):
         self.llm = llm
         self.tools = tools or []
 
-    def run(self, query: str) -> str:
+    def plan(self, query: str) -> Flow:
         tool_names = ", ".join(t.name for t in self.tools)
-
         task_prompt = TASK_GENERATOR.format(
             tasks=query,
             tools=tool_names,
@@ -113,42 +123,62 @@ class AutoFlow:
         response = self.llm.invoke(input=[{"role": "user", "content": task_prompt}])
         agent_plan = parse_json_markdown(response.content)
 
-        agents: dict[str, dict] = {}
+        names = {entry["name"] for entry in agent_plan}
+        nodes, connections = [], {}
         for entry in agent_plan:
-            agent_tools = []
-            if entry.get("tools"):
-                for t in self.tools:
-                    if t.name in entry["tools"]:
-                        agent_tools.append(t)
-            agents[entry["name"]] = {
-                "agent": Agent(name=entry["name"], llm=self.llm, tools=agent_tools),
-                "task": entry.get("task", ""),
-                "depends_on": entry.get("depends_on") or [],
-            }
+            wanted = entry.get("tools") or []
+            nodes.append(
+                {
+                    "name": entry["name"],
+                    "type": "gwenflow.Agent",
+                    "parameters": {
+                        "name": entry["name"],
+                        **self._model_parameter(),
+                        "task": entry.get("task", ""),
+                        "tools": [self._tool_reference(t) for t in self.tools if t.name in wanted],
+                    },
+                }
+            )
+            for dep in entry.get("depends_on") or []:
+                if dep in names:
+                    connections.setdefault(dep, [[]])[0].append({"node": entry["name"]})
+        logger.info(f"AutoFlow planned {len(nodes)} agent(s).")
+        return Flow.from_dict({"name": f"AutoFlow: {query[:60]}", "nodes": nodes, "connections": connections})
 
-        # Imported here rather than at module level: networkx costs ~11 MiB of
-        # RSS and is only needed once an autoflow actually runs.
-        import networkx as nx
+    def run(self, query: str) -> str:
+        """Plan, then run the agents and return the last one's output.
 
-        graph = nx.DiGraph()
-        for name in agents:
-            graph.add_node(name)
-        for name, info in agents.items():
-            for dep in info["depends_on"]:
-                if dep in agents:
-                    graph.add_edge(dep, name)
+        Agents run in-process with this AutoFlow's own llm and tool instances
+        (custom ones included); independent agents run concurrently.
+        """
+        flow = self.plan(query)
+        tools = {self._tool_reference(t): t for t in self.tools}
 
-        results: dict[str, str] = {}
-        last_result = ""
-        for name in nx.topological_sort(graph):
-            info = agents[name]
-            task = info["task"]
-            context_parts = [f"Output from {dep}:\n{results[dep]}" for dep in info["depends_on"] if dep in results]
-            if context_parts:
-                task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(context_parts)
-            logger.info(f"Running agent: {name}")
-            response = info["agent"].run(task)
-            results[name] = response.content
-            last_result = response.content
+        async def run_agent(node, input_data):
+            agent = Agent(
+                name=node.parameters["name"],
+                llm=self.llm,
+                tools=[tools[ref] for ref in node.parameters.get("tools", []) if ref in tools],
+            )
+            task = compose_task(node.parameters.get("task", ""), input_data)
+            logger.info(f"Running agent: {agent.name}")
+            response = await asyncio.to_thread(agent.run, task)
+            return response.content
 
-        return last_result
+        results = asyncio.run(execute_flow(flow, run_agent))
+        return results[flow.topological_order()[-1]]
+
+    def _model_parameter(self) -> dict:
+        """`model` for the flow file, when the llm is a built-in provider."""
+        try:
+            return {"model": model_id(self.llm)}
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def _tool_reference(tool) -> str:
+        """Built-in tools by their registry key (portable to YAML), others by name."""
+        try:
+            return tool_key(tool)
+        except ValueError:
+            return tool.name
