@@ -27,6 +27,13 @@ Gwenflow, a framework designed by [Gwenlake](https://gwenlake.com), streamlines 
 pip install gwenflow
 ```
 
+Optional extras:
+
+```bash
+pip install "gwenflow[telemetry]"   # OpenTelemetry tracing
+pip install "gwenflow[temporal]"    # durable execution with Temporal
+```
+
 Install the latest from the main branch:
 
 ```bash
@@ -427,8 +434,69 @@ connections:
 from gwenflow import FlowRunner
 
 runner = FlowRunner("flows/news_summary.yaml")
-runner.run()
+results = runner.run()  # every node's result, keyed by node name
+print(results["summarize"])
 ```
+
+Independent branches run in parallel. Each node accepts `settings` (`timeout` in seconds,
+`retries`) and `credentials` (parameter name → environment variable, resolved only when
+the node runs).
+
+**Migrating from 1.5:** `FlowRunner.run()` used to print the result and exit with
+`SystemExit(1)` when a node failed. It now returns a dict of every node's result, keyed
+by node name, and a failing node raises `FlowNodeError` (a subclass of `FlowError`, also
+raised for invalid flows: cycles, duplicate names, unknown connections). Print the
+result yourself and catch `FlowError` where you relied on the exit:
+
+```python
+from gwenflow.flows import FlowError, FlowRunner
+
+try:
+    results = FlowRunner("flows/news_summary.yaml").run()
+except FlowError as e:
+    print(e)
+```
+
+## Durable execution with Temporal
+
+Install the extra with `pip install "gwenflow[temporal]"`. Attach `TemporalDurability` to
+an agent or a flow and use them in an ordinary Temporal workflow: outside a workflow they
+behave as usual; inside one, model requests, tool calls and flow nodes run as
+activities, so a run survives worker crashes and restarts where it stopped.
+
+```python
+from temporalio import workflow
+from temporalio.worker import Worker
+
+with workflow.unsafe.imports_passed_through():
+    from gwenflow import Agent
+    from gwenflow.durability import TemporalDurability, worker_options
+    from gwenflow.flows import Flow
+
+agent = Agent(name="finance", llm=..., tools=[...], durability=TemporalDurability())
+flow = Flow.from_file("news.yaml", durability=TemporalDurability())
+
+
+@workflow.defn
+class MorningBrief:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        news = await flow.arun()                   # each node is an activity
+        return (await agent.arun(prompt)).content  # model and tools too
+
+
+worker = Worker(client, task_queue="briefs", **worker_options(MorningBrief, agents=[agent]))
+```
+
+Each workflow run gets its own copy of the agent, with its own history, rebuilt
+identically on replay. `AgentWorkflow` (tool approvals through a query and a signal),
+`DurableFlow` (a flow definition as input, node progress as a query) and
+`ClaimCheckCodec` (large payloads in S3 instead of the history) are ready to use. See
+[examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) for a flow run and
+scheduled on Temporal.
+
+Not supported yet inside a workflow (an explicit error is raised): team and sub-agents,
+MCP servers, skills, long-term memory and streaming.
 
 ## Context Management
 

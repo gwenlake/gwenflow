@@ -4,6 +4,61 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-11-06
+
+### Added
+
+- Durable execution with Temporal, `gwenflow.durability` (install with
+  `pip install 'gwenflow[temporal]'`). `TemporalDurability` attaches to an agent
+  (`Agent(..., durability=TemporalDurability())`) or a flow
+  (`Flow.from_file(..., durability=TemporalDurability())`). Outside a Temporal workflow it
+  changes nothing. Inside one, model requests, tool calls, the compaction that calls the
+  summarizer and flow nodes run as activities, and `agent.arun()` works on a per-run copy
+  of the agent whose history is rebuilt identically on replay. Activity timeouts and
+  retries are configurable globally, for model requests and per tool.
+- `AgentWorkflow`: optional base workflow for durable agents; tool approvals are exposed
+  through the `get_pending_approvals` query and decided with the `approve` signal.
+- `DurableFlow`: ready-made workflow that runs a flow definition (`Flow.to_dict()`) and
+  reports each node's state through the `progress` query.
+- `ClaimCheckCodec` with `InMemoryBlobStore` and `S3BlobStore`: payloads above 128 KB
+  (configurable) are stored in a blob store and the history keeps a reference.
+- `worker_options(*workflows, agents=[...])`: the workflows, activities and sandbox
+  configuration to pass to a Temporal `Worker`.
+- `gwenflow[temporal]` optional extra (`temporalio>=1.35.0`). `import gwenflow` does not
+  need it; only `import gwenflow.durability` does.
+- `Flow.arun()` and `Flow.run()` return every node's result, keyed by node name;
+  `Flow.from_dict()` and `Flow.to_dict()` build and serialize a flow definition.
+- Per-node `settings` (`timeout` in seconds, `retries`) and `credentials` (parameter
+  name -> environment variable, resolved only when the node runs, so secrets stay out of
+  flow files and durable histories).
+- `AutoFlow.plan(query)` returns the planned `Flow` without running it, so it can be
+  saved, reviewed or run durably.
+- `gwenflow.registry`: built-in LLM providers and tools addressable by name
+  (`make_llm("anthropic/...")`, `make_tools([...])`), shared by the CLI and flows.
+- Identifiers are UUIDv7 (time-sortable; native on Python 3.14, polyfill before), and
+  deterministic inside a workflow (`gwenflow.utils.durable.new_id()`).
+
+### Changed
+
+- Independent branches of a flow run in parallel: a node starts as soon as all its
+  parents are done.
+- `FlowRunner.run()` returns the results of every node as a dict instead of printing the
+  result, and raises `FlowNodeError` (a `FlowError`) instead of exiting with
+  `SystemExit(1)`. `gwenflow run` prints the flow's outputs (its sink nodes).
+- Flows are validated when loaded: cycles, duplicate node names and connections to
+  unknown nodes raise `FlowError`.
+- The `gwenflow.Agent` flow node uses the provider given by the model prefix
+  (`anthropic/…`, `mistral/…`) instead of always using the OpenAI client, and appends as
+  context the parent outputs that the task does not reference with a `{node_name}`
+  placeholder.
+- `AutoFlow.run()` runs independent agents in parallel.
+- Agent, response, memory and flow identifiers are UUIDv7 instead of UUIDv4.
+
+### Fixed
+
+- The `gwenflow.Agent` flow node ignored the provider of its `model` and could not be
+  given tools (it now accepts `tools`, built-in tool names).
+
 ## [Unreleased]
 
 ### Added
