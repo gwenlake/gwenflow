@@ -1,0 +1,24 @@
+# The definition of the agent. Every key is optional; the prompt lives in the .md files next to it.
+# Load the directory with Agent.from_harness("examples/harness/customer_support").
+
+name: customer_support
+version: "1"
+description: Answers customers of Nordic Bikes about their orders and returns.
+model: gpt-4o-mini                   # runs on the connection given in code (llm=), else on Gwenlake
+
+model_settings:
+  temperature: 0.2
+max_turns: 6                         # at most 6 model turns per run (tool calls included)
+
+capabilities:
+  - Skills: {mode: inline}           # skills/ is always read; inline puts their full text in the prompt
+
+# The memory the agent writes itself, from one conversation to the next, one directory per customer.
+# Not to be confused with knowledge.md, which is written by us and never changes at run time.
+long_term_memory:
+  path: ./memory/customer_support/{{ customer_id }}
+  always: [/memories/user/MEMORY.md]
+  tools: [read_memory, memory_edit]
+
+metadata:
+  team: support
