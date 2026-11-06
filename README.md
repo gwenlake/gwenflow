@@ -495,6 +495,9 @@ identically on replay. `AgentWorkflow` (tool approvals through a query and a sig
 [examples/demo_flow_temporal.py](examples/demo_flow_temporal.py) for a flow run and
 scheduled on Temporal.
 
+A node that exhausts its retries raises `FlowNodeError` in the workflow: catch it, or let
+it fail the run (`worker_options()` declares it as a workflow failure).
+
 Not supported yet inside a workflow (an explicit error is raised): team and sub-agents,
 MCP servers, skills, long-term memory and streaming.
 

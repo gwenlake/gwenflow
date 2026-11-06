@@ -38,7 +38,7 @@ with workflow.unsafe.imports_passed_through():
         TemporalDurability,
         worker_options,
     )
-    from gwenflow.flows import Flow
+    from gwenflow.flows import Flow, FlowNodeError
     from gwenflow.flows.handlers import node_type
     from gwenflow.llms.base import ChatBase
     from gwenflow.memory import ChatMemoryBuffer
@@ -249,6 +249,40 @@ class ApprovalWorkflow(AgentWorkflow):
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await self.run_agent(finance_approval, prompt)).content
+
+
+failing_flow = Flow.from_dict(
+    {
+        "name": "failing",
+        "nodes": [
+            {
+                "name": "down",
+                "type": "temporal_test.Flaky",
+                "parameters": {"key": "down", "failures": 99},
+                "settings": {"retries": 0},
+            }
+        ],
+    },
+    durability=TemporalDurability(),
+)
+
+
+@workflow.defn
+class FailingFlowWorkflow:
+    @workflow.run
+    async def run(self) -> dict:
+        return await failing_flow.arun()
+
+
+@workflow.defn
+class CatchingFlowWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await failing_flow.arun()
+        except FlowNodeError as e:
+            return f"caught {e.node}"
+        return "not raised"
 
 
 FLOW = {
@@ -508,3 +542,32 @@ def test_durable_flow(monkeypatch):
     assert ATTEMPTS["n"] == 2  # 1 + retries
     assert "Node 'never' failed" in failure.cause.message
     assert failure.cause.type == "FlowNodeError"
+
+
+# ---------------------------------------------------------------------------
+# A failing flow in a custom workflow
+# ---------------------------------------------------------------------------
+
+
+def test_failing_flow_fails_a_custom_workflow_run():
+    """A node out of retries fails the run (no endless workflow task retries); workflow code can catch it."""
+
+    async def go():
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(env.client, task_queue="custom", **_options(FailingFlowWorkflow, CatchingFlowWorkflow)):
+                with pytest.raises(WorkflowFailureError) as failure:
+                    await asyncio.wait_for(
+                        env.client.execute_workflow(FailingFlowWorkflow.run, id="custom-1", task_queue="custom"),
+                        timeout=30,
+                    )
+                caught = await asyncio.wait_for(
+                    env.client.execute_workflow(CatchingFlowWorkflow.run, id="custom-2", task_queue="custom"),
+                    timeout=30,
+                )
+                return failure.value, caught
+
+    failure, caught = asyncio.run(go())
+
+    assert failure.cause.type == "FlowNodeError"
+    assert "Node 'down' failed" in failure.cause.message
+    assert caught == "caught down"
