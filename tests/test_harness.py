@@ -107,8 +107,9 @@ def test_load_reads_the_fixed_files(harness_dir):
     assert h.name == "question_generation"
     assert h.config.version == "1"
     assert h.config.metadata == {"max_examples": 2}
-    assert list(h.prose) == ["system_prompt.md", "guardrails.md", "tool_guidance.md"]
-    assert "note for editors" not in h.prose["system_prompt.md"]
+    assert list(h.prompt_parts()) == ["instructions", "guardrails", "tool_guidance"]
+    assert h.config.guardrails == "Never give the answer in the stem."
+    assert "note for editors" not in h.config.instructions
     assert [s.name for s in h.skills] == ["distractor-design"]
     assert [t.name for t in h.tools] == ["word_count"]
     assert [s.name for s in h.subagents] == ["reviewer"]
@@ -121,7 +122,7 @@ def test_load_accepts_the_config_file_path(harness_dir):
 def test_an_empty_directory_is_a_harness(tmp_path):
     h = Harness.load(tmp_path)
     assert h.name == tmp_path.name
-    assert h.system_prompt() == ""
+    assert h.instructions() == ""
 
 
 @pytest.mark.parametrize(
@@ -130,7 +131,7 @@ def test_an_empty_directory_is_a_harness(tmp_path):
         ("modle: x\n", "modle"),
         ("skills: sometimes\n", "skills"),
         ("[a, b]\n", "expected a mapping"),
-        ("name: [\n", "invalid YAML"),
+        ("name: [\n", "invalid file"),
     ],
 )
 def test_a_bad_config_is_refused(tmp_path, config, message):
@@ -153,7 +154,7 @@ def test_a_subagent_needs_a_description(tmp_path):
 
 def test_a_subagent_only_names_known_tools(tmp_path):
     _write(tmp_path, "subagents/x/AGENT.md", "---\ndescription: d\ntools: [search]\n---\nBody.")
-    with pytest.raises(HarnessError, match="unknown tool .search."):
+    with pytest.raises(HarnessError, match="unknown capability or tool .search."):
         Harness.load(tmp_path)
 
 
@@ -161,7 +162,7 @@ def test_a_subagent_only_names_known_tools(tmp_path):
 
 
 def test_system_prompt_follows_the_fixed_order(harness_dir):
-    prompt = Harness.load(harness_dir).system_prompt()
+    prompt = Agent.from_harness(harness_dir).get_system_prompt(task="hi")
 
     assert prompt.index("You write questions") < prompt.index("Never give") < prompt.index("Use word_count")
     assert "{{" not in prompt
@@ -172,17 +173,17 @@ def test_variables_fill_the_prose(tmp_path):
     _write(tmp_path, "system_prompt.md", "Level {{ level }}.")
     h = Harness.load(tmp_path)
 
-    assert h.system_prompt({"level": 3}) == "Level 3."
+    assert h.instructions({"level": 3}) == "Level 3."
     with pytest.raises(HarnessError, match="level"):
-        h.system_prompt()
+        h.instructions()
 
 
 def test_inline_skills_go_into_the_prompt_without_tools(harness_dir):
     config = harness_dir / "harness.yaml"
-    config.write_text(config.read_text() + "skills: inline\n")
+    config.write_text(config.read_text() + "capabilities: [{Skills: {mode: inline}}]\n")
     agent = Agent.from_harness(harness_dir, llm=_connection())
 
-    assert "Each distractor is a real misconception." in agent.system_prompt
+    assert "Each distractor is a real misconception." in agent.instructions
     assert agent.skills == []
     assert "load_skill" not in {t.name for t in agent.tools}
 
@@ -263,7 +264,7 @@ def test_subagents_become_the_team(harness_dir):
 
     assert reviewer.name == "reviewer"
     assert reviewer.description == "Checks a question for factual errors."
-    assert reviewer.system_prompt == "You review medical exam questions."
+    assert reviewer.instructions == "You review medical exam questions."
     assert reviewer.max_turns == 3
     assert [t.name for t in reviewer.tools] == ["word_count"]
     # its own model and settings, on the orchestrator's connection
@@ -279,36 +280,73 @@ def test_each_build_is_a_new_agent(harness_dir):
     assert a is not b and a.llm is not b.llm and a.team[0] is not b.team[0]
 
 
-# ---------------------------------------------------------------------- built-in tools, approval
+# ---------------------------------------------------------------------- capabilities (Pydantic AI syntax)
 
 
-def test_builtin_tools_by_class_name(tmp_path):
-    _write(tmp_path, "harness.yaml", "tools:\n  - ClinicalTrialsTool\n  - PubMedTool: {max_results: 5}\n")
+def test_a_pydantic_ai_spec_loads_as_is(tmp_path, _no_mcp_connection):
+    _write(
+        tmp_path,
+        "agent.yaml",
+        """
+        model: google/gemma-4-26b-a4b-it
+        instructions: "You are helping {{user_name}}."
+        model_settings:
+          max_tokens: 8192
+        capabilities:
+          - Thinking:
+              effort: high
+          - MCP: https://mcp.example.com/sse
+        output_schema:
+          type: object
+          properties:
+            answer: {type: string}
+        """,
+    )
+    agent = Agent.from_file(tmp_path / "agent.yaml", llm=_connection(), variables={"user_name": "Ada"})
+
+    assert agent.name == "agent"
+    assert agent.instructions == "You are helping Ada."
+    assert agent.llm.max_tokens == 8192 and agent.llm.reasoning_effort == "high"
+    assert len(agent.mcp_servers) == 1
+    assert agent.response_model.model_json_schema()["properties"] == {"answer": {"type": "string"}}
+
+
+def test_tools_as_capabilities(tmp_path):
+    _write(
+        tmp_path,
+        "harness.yaml",
+        "capabilities:\n  - ClinicalTrialsTool\n  - PubMedTool: {max_results: 5, requires_approval: true}\n",
+    )
     h = Harness.load(tmp_path)
 
     assert [t.name for t in h.tools] == ["ClinicalTrialsTool", "PubMedTool"]
-    assert h.tools[1].max_results == 5
+    assert h.tools[1].max_results == 5 and h.tools[1].requires_approval
 
 
 @pytest.mark.parametrize("name", ["NoSuchTool", "Tool", "MCPServerSse"])
-def test_only_ready_made_tools_are_builtin(tmp_path, name):
-    _write(tmp_path, "harness.yaml", f"tools: [{name}]\n")
-    with pytest.raises(HarnessError, match="unknown tool"):
+def test_unknown_capabilities_are_refused(tmp_path, name):
+    _write(tmp_path, "harness.yaml", f"capabilities: [{name}]\n")
+    with pytest.raises(HarnessError, match="unknown capability"):
         Harness.load(tmp_path)
 
 
-def test_approval_marks_file_and_builtin_tools(harness_dir):
-    config = harness_dir / "harness.yaml"
-    config.write_text(config.read_text() + "tools: [ShellTool]\napproval: [ShellTool, word_count]\n")
-    h = Harness.load(harness_dir)
-
-    assert {t.name: t.requires_approval for t in h.tools} == {"word_count": True, "ShellTool": True}
+def test_thinking_then_model_settings(tmp_path):
+    _write(tmp_path, "harness.yaml", "capabilities: [{Thinking: low}]\nmodel_settings: {reasoning_effort: none}\n")
+    assert Agent.from_harness(tmp_path, llm=_connection()).llm.reasoning_effort == "none"
 
 
-def test_approval_names_known_tools(tmp_path):
-    _write(tmp_path, "harness.yaml", "approval: [ShellTool]\n")
-    with pytest.raises(HarnessError, match="approval"):
-        Harness.load(tmp_path)
+def test_skills_capability(tmp_path):
+    for folder, name in (("skills", "local-one"), ("shared/skills", "shared-one"), ("shared/skills", "other")):
+        _write(tmp_path, f"{folder}/{name}/SKILL.md", f"---\nname: {name}\ndescription: {name}.\n---\nBody.")
+    _write(
+        tmp_path,
+        "harness.yaml",
+        "capabilities:\n  - Skills: {directories: shared/skills, exclude: [other], mode: inline}\n",
+    )
+    h = Harness.load(tmp_path)
+
+    assert [s.name for s in h.skills] == ["local-one", "shared-one"]
+    assert h.skills_inline
 
 
 def test_a_subagent_may_use_a_builtin_tool(tmp_path):
@@ -328,44 +366,31 @@ def _no_mcp_connection(monkeypatch):
     monkeypatch.setattr(MCPServerStdio, "get_tools", lambda self: [])
 
 
-def test_mcp_servers_from_the_settings(tmp_path, monkeypatch, _no_mcp_connection):
+def test_mcp_capabilities(tmp_path, monkeypatch, _no_mcp_connection):
     from gwenflow.tools.mcp import MCPServerSse, MCPServerStdio
 
     _write(
         tmp_path,
         "harness.yaml",
         """
-        mcp_servers:
-          - name: docs
-            url: https://mcp.example/sse
-            headers: {Authorization: "Bearer ${DOCS_TOKEN}"}
-          - name: files
-            command: npx
-            args: [server-filesystem, data]
-            cwd: data
+        capabilities:
+          - MCP: {id: docs, url: https://docs.example.com/sse, headers: {Authorization: "Bearer ${DOCS_TOKEN}"}}
+          - MCP: {id: files, command: npx, args: [server-filesystem, data], cwd: data}
         """,
     )
     monkeypatch.setenv("DOCS_TOKEN", "t0k")
-    agent = Agent.from_harness(tmp_path, llm=_connection())
-    docs, files = agent.mcp_servers
+    docs, files = Agent.from_harness(tmp_path, llm=_connection()).mcp_servers
 
-    assert isinstance(docs, MCPServerSse) and docs.name == "docs"
-    assert docs.params["headers"] == {"Authorization": "Bearer t0k"}
-    assert isinstance(files, MCPServerStdio)
-    assert files.params["cwd"] == str((tmp_path / "data").resolve())
+    assert isinstance(docs, MCPServerSse) and docs.params["headers"] == {"Authorization": "Bearer t0k"}
+    assert isinstance(files, MCPServerStdio) and files.params["cwd"] == str((tmp_path / "data").resolve())
 
-
-def test_an_mcp_server_needs_its_environment(tmp_path, _no_mcp_connection):
-    _write(tmp_path, "harness.yaml", "mcp_servers:\n  - url: https://x/sse\n    headers: {A: '${NOT_SET_ANYWHERE}'}\n")
-    h = Harness.load(tmp_path)
+    _write(
+        tmp_path,
+        "harness.yaml",
+        "capabilities:\n  - MCP: {url: 'https://x/sse', headers: {A: '${NOT_SET_ANYWHERE}'}}\n",
+    )
     with pytest.raises(HarnessError, match="NOT_SET_ANYWHERE"):
-        h.build_agent(llm=_connection())
-
-
-def test_an_mcp_server_has_one_transport(tmp_path):
-    _write(tmp_path, "harness.yaml", "mcp_servers:\n  - url: https://x/sse\n    command: npx\n")
-    with pytest.raises(HarnessError, match="either"):
-        Harness.load(tmp_path)
+        Agent.from_harness(tmp_path, llm=_connection())
 
 
 # ---------------------------------------------------------------------- output schema
@@ -398,12 +423,6 @@ def test_a_response_model_in_code_wins(tmp_path):
     assert Agent.from_harness(tmp_path, llm=_connection(), response_model=Answer).response_model is Answer
 
 
-def test_output_schema_is_an_object_schema(tmp_path):
-    (tmp_path / "output_schema.json").write_text('{"type": "array"}')
-    with pytest.raises(HarnessError, match="object"):
-        Harness.load(tmp_path)
-
-
 # ---------------------------------------------------------------------- single-file agent
 
 
@@ -416,7 +435,7 @@ def test_from_file(tmp_path):
         description: Reviews questions.
         model: openai/gpt-6-luna
         model_settings: {temperature: 0}
-        tools: [PubMedTool]
+        capabilities: [PubMedTool]
         ---
         You review {{ topic }} questions. <!-- not for the model -->
         """,
@@ -424,7 +443,7 @@ def test_from_file(tmp_path):
     agent = Agent.from_file(tmp_path / "reviewer.md", llm=_connection(), variables={"topic": "cardiology"})
 
     assert agent.name == "reviewer"
-    assert agent.system_prompt == "You review cardiology questions."
+    assert agent.instructions == "You review cardiology questions."
     assert agent.llm.model == "openai/gpt-6-luna" and agent.llm.temperature == 0
     assert "PubMedTool" in {t.name for t in agent.tools}
     assert Harness.load(tmp_path / "reviewer.md").name == "reviewer"
@@ -455,7 +474,7 @@ def test_cli_check_and_schema(harness_dir, tmp_path):
     assert CliRunner().invoke(main, ["harness", "check", str(tmp_path / "bad")]).exit_code == 1
 
     schema = json.loads(CliRunner().invoke(main, ["harness", "schema"]).output)
-    assert {"model", "tools", "mcp_servers", "approval"} <= set(schema["properties"])
+    assert {"model", "instructions", "capabilities", "output_schema"} <= set(schema["properties"])
 
 
 def test_flow_agent_node_runs_a_harness(harness_dir, monkeypatch):
@@ -476,3 +495,101 @@ def test_flow_agent_node_runs_a_harness(harness_dir, monkeypatch):
     assert seen == {"name": "question_generation", "model": "other", "task": "Topic: DKA"}
     with pytest.raises(ValueError, match="either"):
         handle_agent({"harness": str(harness_dir), "instructions": "x"}, None)
+
+
+# ---------------------------------------------------------------------- long-term memory
+
+
+def test_knowledge_and_long_term_memory_together(harness_dir, tmp_path):
+    import asyncio
+
+    from gwenflow.memory import MemoryToolset
+
+    _write(harness_dir, "knowledge.md", "Potassium above 5.5 mmol/L is hyperkalaemia.")
+    config = harness_dir / "harness.yaml"
+    store = tmp_path / "memories"
+    config.write_text(
+        config.read_text()
+        + f"""long_term_memory:
+  path: {store}/{{{{ user_id }}}}
+  always: [/memories/user/MEMORY.md]
+  tools: [read_memory, memory_edit]
+"""
+    )
+    agent = Agent.from_harness(harness_dir, llm=_connection(), variables={"user_id": "u42"})
+
+    assert isinstance(agent.memory, MemoryToolset)
+    assert agent.memory.store.base_dir == (store / "u42").resolve()
+    assert {"read_memory", "memory_edit"} <= {t.name for t in agent.tools}
+
+    asyncio.run(agent.memory.aload())
+    prompt = agent.get_system_prompt(task="hi")
+    assert "Potassium above 5.5" in prompt  # knowledge: fixed facts, in the prompt parts
+    assert prompt.index("You write questions") < prompt.index("## Memory:")  # long-term memory, each run
+
+
+def test_long_term_memory_needs_a_target(tmp_path):
+    _write(tmp_path, "harness.yaml", "long_term_memory: {store: local}\n")
+    with pytest.raises(HarnessError, match="path"):
+        Harness.load(tmp_path)
+
+
+def test_a_memory_given_in_code_wins(harness_dir, tmp_path):
+    from gwenflow.memory import MemoryToolset
+    from gwenflow.stores.files import InMemoryMemoryStore
+
+    config = harness_dir / "harness.yaml"
+    config.write_text(config.read_text() + f"long_term_memory: {{path: {tmp_path}/never}}\n")
+    memory = MemoryToolset(InMemoryMemoryStore())
+
+    assert Agent.from_harness(harness_dir, llm=_connection(), memory=memory).memory is memory
+    assert not (tmp_path / "never").exists()
+
+
+def test_the_run_context_reaches_the_prompt(harness_dir):
+    agent = Agent.from_harness(harness_dir, llm=_connection())
+    assert "level 3 students" in agent.get_system_prompt(task="hi", context="level 3 students")
+
+
+# ---------------------------------------------------------------------- prompt parts: in harness.yaml or in their file
+
+
+def test_prompt_parts_in_the_definition_or_in_files(tmp_path):
+    _write(
+        tmp_path,
+        "harness.yaml",
+        """
+        instructions:
+          - You write exam questions.
+          - One correct answer only.
+        knowledge: Potassium above 5.5 mmol/L is hyperkalaemia.
+        """,
+    )
+    _write(tmp_path, "guardrails.md", "Never give the answer in the stem.")
+    h = Harness.load(tmp_path)
+
+    assert h.config.guardrails == "Never give the answer in the stem."  # from its file
+    assert list(h.prompt_parts()) == ["instructions", "guardrails", "knowledge"]
+    assert h.instructions() == (
+        "You write exam questions.\n\nOne correct answer only.\n\n"
+        "Never give the answer in the stem.\n\n"
+        "Potassium above 5.5 mmol/L is hyperkalaemia."
+    )
+
+
+@pytest.mark.parametrize("part, filename", [("instructions", "system_prompt.md"), ("knowledge", "knowledge.md")])
+def test_a_prompt_part_is_written_once(tmp_path, part, filename):
+    _write(tmp_path, "harness.yaml", f"{part}: In the definition.\n")
+    _write(tmp_path, filename, "In the file.")
+    with pytest.raises(HarnessError, match=f"`{part}` is written in both"):
+        Harness.load(tmp_path)
+
+
+def test_a_subagent_prompt_in_its_frontmatter(tmp_path):
+    _write(tmp_path, "subagents/x/AGENT.md", "---\ndescription: d\ninstructions: Check facts.\n---\n")
+    (sub,) = Harness.load(tmp_path).subagents
+    assert sub.config.instructions == "Check facts."
+
+    _write(tmp_path, "subagents/x/AGENT.md", "---\ndescription: d\ninstructions: Check facts.\n---\nAnd a body.")
+    with pytest.raises(HarnessError, match="written in both"):
+        Harness.load(tmp_path)

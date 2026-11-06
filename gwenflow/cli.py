@@ -139,7 +139,7 @@ def harness():
 @harness.command(name="check")
 @click.argument("path", type=click.Path(exists=True))
 def harness_check(path):
-    """Load the harness directory or single-file agent at PATH and report what it holds."""
+    """Load the harness directory or agent file (Pydantic AI spec or .md) at PATH and report what it holds."""
     from gwenflow.harness import Harness, HarnessError
 
     try:
@@ -151,12 +151,14 @@ def harness_check(path):
     table.add_column("Part", style="green")
     table.add_column("Content")
     table.add_row("model", h.config.model or "(given in code)")
-    table.add_row("prompt", ", ".join(h.prose) or "-")
-    table.add_row("skills", f"{', '.join(s.name for s in h.skills) or '-'} ({h.config.skills})")
+    table.add_row("prompt", ", ".join(h.prompt_parts()) or "-")
+    table.add_row(
+        "skills", f"{', '.join(s.name for s in h.skills) or '-'} ({'inline' if h.skills_inline else 'on demand'})"
+    )
     table.add_row("subagents", ", ".join(s.name for s in h.subagents) or "-")
     table.add_row("tools", ", ".join(t.name + (" (approval)" if t.requires_approval else "") for t in h.tools) or "-")
-    table.add_row("mcp servers", ", ".join(c.name or c.url or c.command for c in h.config.mcp_servers) or "-")
-    table.add_row("output schema", "yes" if h.output_schema is not None else "-")
+    table.add_row("mcp servers", ", ".join(c.id or c.url or c.command for c in h.mcp_servers) or "-")
+    table.add_row("output schema", "yes" if h.config.output_schema is not None else "-")
     console.print(table)
 
 

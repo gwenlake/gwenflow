@@ -1,29 +1,25 @@
-"""A harness: an agent described by a directory of files with fixed names.
+"""A harness: an agent described by files, with the key names of the Pydantic AI agent spec.
 
 ```text
 my_harness/
-├── harness.yaml            settings (optional): model, model_settings, tools, mcp_servers, ...
-├── system_prompt.md        the system prompt is these four files, in this order;
-├── guardrails.md           a missing file is skipped, <!-- comments --> never reach the model
-├── memory.md
+├── harness.yaml            the definition (optional), see `HarnessConfig`
+├── system_prompt.md        the parts of the prompt, in this order; each one in harness.yaml
+├── guardrails.md           (`instructions`, `guardrails`, `knowledge`, `tool_guidance`) or in
+├── knowledge.md            its file, not both; <!-- comments --> never reach the model
 ├── tool_guidance.md
-├── output_schema.json      the JSON Schema of the answer (optional)
-├── skills/<name>/SKILL.md  skills (see SkillsDirectory)
-├── subagents/<name>/AGENT.md   team members: frontmatter = settings, body = system prompt
+├── output_schema.json      the JSON Schema of the answer (or `output_schema` in harness.yaml)
+├── skills/<name>/SKILL.md  skills
+├── subagents/<name>/AGENT.md   team members: frontmatter = definition, body = instructions
 └── tools/*.py              tools: a module-level `tools` list, else every public annotated
                             and documented function
 ```
 
-Any other file is left to the application. A single-file agent is a markdown file whose
-frontmatter holds the keys of ``harness.yaml`` and whose body is the system prompt.
-``{{ name }}`` in the prose is replaced by the variables given when building the agent
-(``date`` and ``datetime`` are always defined).
+An agent can also be one file: a Pydantic AI spec (``agent.yaml``, ``.json``), or a markdown
+file whose frontmatter is the definition and whose body is its ``instructions``. ``{{ name }}``
+in the prompt is replaced by ``variables`` (``date`` and ``datetime`` are always defined).
 
     agent = Agent.from_harness("my_harness", llm=ChatGwenlake(model="google/gemma-4-26b-a4b-it"))
-    agent = Agent.from_file("reviewer.md")
-
-    harness = Harness.load("my_harness")                  # read once,
-    agent = harness.build_agent(variables={"level": 3})   # build one agent per run
+    agent = Agent.from_file("agent.yaml")
 """
 
 import copy
@@ -38,51 +34,49 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from gwenflow.agents.agent import Agent
-from gwenflow.exceptions import UserError
-from gwenflow.harness.config import SKILLS_INLINE, HarnessConfig, McpServerConfig, SubagentConfig, ToolEntry
+from gwenflow.harness.config import (
+    Capability,
+    HarnessConfig,
+    HarnessError,
+    LongTermMemoryConfig,
+    McpCapability,
+    SkillsCapability,
+    SubagentConfig,
+)
 from gwenflow.llms.base import ChatBase
 from gwenflow.llms.gwenlake import ChatGwenlake
-from gwenflow.skills import Skill, SkillsDirectory, SkillsToolset
+from gwenflow.skills import Skill, SkillsDirectory
 from gwenflow.tools import BaseTool, Tool
 from gwenflow.utils.markdown import parse_frontmatter
 
 CONFIG_FILE = "harness.yaml"
-PROSE_FILES = ("system_prompt.md", "guardrails.md", "memory.md", "tool_guidance.md")
-"""Composed into the system prompt, in this order."""
+PROMPT_PARTS = (
+    ("instructions", "system_prompt.md"),
+    ("guardrails", "guardrails.md"),
+    ("knowledge", "knowledge.md"),
+    ("tool_guidance", "tool_guidance.md"),
+)
 OUTPUT_SCHEMA_FILE = "output_schema.json"
-SKILLS_DIR = "skills"
-SUBAGENTS_DIR = "subagents"
-SUBAGENT_FILE = "AGENT.md"
-TOOLS_DIR = "tools"
-
-LIST_FIELDS = ("tools", "skills", "team", "mcp_servers")
-"""`Agent` fields where what the code passes is added to what the harness holds."""
-
-NOT_BUILTIN = {"BaseTool", "Tool"}
-"""Names exported by `gwenflow.tools` that are not ready-made tools (nor are the `MCP*` ones)."""
+CAPABILITY_TOOLS = {"WebSearch": "DuckDuckGoSearchTool", "WebFetch": "WebsiteReaderTool"}
+"""Pydantic AI capabilities that a gwenflow tool provides."""
+ADDED_FIELDS = ("tools", "skills", "team", "mcp_servers")
+"""`Agent` fields where what the code passes is added to what the harness holds, not replaced."""
 
 _VARIABLE = re.compile(r"\{\{\s*([A-Za-z_]\w*)\s*\}\}")
-_ENV = re.compile(r"\$\{([A-Za-z_]\w*)\}")
+_ENV_VARIABLE = re.compile(r"\$\{([A-Za-z_]\w*)\}")
 _COMMENT = re.compile(r"<!--.*?(-->|\Z)", re.DOTALL)
-
-
-class HarnessError(UserError):
-    """A harness that cannot be loaded or built."""
 
 
 @dataclass
 class Subagent:
-    """``subagents/<name>/AGENT.md``, read."""
-
     name: str
     config: SubagentConfig
-    system_prompt: str
     tools: List[BaseTool] = field(default_factory=list)
 
 
@@ -91,14 +85,17 @@ class Harness:
     """A harness, read once. ``build_agent`` makes a new `Agent` from it at each call."""
 
     path: Path
-    """The harness directory, or the markdown file of a single-file agent."""
+    """The harness directory, or the agent file."""
     config: HarnessConfig = field(default_factory=HarnessConfig)
-    prose: Dict[str, str] = field(default_factory=dict)
-    """Text of each prose file present, by file name, comments removed."""
-    output_schema: Optional[Dict[str, Any]] = None
-    skills: List[Skill] = field(default_factory=list)
-    subagents: List[Subagent] = field(default_factory=list)
+    """The definition, prompt parts and output schema included, whatever file they came from."""
     tools: List[BaseTool] = field(default_factory=list)
+    skills: List[Skill] = field(default_factory=list)
+    skills_inline: bool = False
+    """The skills are written in full in the prompt, instead of loaded on demand by a tool."""
+    mcp_servers: List[McpCapability] = field(default_factory=list)
+    reasoning_effort: Optional[str] = None
+    """Set by the ``Thinking`` capability."""
+    subagents: List[Subagent] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -112,50 +109,83 @@ class Harness:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "Harness":
-        """Read a harness directory (or its ``harness.yaml``), or a single-file agent (``.md``)."""
+        """Read a harness directory (or its ``harness.yaml``), or an agent file."""
         path = Path(path).resolve()
-        if path.is_file() and path.suffix == ".md":
-            return cls.from_file(path)
-        if path.is_file() and path.name == CONFIG_FILE:
+        if path.is_file():
+            if path.name != CONFIG_FILE:
+                return cls.from_file(path)
             path = path.parent
         if not path.is_dir():
             raise HarnessError(f"'{path}' is not a harness directory")
 
-        harness = cls(path=path, config=_read_config(path / CONFIG_FILE))
-        for name in PROSE_FILES:
-            if (path / name).is_file():
-                harness.prose[name] = _read_text(path / name)
-        harness.output_schema = _read_output_schema(path / OUTPUT_SCHEMA_FILE)
-        if (path / SKILLS_DIR).is_dir():
-            harness.skills = list(SkillsDirectory(str(path / SKILLS_DIR)).skills)
-        harness.tools = _unique(_read_tools(path / TOOLS_DIR) + _builtin_tools(harness.config.tools, CONFIG_FILE))
-        _require_approval(harness.tools, harness.config.approval, CONFIG_FILE)
-        harness.subagents = _read_subagents(path / SUBAGENTS_DIR, harness)
+        config_file = path / CONFIG_FILE
+        config = (
+            _parse(HarnessConfig, _read_data(config_file), CONFIG_FILE) if config_file.is_file() else HarnessConfig()
+        )
+        for part, filename in PROMPT_PARTS:
+            if (path / filename).is_file():
+                _set_from_file(config, part, _read_markdown(path / filename), filename)
+        if (path / OUTPUT_SCHEMA_FILE).is_file():
+            _set_from_file(config, "output_schema", _read_data(path / OUTPUT_SCHEMA_FILE), OUTPUT_SCHEMA_FILE)
+
+        harness = cls._from_config(path, config, CONFIG_FILE)
+        harness.subagents = _read_subagents(path / "subagents", harness.tools)
         return harness
 
     @classmethod
     def from_file(cls, path: Union[str, Path]) -> "Harness":
-        """A single-file agent: frontmatter = the keys of ``harness.yaml``, body = system prompt."""
+        """An agent file: a Pydantic AI spec (``.yaml``, ``.json``) or a markdown file."""
         path = Path(path).resolve()
         if not path.is_file():
             raise HarnessError(f"'{path}' is not a file")
-        frontmatter, body = parse_frontmatter(path.read_text(encoding="utf-8"))
-        config = _validate(HarnessConfig, frontmatter, path.name)
+        if path.suffix == ".md":
+            frontmatter, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+            config = _parse(HarnessConfig, frontmatter, path.name)
+            _set_from_file(config, "instructions", _strip_comments(body), f"the body of {path.name}")
+        else:
+            config = _parse(HarnessConfig, _read_data(path), path.name)
+        return cls._from_config(path, config, path.name)
+
+    @classmethod
+    def _from_config(cls, path: Path, config: HarnessConfig, where: str) -> "Harness":
+        """The harness of a definition: its capabilities read, its tools and skills loaded."""
         harness = cls(path=path, config=config)
-        body = _COMMENT.sub("", body).strip()
-        if body:
-            harness.prose[PROSE_FILES[0]] = body
-        harness.tools = _unique(_builtin_tools(config.tools, path.name))
-        _require_approval(harness.tools, config.approval, path.name)
+        tools = _read_tools(path / "tools") if path.is_dir() else []
+        skills_options = SkillsCapability()
+
+        for entry in config.capabilities:
+            name, value = _capability(entry, where)
+            here = f"{where}: {name}"
+            if name == "Skills":
+                skills_options = _parse(SkillsCapability, _kwargs(value, "directories", here), here)
+            elif name == "MCP":
+                harness.mcp_servers.append(_parse(McpCapability, _kwargs(value, "url", here), here))
+            elif name == "Thinking":
+                harness.reasoning_effort = _kwargs(value, "effort", here).get("effort", "medium")
+            else:
+                tools.append(builtin_tool(CAPABILITY_TOOLS.get(name, name), _kwargs(value, None, here), here))
+
+        harness.tools = _unique(tools, where)
+        skills_folder = path / "skills" if path.is_dir() else None
+        harness.skills = _read_skills(skills_folder, harness.directory, skills_options)
+        harness.skills_inline = skills_options.mode == "inline"
         return harness
 
     # ------------------------------------------------------------------ build
 
-    def system_prompt(self, variables: Optional[Dict[str, Any]] = None) -> str:
-        """The prose files in order, variables replaced, then the skills."""
-        parts = [_render(text, variables, f"{self.name}/{name}") for name, text in self._ordered_prose()]
-        parts.append(_skills_section(self.skills, self.config.skills))
-        return "\n\n".join(p for p in parts if p.strip())
+    def prompt_parts(self) -> Dict[str, str]:
+        """The parts of the prompt that have a text, in order."""
+        texts = {part: _prompt_text(getattr(self.config, part)) for part, _ in PROMPT_PARTS}
+        return {part: text for part, text in texts.items() if text}
+
+    def instructions(self, variables: Optional[Dict[str, Any]] = None) -> str:
+        """The parts of the prompt, variables replaced, then the inline skills.
+
+        The agent then adds what it renders at each run: the skills index, the long-term memory,
+        the references of its retriever and the run's ``context``.
+        """
+        parts = [_render(text, variables, f"{self.name}: {part}") for part, text in self.prompt_parts().items()]
+        return _join(*parts, self._inline_skills(self.skills))
 
     def build_agent(
         self,
@@ -168,326 +198,325 @@ class Harness:
     ) -> Agent:
         """A new `Agent` from this harness.
 
-        The model is ``model``, else the one of the harness, else the one of ``llm``. It runs
-        on a copy of ``llm`` (the connection: key, base URL, headers), else on `ChatGwenlake`.
-        Then what the code passes wins over the files: ``model_settings`` are set after those
-        of the harness, and other ``Agent`` arguments replace the harness value, except
-        ``tools``, ``skills``, ``team`` and ``mcp_servers``, which are added to it.
+        The model (``model``, else the definition's) runs on a copy of ``llm``, else on
+        `ChatGwenlake`. What the code passes wins over the files; ``tools``, ``skills``, ``team``
+        and ``mcp_servers`` are added to the harness ones.
         """
-        base = self._llm(model or self.config.model, llm)
-        _apply_settings(base, self.config.model_settings, self.name)
-        _apply_settings(base, model_settings or {}, "model_settings")
+        backend = _backend(model or self.config.model, llm, self.name)
+        settings = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
+        _apply_settings(backend, {**settings, **self.config.model_settings, **(model_settings or {})}, self.name)
 
         params: Dict[str, Any] = {
             "name": self.name,
             "description": self.config.description,
-            "system_prompt": self.system_prompt(variables),
-            "llm": base,
+            "instructions": self.instructions(variables) or None,
+            "llm": backend,
             "tools": list(self.tools),
-            "skills": self._agent_skills(self.skills),
-            "team": [self._build_subagent(s, base, variables) for s in self.subagents],
-            "mcp_servers": [_mcp_server(c, self.directory) for c in self.config.mcp_servers],
+            "skills": self._loaded_skills(self.skills),
+            "team": [self._build_subagent(sub, backend, variables) for sub in self.subagents] or None,
+            "mcp_servers": [_mcp_server(server, self.directory) for server in self.mcp_servers],
         }
-        if self.output_schema is not None:
-            params["response_model"] = schema_model(self.output_schema)
+        if self.config.output_schema is not None:
+            params["response_model"] = schema_model(self.config.output_schema)
         if self.config.max_turns is not None:
             params["max_turns"] = self.config.max_turns
+        if self.config.long_term_memory is not None and "memory" not in agent_kwargs:
+            params["memory"] = _long_term_memory(self.config.long_term_memory, variables)
         for key, value in agent_kwargs.items():
-            params[key] = list(params.get(key) or []) + list(value or []) if key in LIST_FIELDS else value
-        params["team"] = params["team"] or None
+            params[key] = (params.get(key) or []) + list(value or []) if key in ADDED_FIELDS else value
         return Agent(**params)
 
-    def _ordered_prose(self) -> List[tuple]:
-        return [(name, self.prose[name]) for name in PROSE_FILES if name in self.prose]
-
-    def _agent_skills(self, skills: List[Skill]) -> List[Skill]:
-        """Inline skills are in the system prompt already: the agent gets no skill tool for them."""
-        return [] if self.config.skills == SKILLS_INLINE else list(skills)
-
-    def _llm(self, model: Optional[str], base: Optional[ChatBase]) -> ChatBase:
-        """A copy of ``base`` with ``model`` if given; without ``base``, a `ChatGwenlake` for ``model``."""
-        if base is None:
-            if model is None:
-                raise HarnessError(
-                    f"'{self.name}' has no model: set `model` in its settings, or pass `model=` or `llm=`"
-                )
-            return ChatGwenlake(model=model)
-        llm = copy.copy(base)
-        if model is not None:
-            llm.model = model
-        return llm
-
     def _build_subagent(self, sub: Subagent, parent: ChatBase, variables: Optional[Dict[str, Any]]) -> Agent:
-        where = f"{SUBAGENTS_DIR}/{sub.name}/{SUBAGENT_FILE}"
-        llm = self._llm(sub.config.model, parent)
-        _apply_settings(llm, sub.config.model_settings, where)
-        skills = [s for s in self.skills if s.name in sub.config.skills]
-        prompt = "\n\n".join(
-            p
-            for p in (_render(sub.system_prompt, variables, where), _skills_section(skills, self.config.skills))
-            if p.strip()
-        )
-        kwargs: Dict[str, Any] = {}
+        """A team member, on a copy of the orchestrator's backend."""
+        where = f"subagents/{sub.name}"
+        backend = _backend(sub.config.model, parent, where)
+        _apply_settings(backend, sub.config.model_settings, where)
+        skills = [skill for skill in self.skills if skill.name in sub.config.skills]
+        params: Dict[str, Any] = {}
         if sub.config.max_turns is not None:
-            kwargs["max_turns"] = sub.config.max_turns
+            params["max_turns"] = sub.config.max_turns
         return Agent(
             name=sub.name,
             description=sub.config.description,
-            system_prompt=prompt or None,
-            llm=llm,
+            instructions=_join(_render(sub.config.instructions or "", variables, where), self._inline_skills(skills))
+            or None,
+            llm=backend,
             tools=list(sub.tools),
-            skills=self._agent_skills(skills),
-            **kwargs,
+            skills=self._loaded_skills(skills),
+            **params,
         )
 
-    def __repr__(self) -> str:
-        return (
-            f"Harness(name={self.name!r}, prose={list(self.prose)}, skills={[s.name for s in self.skills]}, "
-            f"subagents={[s.name for s in self.subagents]}, tools={[t.name for t in self.tools]}, "
-            f"mcp_servers={len(self.config.mcp_servers)}, output_schema={self.output_schema is not None})"
-        )
+    def _inline_skills(self, skills: List[Skill]) -> str:
+        """The full text of the skills, for the prompt."""
+        if not skills or not self.skills_inline:
+            return ""
+        blocks = (f'<skill name="{s.name}">\n{s.description}\n\n{s.content.strip()}\n</skill>' for s in skills)
+        return "## Skills\n\nApply the skill whose situation matches.\n\n" + "\n\n".join(blocks)
+
+    def _loaded_skills(self, skills: List[Skill]) -> List[Skill]:
+        """The skills the agent loads on demand: none when they are already in the prompt."""
+        return [] if self.skills_inline else list(skills)
 
 
-# ---------------------------------------------------------------------- structured output
+# ---------------------------------------------------------------------- public helpers
 
 
 def schema_model(schema: Dict[str, Any]) -> Type[BaseModel]:
     """A `response_model` from a JSON Schema.
 
-    The schema goes to the model as is, and the answer comes back parsed, its fields as
-    attributes (``.model_dump()`` gives the dict). The answer is not validated against the schema.
+    The schema is sent to the model as is; the answer comes back with its fields as attributes
+    (``.model_dump()`` gives the dict), not validated against the schema.
     """
     frozen = copy.deepcopy(schema)
-    name = re.sub(r"[^A-Za-z0-9_-]", "_", str(schema.get("title") or "Output"))
 
-    class _SchemaModel(BaseModel):
+    class SchemaModel(BaseModel):
         model_config = ConfigDict(extra="allow")
 
         @classmethod
         def model_json_schema(cls, *args: Any, **kwargs: Any) -> Dict[str, Any]:
             return copy.deepcopy(frozen)  # callers make it strict in place
 
-    _SchemaModel.__name__ = _SchemaModel.__qualname__ = name
-    return _SchemaModel
+    SchemaModel.__name__ = re.sub(r"[^A-Za-z0-9_-]", "_", str(schema.get("title") or "Output"))
+    return SchemaModel
 
 
-# ---------------------------------------------------------------------- reading
-
-
-def _read_text(path: Path) -> str:
-    return _COMMENT.sub("", path.read_text(encoding="utf-8")).strip()
-
-
-def _validate(model: Type[BaseModel], raw: Any, where: str) -> Any:
-    if not isinstance(raw, dict):
-        raise HarnessError(f"{where}: expected a mapping")
-    try:
-        return model.model_validate(raw)
-    except ValidationError as e:
-        errors = "; ".join(f"{'.'.join(str(p) for p in x['loc']) or 'file'}: {x['msg']}" for x in e.errors())
-        raise HarnessError(f"{where}: {errors}") from e
-
-
-def _read_config(path: Path) -> HarnessConfig:
-    if not path.is_file():
-        return HarnessConfig()
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as e:
-        raise HarnessError(f"{path}: invalid YAML: {e}") from e
-    return _validate(HarnessConfig, raw, str(path))
-
-
-def _read_output_schema(path: Path) -> Optional[Dict[str, Any]]:
-    if not path.is_file():
-        return None
-    try:
-        schema = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise HarnessError(f"{OUTPUT_SCHEMA_FILE}: invalid JSON: {e}") from e
-    if not isinstance(schema, dict) or schema.get("type") != "object":
-        raise HarnessError(f'{OUTPUT_SCHEMA_FILE}: expected a JSON Schema with "type": "object"')
-    return schema
-
-
-def _read_subagents(directory: Path, harness: Harness) -> List[Subagent]:
-    if not directory.is_dir():
-        return []
-    skill_names = {s.name for s in harness.skills}
-    subagents: List[Subagent] = []
-    for agent_md in sorted(directory.glob(f"*/{SUBAGENT_FILE}")):
-        where = f"{SUBAGENTS_DIR}/{agent_md.parent.name}/{SUBAGENT_FILE}"
-        frontmatter, body = parse_frontmatter(agent_md.read_text(encoding="utf-8"))
-        config = _validate(SubagentConfig, frontmatter, where)
-        unknown = sorted(set(config.skills) - skill_names)
-        if unknown:
-            raise HarnessError(f"{where}: unknown skills {unknown}; the harness has {sorted(skill_names)}")
-        name = config.name or agent_md.parent.name
-        if any(s.name == name for s in subagents):
-            raise HarnessError(f"{where}: another subagent is already named '{name}'")
-        subagents.append(
-            Subagent(
-                name=name,
-                config=config,
-                system_prompt=_COMMENT.sub("", body).strip(),
-                tools=_subagent_tools(config.tools, harness.tools, where),
-            )
-        )
-    return subagents
-
-
-def _subagent_tools(names: List[str], harness_tools: List[BaseTool], where: str) -> List[BaseTool]:
-    """A harness tool by name, else a built-in tool."""
-    by_name = {t.name: t for t in harness_tools}
-    return [by_name[n] if n in by_name else _builtin_tool(n, {}, where) for n in names]
-
-
-def _read_tools(directory: Path) -> List[BaseTool]:
-    if not directory.is_dir():
-        return []
-    scope = "gwenflow_harness_" + hashlib.sha256(str(directory).encode()).hexdigest()[:12]
-    tools: List[BaseTool] = []
-    for script in sorted(directory.glob("*.py")):
-        if script.name.startswith("_"):
-            continue
-        module = _import(f"{scope}.{script.stem}", script)
-        explicit = getattr(module, "tools", None)
-        if isinstance(explicit, list):
-            tools.extend(explicit)
-            continue
-        for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
-            if fn_name.startswith("_") or fn.__module__ != module.__name__ or not (fn.__doc__ and fn.__annotations__):
-                continue
-            try:
-                tools.append(Tool(fn))
-            except Exception as e:
-                raise HarnessError(f"{TOOLS_DIR}/{script.name}: cannot make a tool of {fn_name}: {e}") from e
-    return tools
-
-
-def _import(module_name: str, path: Path) -> Any:
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise HarnessError(f"{TOOLS_DIR}/{path.name}: cannot be imported")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module  # so its functions can be pickled and introspected
-    try:
-        spec.loader.exec_module(module)
-    except Exception as e:
-        sys.modules.pop(module_name, None)
-        raise HarnessError(f"{TOOLS_DIR}/{path.name}: {type(e).__name__}: {e}") from e
-    return module
-
-
-def _builtin_tools(entries: List[ToolEntry], where: str) -> List[BaseTool]:
-    tools: List[BaseTool] = []
-    for entry in entries:
-        if isinstance(entry, str):
-            tools.append(_builtin_tool(entry, {}, where))
-        elif len(entry) == 1:
-            ((name, kwargs),) = entry.items()
-            tools.append(_builtin_tool(name, kwargs or {}, where))
-        else:
-            raise HarnessError(f"{where}: a tool entry is a name or {{Name: {{...}}}}, got {sorted(entry)}")
-    return tools
-
-
-def _builtin_tool(name: str, kwargs: Dict[str, Any], where: str) -> BaseTool:
+def builtin_tool(name: str, kwargs: Dict[str, Any], where: str) -> BaseTool:
+    """A tool of `gwenflow.tools`, by class name."""
     import gwenflow.tools as builtins
 
-    if name in NOT_BUILTIN or name.startswith("MCP") or name not in builtins.__all__:
-        available = sorted(n for n in builtins.__all__ if n not in NOT_BUILTIN and not n.startswith("MCP"))
-        raise HarnessError(f"{where}: unknown tool '{name}'; built-in tools are {available}")
+    if name in ("BaseTool", "Tool") or name.startswith("MCP") or name not in builtins.__all__:
+        raise HarnessError(f"{where}: unknown capability or tool '{name}'")
     try:
         return getattr(builtins, name)(**kwargs)
     except Exception as e:
         raise HarnessError(f"{where}: cannot create {name}: {type(e).__name__}: {e}") from e
 
 
-def _unique(tools: List[BaseTool]) -> List[BaseTool]:
-    seen: set = set()
-    for tool in tools:
-        if tool.name in seen:
-            raise HarnessError(f"two tools are named '{tool.name}'")
-        seen.add(tool.name)
+# ---------------------------------------------------------------------- reading the files
+
+
+def _read_data(path: Path) -> Any:
+    """The content of a YAML or JSON file."""
+    text = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(text) if path.suffix == ".json" else (yaml.safe_load(text) or {})
+    except (json.JSONDecodeError, yaml.YAMLError) as e:
+        raise HarnessError(f"{path.name}: invalid file: {e}") from e
+
+
+def _read_markdown(path: Path) -> str:
+    return _strip_comments(path.read_text(encoding="utf-8"))
+
+
+def _strip_comments(text: str) -> str:
+    return _COMMENT.sub("", text).strip()
+
+
+def _parse(model: Type[BaseModel], raw: Any, where: str) -> Any:
+    """``raw`` as a ``model``, or a `HarnessError` that says where and what is wrong."""
+    if not isinstance(raw, dict):
+        raise HarnessError(f"{where}: expected a mapping")
+    try:
+        return model.model_validate(raw)
+    except ValidationError as e:
+        errors = "; ".join(f"{'.'.join(str(p) for p in x['loc']) or 'value'}: {x['msg']}" for x in e.errors())
+        raise HarnessError(f"{where}: {errors}") from e
+
+
+def _set_from_file(config: HarnessConfig, key: str, value: Any, source: str) -> None:
+    """A value read from its own file, refused if the definition already holds it."""
+    if not value:
+        return
+    if getattr(config, key):
+        raise HarnessError(f"`{key}` is written in both {CONFIG_FILE} and {source}: keep one")
+    setattr(config, key, value)
+
+
+def _capability(entry: Capability, where: str) -> Tuple[str, Any]:
+    """The name and value of a capability entry: ``Name``, ``{Name: value}`` or ``{Name: {...}}``."""
+    if isinstance(entry, str):
+        return entry, None
+    if isinstance(entry, dict) and len(entry) == 1:
+        ((name, value),) = entry.items()
+        return name, value
+    raise HarnessError(f"{where}: a capability is `Name` or `{{Name: ...}}`, got {entry!r}")
+
+
+def _kwargs(value: Any, positional: Optional[str], where: str) -> Dict[str, Any]:
+    """The keyword arguments of a capability: a single value stands for its ``positional`` argument."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if positional is None:
+        raise HarnessError(f"{where}: a tool takes keyword arguments, got {value!r}")
+    return {positional: value}
+
+
+def _unique(tools: List[BaseTool], where: str) -> List[BaseTool]:
+    names = [tool.name for tool in tools]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise HarnessError(f"{where}: several tools are named {duplicates}")
     return tools
 
 
-def _require_approval(tools: List[BaseTool], names: List[str], where: str) -> None:
-    unknown = sorted(set(names) - {t.name for t in tools})
-    if unknown:
-        raise HarnessError(f"{where}: `approval` names unknown tools {unknown}")
-    for tool in tools:
-        if tool.name in names:
-            tool.requires_approval = True
+def _read_skills(skills_folder: Optional[Path], base: Path, options: SkillsCapability) -> List[Skill]:
+    """The skills of ``skills/`` and of ``options.directories`` (relative to ``base``), filtered by name."""
+    folders = [skills_folder] if skills_folder is not None and skills_folder.is_dir() else []
+    for entry in options.directories:
+        folder = (base / entry).resolve()
+        if not folder.is_dir():
+            raise HarnessError(f"Skills: directory '{entry}' not found")
+        folders.append(folder)
+
+    by_name: Dict[str, Skill] = {}
+    for folder in folders:
+        for skill in SkillsDirectory(str(folder)).skills:
+            by_name.setdefault(skill.name, skill)
+
+    skills = list(by_name.values())
+    if options.include is not None:
+        skills = [skill for skill in skills if skill.name in options.include]
+    if options.exclude is not None:
+        skills = [skill for skill in skills if skill.name not in options.exclude]
+    return skills
 
 
-# ---------------------------------------------------------------------- building
+def _read_subagents(folder: Path, harness_tools: List[BaseTool]) -> List[Subagent]:
+    """``subagents/<name>/AGENT.md``: a definition in the frontmatter, the instructions in the body."""
+    if not folder.is_dir():
+        return []
+    tools_by_name = {tool.name: tool for tool in harness_tools}
+    subagents: List[Subagent] = []
+    for agent_file in sorted(folder.glob("*/AGENT.md")):
+        where = f"subagents/{agent_file.parent.name}/AGENT.md"
+        frontmatter, body = parse_frontmatter(agent_file.read_text(encoding="utf-8"))
+        config = _parse(SubagentConfig, frontmatter, where)
+        if config.instructions and _strip_comments(body):
+            raise HarnessError(f"{where}: `instructions` is written in both the frontmatter and the body: keep one")
+        config.instructions = config.instructions or _strip_comments(body)
+        tools = [tools_by_name[n] if n in tools_by_name else builtin_tool(n, {}, where) for n in config.tools]
+        subagents.append(Subagent(name=config.name or agent_file.parent.name, config=config, tools=tools))
+    return subagents
+
+
+def _read_tools(folder: Path) -> List[BaseTool]:
+    """``tools/*.py``: a module-level ``tools`` list, else every public annotated and documented function."""
+    if not folder.is_dir():
+        return []
+    package = "gwenflow_harness_" + hashlib.sha256(str(folder).encode()).hexdigest()[:12]
+    tools: List[BaseTool] = []
+    for script in sorted(folder.glob("*.py")):
+        if script.name.startswith("_"):
+            continue
+        module = _import(f"{package}.{script.stem}", script)
+        if isinstance(getattr(module, "tools", None), list):
+            tools.extend(module.tools)
+            continue
+        for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
+            if not fn_name.startswith("_") and fn.__module__ == module.__name__ and fn.__doc__ and fn.__annotations__:
+                tools.append(Tool(fn))
+    return tools
+
+
+def _import(module_name: str, script: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module  # so its functions can be pickled and introspected
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        sys.modules.pop(module_name, None)
+        raise HarnessError(f"tools/{script.name}: {type(e).__name__}: {e}") from e
+    return module
+
+
+# ---------------------------------------------------------------------- building the agent
+
+
+def _prompt_text(value: Union[str, List[str], None]) -> str:
+    """A prompt part as text: a list is paragraphs, comments are removed."""
+    if isinstance(value, list):
+        value = "\n\n".join(str(item).strip() for item in value)
+    return _strip_comments(value or "")
+
+
+def _join(*parts: str) -> str:
+    return "\n\n".join(part for part in parts if part)
 
 
 def _render(text: str, variables: Optional[Dict[str, Any]], where: str) -> str:
+    """``text`` with its ``{{ name }}`` replaced by ``variables``; every name must have a value."""
     now = datetime.now(timezone.utc)
     values = {"date": now.strftime("%Y-%m-%d"), "datetime": now.isoformat(timespec="seconds"), **(variables or {})}
-    missing = sorted({m for m in _VARIABLE.findall(text) if m not in values})
+    missing = sorted({name for name in _VARIABLE.findall(text) if name not in values})
     if missing:
         raise HarnessError(f"{where} uses {missing}: pass them in `variables`")
-    return _VARIABLE.sub(lambda m: str(values[m.group(1)]), text)
+    return _VARIABLE.sub(lambda match: str(values[match.group(1)]), text)
 
 
-def _skills_section(skills: List[Skill], mode: str) -> str:
-    if not skills:
-        return ""
-    if mode == SKILLS_INLINE:
-        blocks = "\n\n".join(
-            f'<skill name="{s.name}">\n{s.description}\n\n{s.content.strip()}\n</skill>' for s in skills
-        )
-        return "## Skills\n\nApply the skill whose situation matches.\n\n" + blocks
-    return "## Skills:\n\n" + SkillsToolset(skills).get_instructions()
+def _backend(model: Optional[str], base: Optional[ChatBase], where: str) -> ChatBase:
+    """A copy of ``base`` running ``model``; without ``base``, a `ChatGwenlake`."""
+    if base is None:
+        if model is None:
+            raise HarnessError(f"'{where}' has no model: set `model`, or pass `model=` or `llm=`")
+        return ChatGwenlake(model=model)
+    backend = copy.copy(base)
+    if model is not None:
+        backend.model = model
+    return backend
 
 
-def _apply_settings(llm: ChatBase, settings: Dict[str, Any], where: str) -> None:
-    allowed = {f.name for f in dataclasses.fields(llm)} if dataclasses.is_dataclass(llm) else set(vars(llm))
-    allowed -= {"model", "tools", "tool_choice", "client", "async_client", "response_format"}
+def _apply_settings(backend: ChatBase, settings: Dict[str, Any], where: str) -> None:
+    allowed = {f.name for f in dataclasses.fields(backend)} - {"model", "tools", "tool_choice", "response_format"}
     unknown = sorted(set(settings) - allowed)
     if unknown:
-        raise HarnessError(f"{where}: {type(llm).__name__} has no model setting {unknown}")
+        raise HarnessError(f"{where}: {type(backend).__name__} has no model setting {unknown}")
     for key, value in settings.items():
-        setattr(llm, key, value)
+        setattr(backend, key, value)
 
 
-def _env(value: Any, where: str) -> Any:
-    """``${NAME}`` replaced by the environment variable ``NAME``, in a string, list or dict."""
+def _from_environment(value: Any) -> Any:
+    """``value`` with every ``${NAME}`` replaced by the environment variable ``NAME``."""
+
+    def lookup(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in os.environ:
+            raise HarnessError(f"environment variable {name} is not set")
+        return os.environ[name]
+
     if isinstance(value, str):
-
-        def lookup(m: re.Match) -> str:
-            if m.group(1) not in os.environ:
-                raise HarnessError(f"{where}: environment variable {m.group(1)} is not set")
-            return os.environ[m.group(1)]
-
-        return _ENV.sub(lookup, value)
+        return _ENV_VARIABLE.sub(lookup, value)
     if isinstance(value, list):
-        return [_env(v, where) for v in value]
+        return [_from_environment(item) for item in value]
     if isinstance(value, dict):
-        return {k: _env(v, where) for k, v in value.items()}
+        return {key: _from_environment(item) for key, item in value.items()}
     return value
 
 
-def _mcp_server(config: McpServerConfig, directory: Path) -> Any:
+def _mcp_server(server: McpCapability, directory: Path) -> Any:
     from gwenflow.tools.mcp import MCPServerSse, MCPServerStdio
 
-    where = f"mcp_servers.{config.name or config.url or config.command}"
-    if config.url is not None:
-        params: Dict[str, Any] = {"url": _env(config.url, where)}
-        if config.headers:
-            params["headers"] = _env(config.headers, where)
-        if config.timeout is not None:
-            params["timeout"] = config.timeout
-        if config.sse_read_timeout is not None:
-            params["sse_read_timeout"] = config.sse_read_timeout
-        return MCPServerSse(params, name=config.name)
-    params = {"command": config.command, "args": _env(config.args, where)}
-    if config.env:
-        params["env"] = _env(config.env, where)
-    if config.cwd is not None:
-        params["cwd"] = str((directory / config.cwd).resolve())
-    return MCPServerStdio(params, name=config.name)
+    if server.url is not None:
+        params: Dict[str, Any] = {"url": _from_environment(server.url)}
+        if server.headers:
+            params["headers"] = _from_environment(server.headers)
+        return MCPServerSse(params, name=server.id)
+    params = {"command": server.command, "args": _from_environment(server.args)}
+    if server.env:
+        params["env"] = _from_environment(server.env)
+    if server.cwd is not None:
+        params["cwd"] = str((directory / server.cwd).resolve())
+    return MCPServerStdio(params, name=server.id)
+
+
+def _long_term_memory(config: LongTermMemoryConfig, variables: Optional[Dict[str, Any]]) -> Any:
+    from gwenflow.memory import MemoryToolset
+    from gwenflow.stores.files import LocalFileMemoryStore, S3MemoryStore
+
+    if config.store == "local":
+        store = LocalFileMemoryStore(_render(config.path, variables, "long_term_memory"))
+    else:
+        store = S3MemoryStore(config.bucket, _render(config.prefix, variables, "long_term_memory"))
+    return MemoryToolset(store, always=config.always, browse=config.browse, tools=config.tools)

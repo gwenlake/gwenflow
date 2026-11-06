@@ -373,7 +373,9 @@ class Agent:
 
     @classmethod
     def from_file(cls, path: Union[str, Path], **kwargs: Any) -> "Agent":
-        """An agent from a markdown file: frontmatter = the keys of ``harness.yaml``, body = system prompt.
+        """An agent from one file: a Pydantic AI agent spec (``agent.yaml``, ``.json``) or a markdown file.
+
+        A markdown file's frontmatter is the definition and its body is its ``instructions``.
 
         ``kwargs`` are those of `Harness.build_agent` (see `from_harness`).
         """
@@ -1383,7 +1385,7 @@ class Agent:
         if self.instructions:
             instructions = "## Instructions:\n\n"
             if isinstance(self.instructions, str):
-                instructions += "- {instructions}".format(instructions=self.instructions)
+                instructions += self.instructions.strip()
             elif isinstance(self.instructions, list):
                 instructions += "\n".join([f"- {i}" for i in self.instructions])
             system_prompt_parts.append(instructions)

@@ -8,21 +8,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Harness: an agent described by a directory of files with fixed names (`harness.yaml`,
-  `system_prompt.md`, `guardrails.md`, `memory.md`, `tool_guidance.md`, `output_schema.json`,
-  `skills/`, `subagents/<name>/AGENT.md`, `tools/*.py`). `Agent.from_harness(path, **kwargs)`
-  builds the agent; `Harness.load(path)` reads the files once and `build_agent(...)` makes a
-  new agent per call. `harness.yaml` holds `name`, `version`, `description`, `model`,
-  `model_settings`, `max_turns`, built-in `tools` by class name (with optional arguments),
-  `approval`, `mcp_servers` (`url` or `command`, `${NAME}` read from the environment),
-  `skills` (`tools` or `inline`) and free `metadata`; unknown keys are refused. Subagents
-  become the `team`. `{{ name }}` in the prose is filled from `variables`. Arguments passed
-  in code win over the files, and `tools`, `skills`, `team` and `mcp_servers` passed in code
-  are added to the harness ones.
-- `Agent.from_file("agent.md")`: a single-file agent, frontmatter = the keys of
-  `harness.yaml`, body = system prompt.
-- `gwenflow harness check <path>` and `gwenflow harness schema` (JSON Schema of
-  `harness.yaml`); the `gwenflow.Agent` flow node accepts `harness: <path>`.
+- Harness: an agent described by files, with the key names of the Pydantic AI agent spec
+  (`model`, `name`, `description`, `instructions`, `model_settings`, `capabilities`,
+  `output_schema`, `metadata`); gwenflow adds `version`, `max_turns`, `guardrails`,
+  `knowledge`, `tool_guidance` and `long_term_memory`. A harness directory holds
+  `harness.yaml`, the prompt parts (in `harness.yaml` or in `system_prompt.md`,
+  `guardrails.md`, `knowledge.md`, `tool_guidance.md`), `output_schema.json`, `skills/`,
+  `subagents/<name>/AGENT.md` and `tools/*.py`. Capabilities: `Skills`, `MCP`, `Thinking`,
+  `WebSearch`, `WebFetch` and any tool of `gwenflow.tools` by class name.
+  `Agent.from_harness(path)` and `Agent.from_file(path)` (a Pydantic AI spec or a `.md`);
+  `Harness.load(path).build_agent(...)` makes a new agent per call.
+- `gwenflow harness check <path>` and `gwenflow harness schema`; the `gwenflow.Agent` flow
+  node accepts `harness: <path>`.
 - Sub-agents created on demand: `Agent(subagents=True)` adds a `spawn_agent` tool with
   which the model launches a fresh agent for a self-contained task and gets back only
   its final report. In each call the model writes the `description` and `prompt` and
@@ -64,6 +61,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `Agent(instructions="...")`: a string is rendered as written, a block of text under
+  `## Instructions:`, no longer prefixed with `- `; a list is still rendered as bullets.
 - `Agent.run` and `Agent.run_stream` now run the delegation calls of one turn (team
   handoffs and `spawn_agent`) in parallel threads, as `arun` already did. Other tool
   calls still run one after the other, in order, and results keep the order of the calls.

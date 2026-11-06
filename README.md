@@ -315,91 +315,58 @@ The agent automatically gets three management tools: `list_skills`, `load_skill`
 
 ## Harness
 
-A harness describes an agent with files instead of construction code: a directory whose file names are fixed, so nothing has to say where each part lives or in which order the prompt is composed.
+A harness describes an agent with files instead of construction code. Its definition uses the key names of the [Pydantic AI agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) (`model`, `name`, `description`, `instructions`, `model_settings`, `capabilities`, `output_schema`, `metadata`), so a Pydantic AI `agent.yaml` loads as is.
 
 ```
 my_harness/
-├── harness.yaml              # settings, all optional (below)
-├── system_prompt.md          # the system prompt is these four files, in this order;
-├── guardrails.md             # a missing one is skipped, <!-- comments --> never reach the model
-├── memory.md
+├── harness.yaml              # the definition, every key optional (below)
+├── system_prompt.md          # the parts of the prompt, in this order: each one written in
+├── guardrails.md             # harness.yaml or in its file, not both
+├── knowledge.md
 ├── tool_guidance.md
-├── output_schema.json        # optional: the JSON Schema of the answer
-├── skills/<name>/SKILL.md    # skills, as with SkillsDirectory
-├── subagents/<name>/AGENT.md # team members: frontmatter = settings, body = system prompt
-└── tools/*.py                # tools: a module-level `tools` list, else every public
-                              # function with a docstring and type annotations
+├── output_schema.json        # or `output_schema` in harness.yaml
+├── skills/<name>/SKILL.md
+├── subagents/<name>/AGENT.md # team members: frontmatter = definition, body = instructions
+└── tools/*.py                # a module-level `tools` list, else every public function
+                              # with a docstring and type annotations
 ```
 
 ```yaml
 # harness.yaml
-name: question_generation       # defaults to the directory name
+name: question_generation
 version: "1"
 description: Writes exam questions.
-model: google/gemma-4-26b-a4b-it
-model_settings:                 # set on the chat backend
+model: google/gemma-4-26b-a4b-it   # runs on the `llm` given in code, else on Gwenlake
+instructions: You write medical exam questions.   # or system_prompt.md
+guardrails: Never give the answer in the stem.    # or guardrails.md
+knowledge: Potassium above 5.5 mmol/L is hyperkalaemia.  # or knowledge.md: fixed facts
+model_settings:
   temperature: 0.2
-  reasoning_effort: none
 max_turns: 8
-tools:                          # built-in tools of gwenflow.tools, by class name
-  - ClinicalTrialsTool
-  - PubMedTool: {max_results: 5}
-approval: [ShellTool]           # tools run only after the user approved the call
-mcp_servers:
-  - name: docs
-    url: https://mcp.example.com/sse
-    headers: {Authorization: "Bearer ${DOCS_TOKEN}"}   # ${NAME}: environment variable
-  - name: files
-    command: npx
-    args: ["@modelcontextprotocol/server-filesystem", "data"]
-skills: tools                   # tools: load_skill on demand | inline: full text in the prompt
-metadata: {}                    # free keys for your application, never read by gwenflow
-```
-
-```markdown
-<!-- subagents/reviewer/AGENT.md -->
----
-description: Checks a question for factual errors.   # required: what the orchestrator reads
-model: openai/gpt-6-luna                             # optional, like max_turns and model_settings
-tools: [word_count, PubMedTool]                      # harness tools or built-in tools
----
-You review medical exam questions.
+capabilities:
+  - Thinking: {effort: none}       # sets reasoning_effort
+  - Skills: {directories: ../shared/skills, include: [distractor-design], mode: inline}
+  - MCP: {id: docs, url: https://mcp.example.com/sse, headers: {Authorization: "Bearer ${DOCS_TOKEN}"}}
+  - WebSearch                      # DuckDuckGoSearchTool; WebFetch: WebsiteReaderTool
+  - PubMedTool: {max_results: 5, requires_approval: true}   # any tool of gwenflow.tools
+long_term_memory:                  # the memory the agent writes itself, across conversations
+  path: .memories/{{ user_id }}
+  always: [/memories/user/MEMORY.md]
+metadata: {}                       # free keys for your application
 ```
 
 ```python
 from gwenflow import Agent, ChatGwenlake, Harness
 
-agent = Agent.from_harness("my_harness")   # the model of harness.yaml, on ChatGwenlake
+agent = Agent.from_harness("my_harness")                    # a directory
+agent = Agent.from_file("agent.yaml")                       # one file: a Pydantic AI spec, or a .md
+agent = Agent.from_harness("my_harness", llm=ChatGwenlake(model="x", default_headers=headers))
 
-# The code gives the connection (key, base URL, headers); the files keep the model and its settings:
-# the model of harness.yaml, when set, replaces the one of `llm`.
-agent = Agent.from_harness("my_harness", llm=ChatGwenlake(model="google/gemma-4-26b-a4b-it", default_headers=headers))
-
-# Read the files once, build a fresh agent per run.
-harness = Harness.load("my_harness")
-agent = harness.build_agent(variables={"level": 3}, response_model=Questions)
-
-# A single-file agent: the frontmatter holds the keys of harness.yaml, the body is the system prompt.
-agent = Agent.from_file("reviewer.md")
+harness = Harness.load("my_harness")                        # read once,
+agent = harness.build_agent(variables={"user_id": "u42"})   # one agent per run
 ```
 
-`{{ name }}` in the prose and in subagent prompts is replaced by `variables` (`date` and `datetime` are always defined); a variable left without a value is an error. What the code passes wins over the files: `model`, `model_settings` (merged key by key) and any `Agent` argument, except `tools`, `skills`, `team` and `mcp_servers`, which are added to what the harness holds. Each subagent runs on a copy of the orchestrator's backend, with its own `model` and settings if it sets them. With `output_schema.json`, the answer comes back in `response.parsed`, its fields as attributes (`.model_dump()` gives the dict); a `response_model` passed in code replaces it. Unknown keys, a tool file that fails to import, an unknown tool name or a subagent naming a tool that exists nowhere are refused at load time. Other files in the directory are left to your application.
-
-A harness is checked from the command line, and a flow runs one as an agent node:
-
-```bash
-gwenflow harness check my_harness        # load it and list what it holds
-gwenflow harness schema > harness.schema.json   # JSON Schema of harness.yaml, for editor completion
-```
-
-```yaml
-# in a flow
-  - name: review
-    type: gwenflow.Agent
-    parameters:
-      harness: agents/reviewer           # a harness directory or a single-file agent
-      task: "Review this question:\n\n{generate}"
-```
+`{{ name }}` in the prompt is replaced by `variables` (`date` and `datetime` are always defined). The model runs on a copy of the `llm` given in code (key, base URL, headers), else on `ChatGwenlake`. What the code passes wins over the files; `tools`, `skills`, `team` and `mcp_servers` are added to the harness ones. `knowledge` holds fixed facts written by the authors; `long_term_memory` is what the agent writes itself (call `await agent.memory.aload()` before a run and `aflush()` after). Unknown keys and unknown capabilities are refused. `gwenflow harness check <path>` loads a harness and lists what it holds; a flow runs one with `harness: <path>` in a `gwenflow.Agent` node.
 
 ## Multi-Agent Orchestration
 
