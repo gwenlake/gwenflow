@@ -4,6 +4,8 @@ All notable changes to gwenflow are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [1.6.0] — 2026-11-06
 
 ### Added
@@ -23,7 +25,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ClaimCheckCodec` with `InMemoryBlobStore` and `S3BlobStore`: payloads above 128 KB
   (configurable) are stored in a blob store and the history keeps a reference.
 - `worker_options(*workflows, agents=[...])`: the workflows, activities and sandbox
-  configuration to pass to a Temporal `Worker`.
+  configuration to pass to a Temporal `Worker`. A `FlowError` raised in workflow code
+  (a node out of retries) fails the run instead of retrying the workflow task forever.
 - `gwenflow[temporal]` optional extra (`temporalio>=1.35.0`). `import gwenflow` does not
   need it; only `import gwenflow.durability` does.
 - `Flow.arun()` and `Flow.run()` return every node's result, keyed by node name;
@@ -73,7 +76,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `gwenflow.agents.prompts`: its prompts now live in `gwenflow.agents.agent`
   (`PROMPT_PREVIOUS_INTERACTIONS`, unused, is gone).
 
-## [Unreleased]
+## [1.5.1] — 2026-11-03
 
 ### Added
 
