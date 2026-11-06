@@ -131,6 +131,45 @@ def autoflow(query, model, tools):
     console.print(Markdown(result))
 
 
+@main.group()
+def harness():
+    """Check harnesses (agents described by files)."""
+
+
+@harness.command(name="check")
+@click.argument("path", type=click.Path(exists=True))
+def harness_check(path):
+    """Load the harness directory or single-file agent at PATH and report what it holds."""
+    from gwenflow.harness import Harness, HarnessError
+
+    try:
+        h = Harness.load(path)
+    except HarnessError as e:
+        console.print(f"[red]✗[/red] {e.message}")
+        raise SystemExit(1) from e
+    table = Table(title=f"Harness {h.name} (version {h.config.version})", show_header=False)
+    table.add_column("Part", style="green")
+    table.add_column("Content")
+    table.add_row("model", h.config.model or "(given in code)")
+    table.add_row("prompt", ", ".join(h.prose) or "-")
+    table.add_row("skills", f"{', '.join(s.name for s in h.skills) or '-'} ({h.config.skills})")
+    table.add_row("subagents", ", ".join(s.name for s in h.subagents) or "-")
+    table.add_row("tools", ", ".join(t.name + (" (approval)" if t.requires_approval else "") for t in h.tools) or "-")
+    table.add_row("mcp servers", ", ".join(c.name or c.url or c.command for c in h.config.mcp_servers) or "-")
+    table.add_row("output schema", "yes" if h.output_schema is not None else "-")
+    console.print(table)
+
+
+@harness.command(name="schema")
+def harness_schema():
+    """Print the JSON Schema of harness.yaml (for editor completion)."""
+    import json
+
+    from gwenflow.harness import harness_json_schema
+
+    click.echo(json.dumps(harness_json_schema(), indent=2))
+
+
 @main.command(name="tools")
 def list_tools():
     """List available built-in tools."""

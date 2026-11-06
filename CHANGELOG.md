@@ -8,6 +8,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Harness: an agent described by a directory of files with fixed names (`harness.yaml`,
+  `system_prompt.md`, `guardrails.md`, `memory.md`, `tool_guidance.md`, `output_schema.json`,
+  `skills/`, `subagents/<name>/AGENT.md`, `tools/*.py`). `Agent.from_harness(path, **kwargs)`
+  builds the agent; `Harness.load(path)` reads the files once and `build_agent(...)` makes a
+  new agent per call. `harness.yaml` holds `name`, `version`, `description`, `model`,
+  `model_settings`, `max_turns`, built-in `tools` by class name (with optional arguments),
+  `approval`, `mcp_servers` (`url` or `command`, `${NAME}` read from the environment),
+  `skills` (`tools` or `inline`) and free `metadata`; unknown keys are refused. Subagents
+  become the `team`. `{{ name }}` in the prose is filled from `variables`. Arguments passed
+  in code win over the files, and `tools`, `skills`, `team` and `mcp_servers` passed in code
+  are added to the harness ones.
+- `Agent.from_file("agent.md")`: a single-file agent, frontmatter = the keys of
+  `harness.yaml`, body = system prompt.
+- `gwenflow harness check <path>` and `gwenflow harness schema` (JSON Schema of
+  `harness.yaml`); the `gwenflow.Agent` flow node accepts `harness: <path>`.
 - Sub-agents created on demand: `Agent(subagents=True)` adds a `spawn_agent` tool with
   which the model launches a fresh agent for a self-contained task and gets back only
   its final report. In each call the model writes the `description` and `prompt` and

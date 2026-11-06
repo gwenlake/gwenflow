@@ -60,7 +60,27 @@ def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
 
 @node_type("gwenflow.Agent")
 def handle_agent(parameters: dict, input_data: dict | None) -> str:
+    """An agent node, from a harness or from `model` and `instructions` written in the flow.
+
+    `harness` is a harness directory or a single-file agent, relative to the working
+    directory; `model`, if given, overrides its model.
+    """
     from gwenflow import Agent, ChatOpenAI
+
+    task = parameters.get("task", "")
+    if input_data:
+        for name, value in input_data.items():
+            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            task = task.replace(f"{{{name}}}", serialized)
+
+    harness = parameters.get("harness")
+    if harness:
+        if "instructions" in parameters:
+            raise ValueError("an agent node has either `harness` or `instructions`, not both")
+        from gwenflow.harness import Harness
+
+        agent = Harness.load(harness).build_agent(model=parameters.get("model"))
+        return agent.run(task).content
 
     raw_model = parameters.get("model", "openai/gpt-4o-mini")
     model = raw_model.split("/", 1)[-1]
@@ -68,12 +88,6 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
     instructions = parameters.get("instructions", "")
     if isinstance(instructions, str):
         instructions = [instructions]
-
-    task = parameters.get("task", "")
-    if input_data:
-        for name, value in input_data.items():
-            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            task = task.replace(f"{{{name}}}", serialized)
 
     llm = ChatOpenAI(model=model)
     agent = Agent(

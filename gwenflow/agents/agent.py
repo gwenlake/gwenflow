@@ -359,6 +359,28 @@ class Agent:
             self.llm.tools = None
             self.llm.tool_choice = None
 
+    @classmethod
+    def from_harness(cls, path: Union[str, Path], **kwargs: Any) -> "Agent":
+        """An agent from a harness directory (see `gwenflow.harness`).
+
+        ``kwargs`` are those of `Harness.build_agent`: ``variables``, ``model``, ``llm``,
+        ``model_settings`` and any `Agent` argument. To build several agents from the same
+        files, load them once with `Harness.load` and call `build_agent` for each.
+        """
+        from gwenflow.harness import Harness
+
+        return Harness.load(path).build_agent(**kwargs)
+
+    @classmethod
+    def from_file(cls, path: Union[str, Path], **kwargs: Any) -> "Agent":
+        """An agent from a markdown file: frontmatter = the keys of ``harness.yaml``, body = system prompt.
+
+        ``kwargs`` are those of `Harness.build_agent` (see `from_harness`).
+        """
+        from gwenflow.harness import Harness
+
+        return Harness.from_file(path).build_agent(**kwargs)
+
     def _build_handoff_tools(self) -> List[BaseTool]:
         """Expose each team member as a callable tool the orchestrator can invoke.
 
