@@ -270,6 +270,11 @@ class Agent:
 
     skills: List[Skill] = field(default_factory=list)
 
+    skill_script_tools: bool = True
+    """Register the tools defined in the skills' `scripts/` files. False when the
+    application creates those tools itself (they need its connections, its
+    state): the skills then only bring their instructions."""
+
     memory: Optional[MemoryToolset] = None
     """Long-term markdown memory: a `## Memory` block in the system prompt plus
     the editing tools (`read_memory`, `memory_edit`, ...). Load it with
@@ -339,7 +344,8 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
-            self.tools = list(self.tools) + self._skill_script_tools()
+            if self.skill_script_tools:
+                self.tools = list(self.tools) + self._skill_script_tools()
         if self.max_tool_output_tokens and not any(t.name == READ_TOOL_OUTPUT for t in self.tools):
             self.tools = list(self.tools) + [self._tool_output_reader()]
         if self.memory:
@@ -679,6 +685,7 @@ class Agent:
             llm=llm,
             tools=tools,
             skills=skills,
+            skill_script_tools=self.skill_script_tools,
             response_model=output_schema,
             max_turns=self.subagent_max_turns,
             max_tool_output_tokens=self.max_tool_output_tokens,

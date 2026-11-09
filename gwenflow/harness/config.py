@@ -3,8 +3,8 @@
 ``harness.yaml`` in a harness directory, an agent file (``agent.yaml``, ``.json``, ``.md``
 frontmatter) and the frontmatter of ``subagents/<name>/AGENT.md``. Shared with Pydantic AI:
 ``model``, ``name``, ``description``, ``instructions``, ``model_settings``, ``capabilities``,
-``output_schema``, ``metadata``. Added by gwenflow: ``version``, ``max_turns``, ``guardrails``,
-``knowledge``, ``tool_guidance``, ``long_term_memory``. Unknown keys are refused.
+``output_schema``, ``metadata``. Added by gwenflow: ``version``, ``templating``, ``max_turns``,
+``guardrails``, ``knowledge``, ``tool_guidance``, ``long_term_memory``. Unknown keys are refused.
 """
 
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -36,6 +36,10 @@ class SkillsCapability(_Strict):
     exclude: Optional[List[str]] = None
     mode: Literal["inline", "tools"] = "tools"
     """gwenflow: ``tools`` loads a skill on demand; ``inline`` puts every skill in the prompt."""
+    script_tools: bool = True
+    """gwenflow: register the tools of the skills' ``scripts/`` files. ``false`` when the
+    application creates them itself (they need its connections): the skills then bring only
+    their instructions, and the code passes the tools to ``build_agent(tools=...)``."""
 
     @field_validator("directories", mode="before")
     @classmethod
@@ -107,6 +111,11 @@ class HarnessConfig(_Settings):
     name: Optional[str] = None
     version: str = "0"
     description: Optional[str] = None
+    templating: Literal["plain", "jinja"] = "plain"
+    """How the prompt parts and the instructions of the subagents are rendered. ``plain``
+    replaces ``{{ name }}``; ``jinja`` renders them as Jinja templates (``{% if %}``,
+    ``{% for %}``, filters; requires ``jinja2``), with ``skills``, the names of the skills
+    the agent is built with, as an extra variable."""
     instructions: Optional[Union[str, List[str]]] = None
     """Role, method, output format (``system_prompt.md``)."""
     guardrails: Optional[str] = None

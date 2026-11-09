@@ -593,3 +593,122 @@ def test_a_subagent_prompt_in_its_frontmatter(tmp_path):
     _write(tmp_path, "subagents/x/AGENT.md", "---\ndescription: d\ninstructions: Check facts.\n---\nAnd a body.")
     with pytest.raises(HarnessError, match="written in both"):
         Harness.load(tmp_path)
+
+
+# ---------------------------------------------------------------------- application skills
+
+
+SCRIPT_TOOL = '''
+def stock_level(sku: str) -> int:
+    """The stock of an article.
+
+    Args:
+        sku: The article reference.
+    """
+    return 0
+'''
+
+
+def _app_harness(root: Path, *, script_tools: bool = True, templating: str = "plain") -> Path:
+    for name in ("quote", "order", "task"):
+        _write(root, f"skills/{name}/SKILL.md", f"---\nname: {name}\ndescription: The {name}s.\n---\nBody of {name}.")
+    _write(root, "skills/order/scripts/tool.py", SCRIPT_TOOL)
+    _write(
+        root,
+        "harness.yaml",
+        f"""
+        templating: {templating}
+        capabilities:
+          - Skills: {{script_tools: {str(script_tools).lower()}}}
+        """,
+    )
+    return root
+
+
+def test_only_skills_keeps_the_named_ones(tmp_path):
+    h = Harness.load(_app_harness(tmp_path))
+    agent = h.build_agent(llm=_connection(), only_skills=["task", "quote"])
+
+    assert [s.name for s in agent.skills] == ["quote", "task"]
+    assert [s.name for s in h.build_agent(llm=_connection()).skills] == ["order", "quote", "task"]
+    assert h.build_agent(llm=_connection(), only_skills=[]).skills == []
+
+
+def test_only_skills_refuses_an_unknown_name(tmp_path):
+    with pytest.raises(HarnessError, match="no skill named \\['invoice'\\]"):
+        Harness.load(_app_harness(tmp_path)).build_agent(llm=_connection(), only_skills=["quote", "invoice"])
+
+
+def test_only_skills_applies_to_the_subagents(tmp_path):
+    _app_harness(tmp_path)
+    _write(tmp_path, "subagents/sales/AGENT.md", "---\ndescription: Sales.\nskills: [quote, order]\n---\nSell.")
+    agent = Harness.load(tmp_path).build_agent(llm=_connection(), only_skills=["quote", "task"])
+
+    (sales,) = agent.team
+    assert [s.name for s in sales.skills] == ["quote"]
+
+
+def test_skill_script_tools_are_registered_by_default(tmp_path):
+    agent = Harness.load(_app_harness(tmp_path)).build_agent(llm=_connection())
+
+    assert "stock_level" in {t.name for t in agent.tools}
+
+
+def test_skill_script_tools_can_be_left_to_the_application(tmp_path):
+    _app_harness(tmp_path, script_tools=False)
+    _write(tmp_path, "subagents/sales/AGENT.md", "---\ndescription: Sales.\nskills: [order]\n---\nSell.")
+    h = Harness.load(tmp_path)
+    agent = h.build_agent(llm=_connection())
+
+    assert not h.skill_script_tools
+    names = {t.name for t in agent.tools}
+    assert "stock_level" not in names
+    assert "load_skill" in names  # the skills themselves stay loadable
+    assert "stock_level" not in {t.name for t in agent.team[0].tools}
+
+
+def test_jinja_templating_sees_the_skills_and_the_variables(tmp_path):
+    _app_harness(tmp_path, templating="jinja")
+    _write(
+        tmp_path,
+        "system_prompt.md",
+        """
+        Hello {{ user }}.
+        {% if 'quote' in skills %}
+        * QUOTE: a priced offer.
+        {% endif %}
+        {% if 'order' in skills %}
+        * ORDER: a confirmed purchase.
+        {% endif %}
+        <!-- {% if broken %} comments never reach Jinja -->
+        """,
+    )
+    agent = Harness.load(tmp_path).build_agent(llm=_connection(), only_skills=["quote"], variables={"user": "Ada"})
+
+    assert agent.instructions == "Hello Ada.\n* QUOTE: a priced offer."
+
+
+def test_jinja_templating_refuses_an_undefined_variable(tmp_path):
+    _app_harness(tmp_path, templating="jinja")
+    _write(tmp_path, "system_prompt.md", "Hello {{ user }}.")
+
+    with pytest.raises(HarnessError, match="'user' is undefined"):
+        Harness.load(tmp_path).build_agent(llm=_connection())
+
+
+def test_jinja_templating_renders_the_subagents(tmp_path):
+    _app_harness(tmp_path, templating="jinja")
+    _write(
+        tmp_path,
+        "subagents/sales/AGENT.md",
+        "---\ndescription: Sales.\nskills: [quote, order]\n---\nSell{% for s in skills %} {{ s }}{% endfor %}.",
+    )
+    agent = Harness.load(tmp_path).build_agent(llm=_connection(), only_skills=["order"])
+
+    assert agent.team[0].instructions == "Sell order."
+
+
+def test_plain_templating_leaves_jinja_blocks_alone(tmp_path):
+    _write(tmp_path, "system_prompt.md", "Keep {% raw %} as written.")
+
+    assert Harness.load(tmp_path).build_agent(llm=_connection()).instructions == "Keep {% raw %} as written."
