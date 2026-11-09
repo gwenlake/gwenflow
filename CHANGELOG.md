@@ -74,6 +74,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ChatOpenAI.stream` / `astream` lost the tool calls of a turn the server did not end
+  on `finish_reason: "tool_calls"`: a server that ends it on `stop`, or with no reason
+  at all (several local engines), got its calls dropped and the run ended without
+  them. They are now always handed over, once, at the end of the stream.
+- A tool call now always has an id of its own in the conversation it answers
+  (`ChatOpenAI`, streamed or not): a server that sends none, or numbers its calls per
+  turn (`call_1` every time), got an id that the history already used, so a result
+  could be matched to another call (`DeduplicateReads` then blanked it as a duplicate).
+  The server's id is kept unless it is empty or taken.
 - Tool calls had no span since 1.4.0: the `@tracer.tool` decorator had slid from
   `Agent.run_tool` onto `_calibrate_history`, so every "Tool Call" span wrapped a memory
   computation, with no `tool.name`, and no tool execution was traced. A delegated
