@@ -1,0 +1,35 @@
+# A whole agent in one file, in the Pydantic AI agent spec format.
+# Load it with Agent.from_file("examples/agents/recipe_writer.yaml").
+
+name: recipe_writer
+description: Writes a recipe for a given dish.
+model: gpt-4o-mini                     # runs on the connection given in code (llm=), else on Gwenlake
+
+# `{{ name }}` is filled from the `variables` given when the agent is built.
+instructions:
+  - You are a home cook who writes clear, reliable recipes.
+  - Every recipe serves {{ servings }} people and follows a {{ diet }} diet.
+  - Today is {{ date }}. Prefer seasonal ingredients.
+
+model_settings:
+  temperature: 0.3
+
+capabilities:
+  - Thinking: {effort: low}            # sets reasoning_effort on the model
+
+# The answer follows this JSON Schema: response.parsed has these fields as attributes.
+output_schema:
+  type: object
+  properties:
+    title: {type: string}
+    minutes: {type: integer, description: Total preparation and cooking time.}
+    ingredients:
+      type: array
+      items: {type: string}
+    steps:
+      type: array
+      items: {type: string}
+  required: [title, minutes, ingredients, steps]
+
+metadata:                              # free keys for your application, never read by gwenflow
+  author: examples

@@ -16,6 +16,7 @@ from gwenflow.exceptions import (
     UserError,
 )
 from gwenflow.flows import AutoFlow, Flow, FlowRunner
+from gwenflow.harness import Harness
 from gwenflow.llms import (
     ChatAzureOpenAI,
     ChatDeepSeek,
@@ -74,6 +75,7 @@ __all__ = [
     "SimpleDirectoryReader",
     "Retriever",
     "Agent",
+    "Harness",
     "BaseTool",
     "Tool",
     "Flow",
