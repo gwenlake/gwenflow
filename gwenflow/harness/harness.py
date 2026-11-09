@@ -34,7 +34,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -92,6 +92,8 @@ class Harness:
     skills: List[Skill] = field(default_factory=list)
     skills_inline: bool = False
     """The skills are written in full in the prompt, instead of loaded on demand by a tool."""
+    skill_script_tools: bool = True
+    """The tools of the skills' ``scripts/`` files are registered (``Skills: {script_tools: ...}``)."""
     mcp_servers: List[McpCapability] = field(default_factory=list)
     reasoning_effort: Optional[str] = None
     """Set by the ``Thinking`` capability."""
@@ -169,6 +171,7 @@ class Harness:
         skills_folder = path / "skills" if path.is_dir() else None
         harness.skills = _read_skills(skills_folder, harness.directory, skills_options)
         harness.skills_inline = skills_options.mode == "inline"
+        harness.skill_script_tools = skills_options.script_tools
         return harness
 
     # ------------------------------------------------------------------ build
@@ -178,14 +181,28 @@ class Harness:
         texts = {part: _prompt_text(getattr(self.config, part)) for part, _ in PROMPT_PARTS}
         return {part: text for part, text in texts.items() if text}
 
-    def instructions(self, variables: Optional[Dict[str, Any]] = None) -> str:
+    def instructions(self, variables: Optional[Dict[str, Any]] = None, *, skills: Optional[List[Skill]] = None) -> str:
         """The parts of the prompt, variables replaced, then the inline skills.
 
-        The agent then adds what it renders at each run: the skills index, the long-term memory,
-        the references of its retriever and the run's ``context``.
+        ``skills`` are those the agent is built with (all the harness ones by default). The agent
+        then adds what it renders at each run: the skills index, the long-term memory, the
+        references of its retriever and the run's ``context``.
         """
-        parts = [_render(text, variables, f"{self.name}: {part}") for part, text in self.prompt_parts().items()]
-        return _join(*parts, self._inline_skills(self.skills))
+        skills = self.skills if skills is None else skills
+        parts = [
+            self._render(text, variables, f"{self.name}: {part}", skills) for part, text in self.prompt_parts().items()
+        ]
+        return _join(*parts, self._inline_skills(skills))
+
+    def select_skills(self, names: Optional[Iterable[str]] = None) -> List[Skill]:
+        """The harness skills named in ``names``, in the harness order; all of them for ``None``."""
+        if names is None:
+            return list(self.skills)
+        wanted = set(names)
+        unknown = sorted(wanted - {skill.name for skill in self.skills})
+        if unknown:
+            raise HarnessError(f"{self.name}: no skill named {unknown} in the harness")
+        return [skill for skill in self.skills if skill.name in wanted]
 
     def build_agent(
         self,
@@ -194,14 +211,18 @@ class Harness:
         model: Optional[str] = None,
         llm: Optional[ChatBase] = None,
         model_settings: Optional[Dict[str, Any]] = None,
+        only_skills: Optional[Iterable[str]] = None,
         **agent_kwargs: Any,
     ) -> Agent:
         """A new `Agent` from this harness.
 
         The model (``model``, else the definition's) runs on a copy of ``llm``, else on
         `ChatGwenlake`. What the code passes wins over the files; ``tools``, ``skills``, ``team``
-        and ``mcp_servers`` are added to the harness ones.
+        and ``mcp_servers`` are added to the harness ones. ``only_skills`` keeps the harness
+        skills of these names (the features of a user, of a tenant), for the agent and its
+        subagents; a name the harness does not hold is an error.
         """
+        skills = self.select_skills(only_skills)
         backend = _backend(model or self.config.model, llm, self.name)
         settings = {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
         _apply_settings(backend, {**settings, **self.config.model_settings, **(model_settings or {})}, self.name)
@@ -209,13 +230,15 @@ class Harness:
         params: Dict[str, Any] = {
             "name": self.name,
             "description": self.config.description,
-            "instructions": self.instructions(variables) or None,
+            "instructions": self.instructions(variables, skills=skills) or None,
             "llm": backend,
             "tools": list(self.tools),
-            "skills": self._loaded_skills(self.skills),
-            "team": [self._build_subagent(sub, backend, variables) for sub in self.subagents] or None,
+            "skills": self._loaded_skills(skills),
+            "team": [self._build_subagent(sub, backend, variables, skills) for sub in self.subagents] or None,
             "mcp_servers": [_mcp_server(server, self.directory) for server in self.mcp_servers],
         }
+        if not self.skill_script_tools:
+            params["skill_script_tools"] = False
         if self.config.output_schema is not None:
             params["response_model"] = schema_model(self.config.output_schema)
         if self.config.max_turns is not None:
@@ -226,25 +249,35 @@ class Harness:
             params[key] = (params.get(key) or []) + list(value or []) if key in ADDED_FIELDS else value
         return Agent(**params)
 
-    def _build_subagent(self, sub: Subagent, parent: ChatBase, variables: Optional[Dict[str, Any]]) -> Agent:
-        """A team member, on a copy of the orchestrator's backend."""
+    def _build_subagent(
+        self, sub: Subagent, parent: ChatBase, variables: Optional[Dict[str, Any]], available: List[Skill]
+    ) -> Agent:
+        """A team member, on a copy of the orchestrator's backend, with its skills among ``available``."""
         where = f"subagents/{sub.name}"
         backend = _backend(sub.config.model, parent, where)
         _apply_settings(backend, sub.config.model_settings, where)
-        skills = [skill for skill in self.skills if skill.name in sub.config.skills]
+        skills = [skill for skill in available if skill.name in sub.config.skills]
         params: Dict[str, Any] = {}
         if sub.config.max_turns is not None:
             params["max_turns"] = sub.config.max_turns
+        if not self.skill_script_tools:
+            params["skill_script_tools"] = False
+        instructions = self._render(sub.config.instructions or "", variables, where, skills)
         return Agent(
             name=sub.name,
             description=sub.config.description,
-            instructions=_join(_render(sub.config.instructions or "", variables, where), self._inline_skills(skills))
-            or None,
+            instructions=_join(instructions, self._inline_skills(skills)) or None,
             llm=backend,
             tools=list(sub.tools),
             skills=self._loaded_skills(skills),
             **params,
         )
+
+    def _render(self, text: str, variables: Optional[Dict[str, Any]], where: str, skills: List[Skill]) -> str:
+        """``text`` rendered as the definition's ``templating`` says."""
+        if self.config.templating == "jinja":
+            return _render_jinja(text, {"skills": [skill.name for skill in skills], **(variables or {})}, where)
+        return _render(text, variables, where)
 
     def _inline_skills(self, skills: List[Skill]) -> str:
         """The full text of the skills, for the prompt."""
@@ -446,14 +479,36 @@ def _join(*parts: str) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+def _default_variables() -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    return {"date": now.strftime("%Y-%m-%d"), "datetime": now.isoformat(timespec="seconds")}
+
+
 def _render(text: str, variables: Optional[Dict[str, Any]], where: str) -> str:
     """``text`` with its ``{{ name }}`` replaced by ``variables``; every name must have a value."""
-    now = datetime.now(timezone.utc)
-    values = {"date": now.strftime("%Y-%m-%d"), "datetime": now.isoformat(timespec="seconds"), **(variables or {})}
+    values = {**_default_variables(), **(variables or {})}
     missing = sorted({name for name in _VARIABLE.findall(text) if name not in values})
     if missing:
         raise HarnessError(f"{where} uses {missing}: pass them in `variables`")
     return _VARIABLE.sub(lambda match: str(values[match.group(1)]), text)
+
+
+def _render_jinja(text: str, variables: Dict[str, Any], where: str) -> str:
+    """``text`` rendered as a Jinja template; an undefined variable is an error, as in plain mode."""
+    try:
+        import jinja2
+        from jinja2.sandbox import SandboxedEnvironment
+    except ImportError as e:
+        raise HarnessError(f"{where}: `templating: jinja` requires jinja2 (pip install jinja2)") from e
+    environment = SandboxedEnvironment(
+        undefined=jinja2.StrictUndefined, trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=False
+    )
+    try:
+        return environment.from_string(text).render({**_default_variables(), **variables}).strip()
+    except jinja2.UndefinedError as e:
+        raise HarnessError(f"{where}: {e.message}: pass it in `variables`") from e
+    except jinja2.TemplateError as e:
+        raise HarnessError(f"{where}: invalid template: {e}") from e
 
 
 def _backend(model: Optional[str], base: Optional[ChatBase], where: str) -> ChatBase:

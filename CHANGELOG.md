@@ -8,6 +8,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Harness, for agents whose skills depend on the user: `build_agent(only_skills=[...])` keeps the
+  harness skills of these names, for the agent and its subagents (an unknown name is an error);
+  `templating: jinja` in `harness.yaml` renders the prompt parts and the subagents' instructions as
+  Jinja templates (`{% if 'quote' in skills %}`), with `skills` (the names of the skills the agent
+  is built with) as a variable; requires the `gwenflow[harness]` extra. `- Skills: {script_tools: false}`
+  and `Agent(skill_script_tools=False)` leave the tools of the skills' `scripts/` to the application.
 - Harness: an agent described by files, with the key names of the Pydantic AI agent spec
   (`model`, `name`, `description`, `instructions`, `model_settings`, `capabilities`,
   `output_schema`, `metadata`); gwenflow adds `version`, `max_turns`, `guardrails`,
