@@ -205,9 +205,11 @@ class ResponseOpenAI(ChatBase):
         output_tokens = getattr(usage, "output_tokens", 0) or 0
         details: Dict[str, int] = {}
         cache_read_tokens = 0
+        cache_write_tokens = 0
         input_details = getattr(usage, "input_tokens_details", None)
         if input_details is not None:
             cache_read_tokens = getattr(input_details, "cached_tokens", 0) or 0
+            cache_write_tokens = getattr(input_details, "cache_write_tokens", 0) or 0
         output_details = getattr(usage, "output_tokens_details", None)
         if output_details is not None:
             reasoning = getattr(output_details, "reasoning_tokens", None)
@@ -217,6 +219,7 @@ class ResponseOpenAI(ChatBase):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=min(cache_write_tokens, max(input_tokens - cache_read_tokens, 0)),
             details=details,
         )
 

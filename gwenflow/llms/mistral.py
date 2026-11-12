@@ -220,9 +220,15 @@ class ChatMistral(ChatBase):
     def _get_usage(self, usage) -> Optional[RequestUsage]:
         if usage is None:
             return None
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        if isinstance(prompt_details, dict):
+            cache_read_tokens = prompt_details.get("cached_tokens") or 0
+        else:
+            cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
         return RequestUsage(
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            cache_read_tokens=cache_read_tokens,
         )
 
     def _format_response(self, response: str, response_format: Any = None) -> Any:
