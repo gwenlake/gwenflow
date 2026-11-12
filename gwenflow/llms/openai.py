@@ -453,14 +453,18 @@ class ChatOpenAI(ChatBase):
         if hasattr(completion.usage, "completion_tokens_details"):
             if completion.usage.completion_tokens_details:
                 details = completion.usage.completion_tokens_details.model_dump()
+        input_tokens = completion.usage.prompt_tokens or 0
         cache_read_tokens = 0
+        cache_write_tokens = 0
         prompt_details = getattr(completion.usage, "prompt_tokens_details", None)
         if prompt_details is not None:
             cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+            cache_write_tokens = getattr(prompt_details, "cache_write_tokens", 0) or 0
         return RequestUsage(
-            input_tokens=completion.usage.prompt_tokens,
+            input_tokens=input_tokens,
             output_tokens=completion.usage.completion_tokens,
             cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=min(cache_write_tokens, max(input_tokens - cache_read_tokens, 0)),
             details=details,
         )
 
