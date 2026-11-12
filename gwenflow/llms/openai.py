@@ -164,6 +164,32 @@ def _audio_delta_to_part(audio: Any) -> Optional[AudioContent]:
     return AudioContent(data=data, transcript=transcript, extra=extra)
 
 
+def _give_tool_calls_their_own_ids(tool_calls: List[ToolCall], messages: List[Message]) -> None:
+    """Give every tool call an id of its own in the conversation it answers, in place.
+
+    A tool result is matched to its call by id, by the API and by the
+    compaction (`DeduplicateReads` takes two results with one id for one
+    call's), yet some OpenAI-compatible servers send no id, or the same one on
+    every call (`call_1`, turn after turn). A call keeps the id the server gave
+    it unless that id is empty, already used in `messages` (by a call or a
+    result) or by an earlier call of the same response; it then gets a new one.
+    Stateless: the conversation sent to the model is what the id must be unique
+    in, so a reloaded history needs nothing more.
+    """
+    used: set = set()
+    for message in messages:
+        if getattr(message, "tool_call_id", None):
+            used.add(str(message.tool_call_id))
+        for call in getattr(message, "tool_calls", None) or []:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if call_id:
+                used.add(str(call_id))
+    for call in tool_calls:
+        if not call.id or call.id in used:
+            call.id = f"call_{uuid.uuid4().hex[:24]}"
+        used.add(call.id)
+
+
 def _accumulate_tool_call_deltas(
     deltas: Any,
     tool_calls: List[ToolCall],
@@ -522,7 +548,9 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        return self._parse_response(response)
+        model_response = self._parse_response(response)
+        _give_tool_calls_their_own_ids(model_response.tool_calls, messages_for_model)
+        return model_response
 
     @tracer.llm(name="LLM Async Invoke")
     async def ainvoke(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> ModelResponse:
@@ -536,7 +564,9 @@ class ChatOpenAI(ChatBase):
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
-        return self._parse_response(response)
+        model_response = self._parse_response(response)
+        _give_tool_calls_their_own_ids(model_response.tool_calls, messages_for_model)
+        return model_response
 
     @tracer.llm(name="LLM Stream")
     def stream(self, input: Union[str, List[Message], List[Dict[str, str]]]) -> Iterator[ModelResponse]:
@@ -552,6 +582,7 @@ class ChatOpenAI(ChatBase):
 
             _full_tool_calls: List[ToolCall] = []
             _tool_calls_by_index: Dict[int, ToolCall] = {}
+            tool_calls_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             for chunk in completion:
@@ -587,6 +618,11 @@ class ChatOpenAI(ChatBase):
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
 
+                    finish_reason = chunk.choices[0].finish_reason
+                    if finish_reason == "tool_calls" and _full_tool_calls:
+                        _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                        tool_calls_sent = True
+
                     has_streamable = (
                         response.content
                         or response.thinking
@@ -594,13 +630,20 @@ class ChatOpenAI(ChatBase):
                     )
                     if has_streamable:
                         yield response
-                    elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
+                    elif len(response.tool_calls) > 0 and finish_reason == "tool_calls":
                         yield response
 
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
                         yield response
+
+            # A server that ends the stream otherwise than on `finish_reason:
+            # "tool_calls"` (`stop`, or no reason at all, as some local engines
+            # do) still asked for these calls: they must not be lost.
+            if _full_tool_calls and not tool_calls_sent:
+                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                yield ModelResponse(parts=list(_full_tool_calls))
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
@@ -619,6 +662,7 @@ class ChatOpenAI(ChatBase):
 
             _full_tool_calls: List[ToolCall] = []
             _tool_calls_by_index: Dict[int, ToolCall] = {}
+            tool_calls_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             async for chunk in completion:
@@ -654,6 +698,11 @@ class ChatOpenAI(ChatBase):
                     if _full_tool_calls:
                         response.parts.extend(_full_tool_calls)
 
+                    finish_reason = chunk.choices[0].finish_reason
+                    if finish_reason == "tool_calls" and _full_tool_calls:
+                        _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                        tool_calls_sent = True
+
                     has_streamable = (
                         response.content
                         or response.thinking
@@ -661,13 +710,20 @@ class ChatOpenAI(ChatBase):
                     )
                     if has_streamable:
                         yield response
-                    elif len(response.tool_calls) > 0 and chunk.choices[0].finish_reason == "tool_calls":
+                    elif len(response.tool_calls) > 0 and finish_reason == "tool_calls":
                         yield response
 
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
                         yield response
+
+            # A server that ends the stream otherwise than on `finish_reason:
+            # "tool_calls"` (`stop`, or no reason at all, as some local engines
+            # do) still asked for these calls: they must not be lost.
+            if _full_tool_calls and not tool_calls_sent:
+                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                yield ModelResponse(parts=list(_full_tool_calls))
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
