@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The Gwenlake API is served by Atlas: `ChatGwenlake` defaults to
+  `https://atlas.gwenlake.com/api/v1`, and `GwenlakeEmbeddings` / `GwenlakeReranker` (`gwenflow.api.Api`)
+  to `https://atlas.gwenlake.com/api`, in place of the former gateway. A `base_url` given
+  explicitly is untouched.
+
 ### Added
 
 - Harness, for agents whose skills depend on the user: `build_agent(only_skills=[...])` keeps the
