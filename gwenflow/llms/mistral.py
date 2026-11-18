@@ -24,7 +24,7 @@ from mistralai.client.models import (
 )
 from pydantic import BaseModel
 
-from gwenflow.llms.base import ChatBase
+from gwenflow.llms.base import ChatBase, normalize_finish_reason
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.types import (
@@ -284,6 +284,7 @@ class ChatMistral(ChatBase):
 
             if choice.finish_reason == "tool_calls":
                 finish_reason = "tool_calls"
+            finish_reason = normalize_finish_reason(choice.finish_reason) or finish_reason
 
         model_response = ModelResponse(
             parts=parts,
@@ -364,6 +365,13 @@ class ChatMistral(ChatBase):
             response.parts.extend(full_tool_calls)
             response.finish_reason = "tool_calls"
 
+        cut_short = normalize_finish_reason(finish_reason)
+        if cut_short:
+            # Cut short: hand over the calls received so far, the agent reports them as truncated.
+            if full_tool_calls:
+                response.parts.extend(full_tool_calls)
+            response.finish_reason = cut_short
+
         if chunk.usage is not None:
             response.usage = self._get_usage(chunk.usage)
 
@@ -377,7 +385,7 @@ class ChatMistral(ChatBase):
             full_tool_calls: List[ToolCall] = []
             for event in events:
                 response = self._process_stream_chunk(event, full_tool_calls)
-                if response.parts or response.usage:
+                if response.parts or response.usage or response.finish_reason:
                     yield response
         except Exception as e:
             raise RuntimeError(f"Error in calling mistral API: {e}") from e
@@ -390,7 +398,7 @@ class ChatMistral(ChatBase):
             full_tool_calls: List[ToolCall] = []
             async for event in events:
                 response = self._process_stream_chunk(event, full_tool_calls)
-                if response.parts or response.usage:
+                if response.parts or response.usage or response.finish_reason:
                     yield response
         except Exception as e:
             raise RuntimeError(f"Error in calling mistral API: {e}") from e

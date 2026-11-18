@@ -7,13 +7,23 @@ from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from gwenflow.llms.base import ChatBase
+from gwenflow.llms.base import ChatBase, normalize_finish_reason
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
 _FAILURE_EVENTS = ("response.failed", "response.incomplete", "error")
+
+
+def _cut_short_reason(response: Any) -> Optional[str]:
+    """Why a response was left incomplete, when it still holds a usable partial answer.
+
+    `"length"` (output token limit) or `"content_filter"`; None otherwise.
+    """
+    if getattr(response, "status", None) != "incomplete":
+        return None
+    return normalize_finish_reason(getattr(getattr(response, "incomplete_details", None), "reason", None))
 
 
 def _failure_message(event_type: str, event: Any) -> str:
@@ -238,7 +248,8 @@ class ResponseOpenAI(ChatBase):
 
     def _parse_response(self, response: Any) -> ModelResponse:
         status = getattr(response, "status", None)
-        if status in ("failed", "incomplete"):
+        cut_short = _cut_short_reason(response)
+        if status in ("failed", "incomplete") and not cut_short:
             raise RuntimeError(_failure_message(f"response.{status}", response))
 
         parts: List[Any] = []
@@ -273,7 +284,7 @@ class ResponseOpenAI(ChatBase):
 
         model_response = ModelResponse(
             parts=parts,
-            finish_reason=finish_reason,
+            finish_reason=cut_short or finish_reason,
             usage=self._get_usage(getattr(response, "usage", None)),
         )
 
@@ -338,14 +349,17 @@ class ResponseOpenAI(ChatBase):
                         if tc is not None:
                             tc.arguments += getattr(event, "delta", "") or ""
 
-                    elif event_type == "response.completed":
+                    elif event_type == "response.completed" or (
+                        event_type == "response.incomplete" and _cut_short_reason(getattr(event, "response", None))
+                    ):
                         final = getattr(event, "response", None)
                         if tool_calls_by_index:
                             response.parts.extend(tool_calls_by_index.values())
                             response.finish_reason = "tool_calls"
+                        response.finish_reason = _cut_short_reason(final) or response.finish_reason
                         if final is not None:
                             response.usage = self._get_usage(getattr(final, "usage", None))
-                        if response.parts or response.usage:
+                        if response.parts or response.usage or response.finish_reason:
                             yield response
 
                     elif event_type in _FAILURE_EVENTS:
@@ -392,14 +406,17 @@ class ResponseOpenAI(ChatBase):
                         if tc is not None:
                             tc.arguments += getattr(event, "delta", "") or ""
 
-                    elif event_type == "response.completed":
+                    elif event_type == "response.completed" or (
+                        event_type == "response.incomplete" and _cut_short_reason(getattr(event, "response", None))
+                    ):
                         final = getattr(event, "response", None)
                         if tool_calls_by_index:
                             response.parts.extend(tool_calls_by_index.values())
                             response.finish_reason = "tool_calls"
+                        response.finish_reason = _cut_short_reason(final) or response.finish_reason
                         if final is not None:
                             response.usage = self._get_usage(getattr(final, "usage", None))
-                        if response.parts or response.usage:
+                        if response.parts or response.usage or response.finish_reason:
                             yield response
 
                     elif event_type in _FAILURE_EVENTS:
