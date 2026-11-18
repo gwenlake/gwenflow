@@ -15,6 +15,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `finish_reason="length"` and `"content_filter"`: a run whose final answer was cut short by
+  the model's output token limit or by the provider's content filter ends with that reason
+  instead of `"stop"`, and `content` keeps what was produced. Every client reports it on the
+  `ModelResponse` (OpenAI and the OpenAI-compatible clients, Mistral, Anthropic, Google, the
+  Responses API; on the last chunk when streaming), through `normalize_finish_reason`; other
+  reasons are unchanged. A tool call cut by the limit is not run: the model gets a tool result
+  saying so and can make the call again; when its calls are cut two turns in a row
+  (`MAX_CUT_SHORT_TOOL_TURNS`), the run stops with `"length"` and no `content` instead of
+  retrying until `max_turns`. A structured answer cut short still gets the
+  validation retries. A delegated agent's answer cut short is flagged as such to the orchestrator.
+- `ToolReturn(return_value, metadata)`: a tool returns it when the application needs more than
+  the text the model reads, the sources a search cited for instance. The model gets
+  `return_value` (cast to text as before); `metadata` is never sent to it and reaches the
+  application on `ToolResponse.metadata`, the tool message (`Message.extra["tool_metadata"]`,
+  `TOOL_METADATA_KEY`, so in `AgentResponse.messages` and the history) and
+  `AgentEventToolCompleted.tool_metadata`. `BaseTool.run()` / `arun()` return the `ToolReturn`
+  (its value cast to text) for such a tool and text for any other, as before.
+- `AgentEventToolCompleted` now carries the `tool_name` and `tool_args` of the call it answers;
+  both were left empty.
 - Harness, for agents whose skills depend on the user: `build_agent(only_skills=[...])` keeps the
   harness skills of these names, for the agent and its subagents (an unknown name is an error);
   `templating: jinja` in `harness.yaml` renders the prompt parts and the subagents' instructions as
@@ -87,6 +106,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ResponseOpenAI` raised on a response left `incomplete` by `max_output_tokens` or the content
+  filter, losing the partial answer; it now returns it with `finish_reason="length"` /
+  `"content_filter"`. An `incomplete` response for any other reason still raises.
 - `ChatOpenAI.stream` / `astream` lost the tool calls of a turn the server did not end
   on `finish_reason: "tool_calls"`: a server that ends it on `stop`, or with no reason
   at all (several local engines), got its calls dropped and the run ended without

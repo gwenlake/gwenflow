@@ -13,7 +13,7 @@ from this package as before; the dependency lands on first attribute access.
 import importlib
 from typing import TYPE_CHECKING, Any
 
-from gwenflow.tools.tool import BaseTool, Tool
+from gwenflow.tools.tool import BaseTool, Tool, ToolReturn
 
 if TYPE_CHECKING:
     from gwenflow.tools.clinicaltrials import ClinicalTrialsTool
@@ -97,6 +97,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "BaseTool",
     "Tool",
+    "ToolReturn",
     "ShellTool",
     "PythonCodeTool",
     "DockerCodeTool",
