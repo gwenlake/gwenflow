@@ -16,7 +16,7 @@ import threading
 import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from pydantic import TypeAdapter
 from temporalio import activity, workflow
@@ -35,7 +35,7 @@ from gwenflow.durability.flows import FLOW_NODE_ACTIVITY, flow_node, node_activi
 from gwenflow.flows.flows import Flow, Node
 from gwenflow.memory.long_term.toolset import FlushReport, MemoryState
 from gwenflow.stores.files.base import MemoryFile
-from gwenflow.tools import BaseTool
+from gwenflow.tools import BaseTool, ToolReturn
 from gwenflow.tools.mcp import _MCPTool
 
 _MEMORY_STATE = TypeAdapter(MemoryState)
@@ -149,15 +149,18 @@ class TemporalDurability:
             return _RESPONSE.dump_python(response, mode="json")
 
         @activity.defn(name=self._activity_name("call_tool"))
-        async def call_tool(request: Dict[str, Any]) -> Optional[str]:
+        async def call_tool(request: Dict[str, Any]) -> Union[str, Dict[str, Any], None]:
             server = request.get("server")
             if server is None:
                 tool = {t.name: t for t in durability._target.tools}[request["name"]]
             else:
                 tool = await asyncio.to_thread(durability._mcp_tool, server, request["name"])
             # A single attempt: retries belong to Temporal, not to tenacity inside the activity.
-            result = await asyncio.to_thread(tool._run, **request["arguments"])
-            return tool._cast_response_to_str(result)
+            result = tool._cast_result(await asyncio.to_thread(tool._run, **request["arguments"]))
+            if isinstance(result, ToolReturn):
+                # Its metadata must be serializable by the workflow's data converter.
+                return {"return_value": result.return_value, "metadata": result.metadata}
+            return result
 
         @activity.defn(name=self._activity_name("compact_history"))
         async def compact_history(request: Dict[str, Any]) -> Dict[str, Any]:

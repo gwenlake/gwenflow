@@ -19,6 +19,9 @@ from gwenflow.types.usage import AgentUsage, RequestUsage
 from gwenflow.utils.durable import new_id
 from gwenflow.utils.utils import now_utc
 
+TOOL_METADATA_KEY = "tool_metadata"
+"""Key of `Message.extra` holding the metadata of a tool result (see `ToolReturn`)."""
+
 
 @dataclass
 class ToolResponse:
@@ -26,8 +29,9 @@ class ToolResponse:
 
     `tool_call_id` matches the originating `ToolCall.id` so the LLM can pair
     requests with responses. `content` is the stringified return value sent
-    back to the model; `to_message()` wraps it as a `tool`-role `Message`
-    ready to append to the conversation history.
+    back to the model; `metadata` is what a tool returned for the application
+    alone (see `ToolReturn`), never sent to the model. `to_message()` wraps
+    both as a `tool`-role `Message` ready to append to the conversation history.
     """
 
     tool_name: str
@@ -36,16 +40,20 @@ class ToolResponse:
     tool_call_error: bool | None = None
     content: str | None = None
     created_at: datetime = field(default_factory=now_utc)
+    metadata: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_message(self) -> Message:
-        return Message(
+        message = Message(
             role="tool",
             tool_call_id=self.tool_call_id,
             content=self.content,
         )
+        if self.metadata is not None:
+            message.extra[TOOL_METADATA_KEY] = self.metadata
+        return message
 
 
 @dataclass
@@ -242,6 +250,8 @@ class AgentEventToolCompleted(BaseAgentEvent):
     tool_call_id: str = field(default_factory=new_id)
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
+    tool_metadata: Any = None
+    """What the tool returned for the application alone (see `ToolReturn`)."""
 
 
 @dataclass(kw_only=True)
@@ -306,6 +316,10 @@ class AgentResponse:
     run paused on tools declared with `requires_approval=True`: the calls are
     listed in `pending_approvals` and `content` holds the text of that turn.
     A stream closed or cancelled before the run ended gets "interrupted".
+    A final answer cut short gets "length" (the model's output token limit)
+    or "content_filter" (the provider's filter); `content` holds what was
+    produced. A run whose tool calls the limit cut two turns in a row also
+    gets "length", with no `content`.
     """
 
     agent_id: str

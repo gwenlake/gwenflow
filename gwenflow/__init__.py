@@ -27,7 +27,7 @@ from gwenflow.llms import (
 from gwenflow.logger import logger, set_log_level_to_debug
 from gwenflow.retriever import Retriever
 from gwenflow.telemetry import Telemetry
-from gwenflow.tools import BaseTool, Tool
+from gwenflow.tools import BaseTool, Tool, ToolReturn
 from gwenflow.types import Document, Message
 
 if TYPE_CHECKING:
@@ -78,6 +78,7 @@ __all__ = [
     "Harness",
     "BaseTool",
     "Tool",
+    "ToolReturn",
     "Flow",
     "FlowRunner",
     "AutoFlow",

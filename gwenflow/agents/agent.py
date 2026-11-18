@@ -39,11 +39,11 @@ from gwenflow.agents.subagents import (
     spawn_agent_parameters,
 )
 from gwenflow.llms import ChatBase, ChatOpenAI
-from gwenflow.llms.base import CONTEXT_SAFETY_RATIO
+from gwenflow.llms.base import CONTEXT_SAFETY_RATIO, FINISH_CONTENT_FILTER, FINISH_LENGTH
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
 from gwenflow.memory.chat_memory_buffer import DEFAULT_MAX_FRACTION
-from gwenflow.memory.compaction import PINNED_KEY, pin
+from gwenflow.memory.compaction import PINNED_KEY, calls_by_id, pin
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
@@ -56,7 +56,7 @@ from gwenflow.telemetry._semconv import (
     SUBAGENT_STRUCTURED,
     SUBAGENT_TOOLS,
 )
-from gwenflow.tools import BaseTool, MCPServer, Tool
+from gwenflow.tools import BaseTool, MCPServer, Tool, ToolReturn
 from gwenflow.types import (
     AgentEventCompleted,
     AgentEventContent,
@@ -81,6 +81,7 @@ from gwenflow.types import (
     ToolDenied,
     ToolResponse,
 )
+from gwenflow.types.response import TOOL_METADATA_KEY
 from gwenflow.utils import extract_json_str
 from gwenflow.utils.durable import in_sandbox, in_workflow, new_id
 from gwenflow.utils.tokens import keep_tokens_from_text
@@ -153,6 +154,38 @@ MAX_VALIDATION_RETRIES = 3
 """How many times an invalid structured (`response_model`) answer is sent
 back to the model for correction before giving up (parsed=None, raw
 content kept)."""
+
+CUT_SHORT_REASONS = (FINISH_LENGTH, FINISH_CONTENT_FILTER)
+"""Finish reasons of a model turn whose answer was cut short; a run whose final
+answer was cut short ends with the same reason instead of "stop"."""
+
+MAX_CUT_SHORT_TOOL_TURNS = 2
+"""Consecutive turns whose tool calls the output token limit cut before the run
+gives up with `finish_reason="length"`: one retry covers a model that can
+shorten its arguments, a second cut means the limit is too low for the task."""
+
+CUT_SHORT_TOOL_CALL = (
+    "The call to `{name}` was cut off by the output token limit before its arguments were complete, "
+    "so it was not run. Make the call again with shorter arguments, or split the work into several calls."
+)
+
+
+def _event_args(arguments: Any) -> Dict[str, Any]:
+    """Tool-call arguments for an event payload, as `Agent._parse_tool_args` gives them."""
+    if isinstance(arguments, dict):
+        return arguments
+    return {"raw": arguments} if isinstance(arguments, str) and arguments.strip() else {}
+
+
+def _complete_arguments(arguments: Any) -> bool:
+    """Whether tool-call arguments are whole: a dict, nothing, or a JSON object."""
+    if not isinstance(arguments, str) or not arguments.strip():
+        return True
+    try:
+        return isinstance(json.loads(arguments), dict)
+    except json.JSONDecodeError:
+        return False
+
 
 ToolApprovals = Dict[str, Union[bool, ToolDenied]]
 """The user's decisions on the tool calls a run paused on, by tool call id:
@@ -463,6 +496,14 @@ class Agent:
             return response.parsed.model_dump_json()
         if isinstance(response.parsed, (dict, list)):
             return json.dumps(response.parsed, ensure_ascii=False)
+        if response.finish_reason == FINISH_LENGTH:
+            return (response.content or "") + (
+                f"\n\n[The '{agent_name}' agent's answer was cut off by the output token limit: it is incomplete.]"
+            )
+        if response.finish_reason == FINISH_CONTENT_FILTER:
+            return (response.content or "") + (
+                f"\n\n[The '{agent_name}' agent's answer was stopped by the provider's content filter.]"
+            )
         return response.content or ""
 
     def _build_spawn_tools(self) -> List[BaseTool]:
@@ -1378,6 +1419,9 @@ class Agent:
             tool_execution.content = f"Error executing tool '{tool_call.name}': {e}"
             return tool_execution.to_message()
 
+        if isinstance(result, ToolReturn):
+            tool_execution.metadata = result.metadata
+            result = result.return_value
         if result is None:
             tool_execution.content = ""
         elif isinstance(result, str):
@@ -1403,6 +1447,9 @@ class Agent:
             logger.error(f"Error executing tool '{tool_call.name}': {e}")
             tool_execution.content = f"Error executing tool '{tool_call.name}': {getattr(e, 'cause', None) or e}"
             return tool_execution.to_message()
+        if isinstance(result, ToolReturn):
+            tool_execution.metadata = result.metadata
+            result = result.return_value
         tool_execution.content = self._set_aside_long_output(tool_call.name, result or "")
         return tool_execution.to_message()
 
@@ -1477,6 +1524,35 @@ class Agent:
         gated = {tool.name for tool in self.get_all_tools() if tool.requires_approval}
         return [t for t in tool_calls if t.name not in gated], [t for t in tool_calls if t.name in gated]
 
+    def _settle_cut_short_calls(
+        self, tool_calls: List[ToolCall], cut_short: Optional[str], agent_response: AgentResponse
+    ) -> tuple[List[ToolCall], List[AgentResponseEvent]]:
+        """Answer, without running them, the tool calls the output token limit cut.
+
+        Their arguments are incomplete JSON: the model is told the call was cut
+        and can make it again with shorter arguments. Returns the other calls
+        and the events of the answered ones (already in `agent_response`).
+        """
+        if cut_short != FINISH_LENGTH:
+            return tool_calls, []
+        cut = [t for t in tool_calls if not _complete_arguments(t.arguments)]
+        if not cut:
+            return tool_calls, []
+        logger.warning(f"Tool call(s) cut by the output token limit: {[t.name for t in cut]}")
+        messages = [
+            ToolResponse(
+                tool_call_id=t.id,
+                tool_name=t.name,
+                tool_call_error=True,
+                content=CUT_SHORT_TOOL_CALL.format(name=t.name),
+            ).to_message()
+            for t in cut
+        ]
+        events = list(self._start_tool_calls(cut, agent_response))
+        events += list(self._record_tool_results(messages, agent_response))
+        cut_ids = {id(t) for t in cut}
+        return [t for t in tool_calls if id(t) not in cut_ids], events
+
     def _decide_pending(
         self, approvals: Optional[ToolApprovals], resuming: bool = True
     ) -> tuple[List[ToolCall], List[Message]]:
@@ -1542,14 +1618,29 @@ class Agent:
             agent_response.events.append(event)
             yield event
 
+    def _latest_tool_calls(self) -> Dict[str, tuple[str, Any]]:
+        """`(name, arguments)` by id of the calls of the latest assistant turn that made some."""
+        for message in reversed(self.history.messages):
+            if message.role == "assistant" and message.tool_calls:
+                return calls_by_id([message])
+        return {}
+
     def _record_tool_results(
         self, tool_messages: List[Message], agent_response: AgentResponse
     ) -> Iterator[AgentResponseEvent]:
+        calls = self._latest_tool_calls()
         for m in tool_messages:
             self.history.add_message(m)
             agent_response.messages.append(m)
+            name, arguments = calls.get(str(m.tool_call_id), (None, None))
             event = AgentEventToolCompleted(
-                agent_id=self.id, run_id=agent_response.run_id, tool_call_id=m.tool_call_id, content=m.content
+                agent_id=self.id,
+                run_id=agent_response.run_id,
+                tool_call_id=m.tool_call_id,
+                tool_name=name,
+                tool_args=_event_args(arguments),
+                tool_metadata=m.extra.get(TOOL_METADATA_KEY),
+                content=m.content,
             )
             agent_response.events.append(event)
             yield event
@@ -1634,11 +1725,15 @@ class Agent:
     def _can_continue(self, agent_response: AgentResponse) -> bool:
         return not agent_response.pending_approvals and not self._stop_requested.is_set()
 
-    def _end_reason(self, completed: bool, paused: bool) -> str:
+    def _end_reason(self, completed: bool, paused: bool, cut_short: Optional[str] = None, cut_off: bool = False) -> str:
         if completed:
-            return "stop"
+            # The final answer was cut by the output token limit or the content filter.
+            return cut_short or "stop"
         if paused:
             return "approval_required"
+        if cut_off:
+            # The model kept writing tool calls longer than its output token limit.
+            return FINISH_LENGTH
         return "interrupted" if self._stop_requested.is_set() else "max_turns"
 
     async def _arun_tool_round(
@@ -1769,6 +1864,9 @@ class Agent:
         force_structured = False
         completed = False
         response = None
+        cut_short = None
+        cut_turns = 0
+        cut_off = False
 
         while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
@@ -1782,6 +1880,7 @@ class Agent:
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
+            cut_short = response.finish_reason if response.finish_reason in CUT_SHORT_REASONS else None
             self._absorb_answer_tool_call(response)
 
             # usage
@@ -1841,7 +1940,9 @@ class Agent:
                 break
 
             if response.tool_calls and self.get_all_tools():
-                to_run, to_approve = self._split_tool_calls(response.tool_calls)
+                calls, cut_events = self._settle_cut_short_calls(response.tool_calls, cut_short, agent_response)
+                cut_turns = cut_turns + 1 if cut_events else 0
+                to_run, to_approve = self._split_tool_calls(calls)
                 for _ in self._run_tool_round(to_run, agent_response):
                     pass
                 for _ in self._request_approvals(to_approve, agent_response):
@@ -1854,12 +1955,21 @@ class Agent:
             if agent_response.pending_approvals:
                 break
 
+            if cut_turns >= MAX_CUT_SHORT_TOOL_TURNS:
+                cut_off = True
+                logger.warning(
+                    f"Agent stopped: its tool calls were cut by the output token limit {cut_turns} turns in a row."
+                )
+                break
+
         paused = bool(agent_response.pending_approvals)
         if paused:
             agent_response.content = (response.content or None) if response is not None else None
-        elif not completed:
+        elif not completed and not cut_off:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
+        elif not completed:
+            agent_response.content = None
 
         agent_response.events.append(
             AgentEventCompleted(
@@ -1868,7 +1978,7 @@ class Agent:
             )
         )
 
-        self._finish_run(agent_response, self._end_reason(completed, paused))
+        self._finish_run(agent_response, self._end_reason(completed, paused, cut_short, cut_off))
 
         return agent_response
 
@@ -1928,6 +2038,9 @@ class Agent:
         force_structured = False
         completed = False
         response = None
+        cut_short = None
+        cut_turns = 0
+        cut_off = False
 
         while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
@@ -1939,6 +2052,7 @@ class Agent:
             messages_for_model = [m.to_dict() for m in window]
 
             response = await self.llm.ainvoke(input=messages_for_model)
+            cut_short = response.finish_reason if response.finish_reason in CUT_SHORT_REASONS else None
             self._absorb_answer_tool_call(response)
 
             # usage
@@ -1995,7 +2109,9 @@ class Agent:
                 break
 
             if response.tool_calls and self.get_all_tools():
-                to_run, to_approve = self._split_tool_calls(response.tool_calls)
+                calls, cut_events = self._settle_cut_short_calls(response.tool_calls, cut_short, agent_response)
+                cut_turns = cut_turns + 1 if cut_events else 0
+                to_run, to_approve = self._split_tool_calls(calls)
                 async for _ in self._arun_tool_round(to_run, agent_response):
                     pass
                 for _ in self._request_approvals(to_approve, agent_response):
@@ -2008,12 +2124,21 @@ class Agent:
             if agent_response.pending_approvals:
                 break
 
+            if cut_turns >= MAX_CUT_SHORT_TOOL_TURNS:
+                cut_off = True
+                logger.warning(
+                    f"Agent stopped: its tool calls were cut by the output token limit {cut_turns} turns in a row."
+                )
+                break
+
         paused = bool(agent_response.pending_approvals)
         if paused:
             agent_response.content = (response.content or None) if response is not None else None
-        elif not completed:
+        elif not completed and not cut_off:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
+        elif not completed:
+            agent_response.content = None
 
         agent_response.events.append(
             AgentEventCompleted(
@@ -2022,7 +2147,7 @@ class Agent:
             )
         )
 
-        self._finish_run(agent_response, self._end_reason(completed, paused))
+        self._finish_run(agent_response, self._end_reason(completed, paused, cut_short, cut_off))
         if in_workflow() and self.durability is not None:
             await self.durability.after_run(self)
 
@@ -2090,6 +2215,9 @@ class Agent:
         force_structured = False
         completed = False
         full_content = ""
+        cut_short = None
+        cut_turns = 0
+        cut_off = False
 
         while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
@@ -2105,6 +2233,7 @@ class Agent:
             final_tool_calls: List[ToolCall] = []
             turn_usage = RequestUsage()
             turn_response = ModelResponse()
+            cut_short = None
 
             for chunk in self.llm.stream(input=messages_for_model):
                 if chunk.usage:
@@ -2131,6 +2260,9 @@ class Agent:
 
                 if chunk.tool_calls:
                     final_tool_calls = chunk.tool_calls
+
+                if chunk.finish_reason in CUT_SHORT_REASONS:
+                    cut_short = chunk.finish_reason
 
                 turn_response.parts.extend(chunk.parts)
 
@@ -2175,6 +2307,9 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
+                final_tool_calls, events = self._settle_cut_short_calls(final_tool_calls, cut_short, agent_response)
+                cut_turns = cut_turns + 1 if events else 0
+                yield from events
                 to_run, to_approve = self._split_tool_calls(final_tool_calls)
                 yield from self._run_tool_round(to_run, agent_response)
                 yield from self._request_approvals(to_approve, agent_response)
@@ -2186,14 +2321,23 @@ class Agent:
             if agent_response.pending_approvals:
                 break
 
+            if cut_turns >= MAX_CUT_SHORT_TOOL_TURNS:
+                cut_off = True
+                logger.warning(
+                    f"Agent stopped: its tool calls were cut by the output token limit {cut_turns} turns in a row."
+                )
+                break
+
         paused = bool(agent_response.pending_approvals)
         if paused:
             agent_response.content = full_content or None
-        elif not completed:
+        elif not completed and not cut_off:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
+        elif not completed:
+            agent_response.content = None
 
-        self._finish_run(agent_response, self._end_reason(completed, paused))
+        self._finish_run(agent_response, self._end_reason(completed, paused, cut_short, cut_off))
         tracer.record_agent_result(agent_response)
         event = AgentEventCompleted(
             agent_id=self.id,
@@ -2268,6 +2412,9 @@ class Agent:
         force_structured = False
         completed = False
         full_content = ""
+        cut_short = None
+        cut_turns = 0
+        cut_off = False
 
         while num_turns_available > 0 and self._can_continue(agent_response):
             num_turns_available -= 1
@@ -2283,6 +2430,7 @@ class Agent:
             final_tool_calls: List[ToolCall] = []
             turn_usage = RequestUsage()
             turn_response = ModelResponse()
+            cut_short = None
 
             async for chunk in self.llm.astream(input=messages_for_model):
                 if chunk.usage:
@@ -2309,6 +2457,9 @@ class Agent:
 
                 if chunk.tool_calls:
                     final_tool_calls = chunk.tool_calls
+
+                if chunk.finish_reason in CUT_SHORT_REASONS:
+                    cut_short = chunk.finish_reason
 
                 turn_response.parts.extend(chunk.parts)
 
@@ -2353,6 +2504,10 @@ class Agent:
                 break
 
             if final_tool_calls and self.get_all_tools():
+                final_tool_calls, events = self._settle_cut_short_calls(final_tool_calls, cut_short, agent_response)
+                cut_turns = cut_turns + 1 if events else 0
+                for event in events:
+                    yield event
                 to_run, to_approve = self._split_tool_calls(final_tool_calls)
                 async for event in self._arun_tool_round(to_run, agent_response):
                     yield event
@@ -2366,14 +2521,23 @@ class Agent:
             if agent_response.pending_approvals:
                 break
 
+            if cut_turns >= MAX_CUT_SHORT_TOOL_TURNS:
+                cut_off = True
+                logger.warning(
+                    f"Agent stopped: its tool calls were cut by the output token limit {cut_turns} turns in a row."
+                )
+                break
+
         paused = bool(agent_response.pending_approvals)
         if paused:
             agent_response.content = full_content or None
-        elif not completed:
+        elif not completed and not cut_off:
             agent_response.content = None
             logger.warning(f"Agent stopped after max_turns={self.max_turns} without a final answer.")
+        elif not completed:
+            agent_response.content = None
 
-        self._finish_run(agent_response, self._end_reason(completed, paused))
+        self._finish_run(agent_response, self._end_reason(completed, paused, cut_short, cut_off))
         tracer.record_agent_result(agent_response)
         event = AgentEventCompleted(
             agent_id=self.id,
