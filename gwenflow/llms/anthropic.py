@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterator, List, Optional, Type, Union
 import anthropic
 from pydantic import BaseModel
 
-from gwenflow.llms.base import ChatBase
+from gwenflow.llms.base import ChatBase, normalize_finish_reason
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.types import (
@@ -366,6 +366,7 @@ class ChatAnthropic(ChatBase):
 
         if response.stop_reason == "tool_use":
             model_response.finish_reason = "tool_calls"
+        model_response.finish_reason = normalize_finish_reason(response.stop_reason) or model_response.finish_reason
 
         if self.response_format:
             model_response.parsed = self._format_response(model_response.text, response_format=self.response_format)
@@ -460,11 +461,14 @@ class ChatAnthropic(ChatBase):
                             yield response
 
                     elif event.type == "message_delta":
-                        if event.delta.stop_reason == "tool_use" and _full_tool_calls:
+                        cut_short = normalize_finish_reason(event.delta.stop_reason)
+                        if (event.delta.stop_reason == "tool_use" or cut_short) and _full_tool_calls:
                             for tc in _full_tool_calls.values():
                                 response.parts.append(ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments))
-                            response.finish_reason = "tool_calls"
+                            response.finish_reason = cut_short or "tool_calls"
                             yield response
+                        elif cut_short:
+                            response.finish_reason = cut_short
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
                             response.usage = RequestUsage(
@@ -473,6 +477,8 @@ class ChatAnthropic(ChatBase):
                                 cache_read_tokens=_cache_read_tokens,
                                 cache_write_tokens=_cache_write_tokens,
                             )
+                            yield response
+                        elif cut_short and not response.parts:
                             yield response
 
         except Exception as e:
@@ -534,11 +540,14 @@ class ChatAnthropic(ChatBase):
                             yield response
 
                     elif event.type == "message_delta":
-                        if event.delta.stop_reason == "tool_use" and _full_tool_calls:
+                        cut_short = normalize_finish_reason(event.delta.stop_reason)
+                        if (event.delta.stop_reason == "tool_use" or cut_short) and _full_tool_calls:
                             for tc in _full_tool_calls.values():
                                 response.parts.append(ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments))
-                            response.finish_reason = "tool_calls"
+                            response.finish_reason = cut_short or "tool_calls"
                             yield response
+                        elif cut_short:
+                            response.finish_reason = cut_short
                         output_tokens = getattr(event.usage, "output_tokens", 0) or 0
                         if output_tokens:
                             response.usage = RequestUsage(
@@ -547,6 +556,8 @@ class ChatAnthropic(ChatBase):
                                 cache_read_tokens=_cache_read_tokens,
                                 cache_write_tokens=_cache_write_tokens,
                             )
+                            yield response
+                        elif cut_short and not response.parts:
                             yield response
 
         except Exception as e:

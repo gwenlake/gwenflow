@@ -24,6 +24,42 @@ _warned_unknown_models: set[str] = set()
 _MODELS_LOWER: dict[str, ModelInfo] = {key.lower(): info for key, info in MODELS.items()}
 
 
+FINISH_LENGTH = "length"
+FINISH_CONTENT_FILTER = "content_filter"
+
+# Lowercased provider stop reasons (OpenAI and compatible servers, Mistral,
+# Anthropic, Google, OpenAI Responses) that mean the answer was cut short.
+_LENGTH_REASONS = {"length", "model_length", "max_tokens", "max_output_tokens", "model_context_window_exceeded"}
+_CONTENT_FILTER_REASONS = {
+    "content_filter",
+    "refusal",
+    "safety",
+    "recitation",
+    "blocklist",
+    "prohibited_content",
+    "spii",
+    "image_safety",
+}
+
+
+def normalize_finish_reason(reason: Any) -> Optional[str]:
+    """Normalize a provider's stop reason that means the answer was cut short.
+
+    Returns `"length"` or `"content_filter"`, or None for any other reason
+    (normal stop, tool calls, unknown). Accepts strings and provider enums
+    (`FinishReason.MAX_TOKENS`).
+    """
+    if reason is None:
+        return None
+    name = getattr(reason, "name", None) or getattr(reason, "value", None) or reason
+    name = str(name).rsplit(".", 1)[-1].lower()
+    if name in _LENGTH_REASONS:
+        return FINISH_LENGTH
+    if name in _CONTENT_FILTER_REASONS:
+        return FINISH_CONTENT_FILTER
+    return None
+
+
 def normalize_model_name(model: str) -> str:
     """Lowercase a model id and strip any provider / organisation prefix.
 
