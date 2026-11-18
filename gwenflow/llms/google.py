@@ -21,7 +21,7 @@ from google import genai
 from google.genai import types as gt
 from pydantic import BaseModel
 
-from gwenflow.llms.base import ChatBase
+from gwenflow.llms.base import ChatBase, normalize_finish_reason
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
 from gwenflow.types import (
@@ -334,6 +334,14 @@ class ChatGoogle(ChatBase):
         if any(isinstance(p, ToolCall) for p in parts) and finish_reason == "stop":
             finish_reason = "tool_calls"
 
+        cut_short = next(
+            filter(
+                None, (normalize_finish_reason(getattr(c, "finish_reason", None)) for c in response.candidates or [])
+            ),
+            None,
+        )
+        finish_reason = cut_short or finish_reason
+
         model_response = ModelResponse(
             parts=parts,
             finish_reason=finish_reason,
@@ -375,6 +383,9 @@ class ChatGoogle(ChatBase):
         response = ModelResponse()
         for candidate in chunk.candidates or []:
             response.parts.extend(self._parts_from_candidate(candidate))
+            response.finish_reason = normalize_finish_reason(getattr(candidate, "finish_reason", None)) or (
+                response.finish_reason
+            )
         usage = self._get_usage(getattr(chunk, "usage_metadata", None))
         if usage is not None:
             response.usage = usage
@@ -387,7 +398,7 @@ class ChatGoogle(ChatBase):
             stream = self.get_client().models.generate_content_stream(**self._build_request(messages_for_model))
             for chunk in stream:
                 response = self._stream_chunk_to_response(chunk)
-                if response.parts or response.usage:
+                if response.parts or response.usage or response.finish_reason:
                     yield response
         except Exception as e:
             raise RuntimeError(f"Error in calling google API: {e}") from e
@@ -401,7 +412,7 @@ class ChatGoogle(ChatBase):
             )
             async for chunk in stream:
                 response = self._stream_chunk_to_response(chunk)
-                if response.parts or response.usage:
+                if response.parts or response.usage or response.finish_reason:
                     yield response
         except Exception as e:
             raise RuntimeError(f"Error in calling google API: {e}") from e
