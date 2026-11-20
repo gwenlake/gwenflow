@@ -58,20 +58,37 @@ def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
         return response.text
 
 
+def compose_task(task: str, input_data: dict | None) -> str:
+    """Fill `{node_name}` placeholders with parent outputs; append the others as context."""
+    unreferenced = []
+    for name, value in (input_data or {}).items():
+        serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        placeholder = f"{{{name}}}"
+        if placeholder in task:
+            task = task.replace(placeholder, serialized)
+        else:
+            unreferenced.append(f"Output from {name}:\n{serialized}")
+    if unreferenced:
+        task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(unreferenced)
+
+    return task
+
+
 @node_type("gwenflow.Agent")
 def handle_agent(parameters: dict, input_data: dict | None) -> str:
-    """An agent node, from a harness or from `model` and `instructions` written in the flow.
+    """Run an agent on the node's task, from a harness or from the parameters written in the flow.
 
-    `harness` is a harness directory or a single-file agent, relative to the working
-    directory; `model`, if given, overrides its model.
+    Parameters: `harness` (a harness directory or a single-file agent, relative to the
+    working directory) or `instructions`; `model` (`provider/model-name`, overrides the
+    harness model), `task`, `tools` (built-in tool names) and an optional `name`.
+
+    Parent outputs fill the `{node_name}` placeholders of `task`; those the task
+    does not reference are appended as context, so every input reaches the agent.
     """
-    from gwenflow import Agent, ChatOpenAI
+    from gwenflow import Agent
+    from gwenflow.registry import DEFAULT_MODEL, make_llm, make_tools
 
-    task = parameters.get("task", "")
-    if input_data:
-        for name, value in input_data.items():
-            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            task = task.replace(f"{{{name}}}", serialized)
+    task = compose_task(parameters.get("task", ""), input_data)
 
     harness = parameters.get("harness")
     if harness:
@@ -82,23 +99,17 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
         agent = Harness.load(harness).build_agent(model=parameters.get("model"))
         return agent.run(task).content
 
-    raw_model = parameters.get("model", "openai/gpt-4o-mini")
-    model = raw_model.split("/", 1)[-1]
-
     instructions = parameters.get("instructions", "")
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    llm = ChatOpenAI(model=model)
     agent = Agent(
-        name="Flow Agent",
+        name=parameters.get("name", "Flow Agent"),
         instructions=instructions,
-        llm=llm,
-        tools=[],
+        llm=make_llm(parameters.get("model", DEFAULT_MODEL)),
+        tools=make_tools(parameters.get("tools")),
     )
-
-    response = agent.run(task)
-    return response.content
+    return agent.run(task).content
 
 
 @node_type("gwenflow.postgresQuery")

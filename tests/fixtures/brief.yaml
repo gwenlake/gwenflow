@@ -1,0 +1,9 @@
+name: brief
+nodes:
+  - name: news
+    type: temporal_test.Value
+    parameters: {value: "rates are stable"}
+  - name: markets
+    type: temporal_test.Value
+    parameters: {value: "EUR/USD 1.08"}
+connections: {}

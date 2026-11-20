@@ -1,9 +1,9 @@
 import json
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from gwenflow.types import AudioContent, FileContent, ImageContent, Message, TextContent, ThinkingContent
+from gwenflow.utils.durable import new_id
 from gwenflow.utils.tokens import num_tokens_from_string
 
 # Rough per-part token cost for non-text inputs. These are deliberately
@@ -54,7 +54,7 @@ class BaseChatMemory:
 
     def __post_init__(self) -> None:
         if self.id is None:
-            self.id = str(uuid.uuid4())
+            self.id = new_id()
         if self.tokenizer_fn is None:
             self.tokenizer_fn = num_tokens_from_string
 
