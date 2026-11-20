@@ -120,7 +120,9 @@ class FAISS(VectorStoreBase):
 
         return documents
 
-    def hybrid_search(self, query: str, limit: int = 5, k: int = 60) -> list[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, k: int = 60, bm25_params: Optional[dict] = None
+    ) -> list[Document]:
         def reciprocal_rank_fusion(ranked_lists: list[list[Document]], k: int = 60) -> list[Document]:
             scores: dict[str, float] = {}
             documents: dict[str, Document] = {}
@@ -138,7 +140,7 @@ class FAISS(VectorStoreBase):
             return []
 
         documents = [self._document_from_metadata(entry) for entry in self.metadata]
-        bm25_ranked = BM25(documents).rank(query)
+        bm25_ranked = BM25(documents, **(bm25_params or {})).rank(query, min_score=0)
         vector_ranked = self._vector_search(query, limit=len(self.metadata))
         fused = reciprocal_rank_fusion([bm25_ranked, vector_ranked], k=k)
 
