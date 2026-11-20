@@ -76,10 +76,11 @@ def compose_task(task: str, input_data: dict | None) -> str:
 
 @node_type("gwenflow.Agent")
 def handle_agent(parameters: dict, input_data: dict | None) -> str:
-    """Run an agent on the node's task.
+    """Run an agent on the node's task, from a harness or from the parameters written in the flow.
 
-    Parameters: `model` (`provider/model-name`), `instructions`, `task`,
-    `tools` (built-in tool names) and an optional `name`.
+    Parameters: `harness` (a harness directory or a single-file agent, relative to the
+    working directory) or `instructions`; `model` (`provider/model-name`, overrides the
+    harness model), `task`, `tools` (built-in tool names) and an optional `name`.
 
     Parent outputs fill the `{node_name}` placeholders of `task`; those the task
     does not reference are appended as context, so every input reaches the agent.
@@ -87,11 +88,20 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
     from gwenflow import Agent
     from gwenflow.registry import DEFAULT_MODEL, make_llm, make_tools
 
+    task = compose_task(parameters.get("task", ""), input_data)
+
+    harness = parameters.get("harness")
+    if harness:
+        if "instructions" in parameters:
+            raise ValueError("an agent node has either `harness` or `instructions`, not both")
+        from gwenflow.harness import Harness
+
+        agent = Harness.load(harness).build_agent(model=parameters.get("model"))
+        return agent.run(task).content
+
     instructions = parameters.get("instructions", "")
     if isinstance(instructions, str):
         instructions = [instructions]
-
-    task = compose_task(parameters.get("task", ""), input_data)
 
     agent = Agent(
         name=parameters.get("name", "Flow Agent"),

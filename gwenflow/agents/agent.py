@@ -10,6 +10,7 @@ import time
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import (
     Any,
     AsyncIterator,
@@ -270,6 +271,11 @@ class Agent:
 
     skills: List[Skill] = field(default_factory=list)
 
+    skill_script_tools: bool = True
+    """Register the tools defined in the skills' `scripts/` files. False when the
+    application creates those tools itself (they need its connections, its
+    state): the skills then only bring their instructions."""
+
     memory: Optional[MemoryToolset] = None
     """Long-term markdown memory: a `## Memory` block in the system prompt plus
     the editing tools (`read_memory`, `memory_edit`, ...). Load it with
@@ -349,7 +355,8 @@ class Agent:
             self.llm.response_format = self.response_model
         if self.skills:
             self.tools = list(self.tools) + SkillsToolset(self.skills).get_tools()
-            self.tools = list(self.tools) + self._skill_script_tools()
+            if self.skill_script_tools:
+                self.tools = list(self.tools) + self._skill_script_tools()
         if self.max_tool_output_tokens and not any(t.name == READ_TOOL_OUTPUT for t in self.tools):
             self.tools = list(self.tools) + [self._tool_output_reader()]
         if self.memory:
@@ -370,6 +377,30 @@ class Agent:
             self.llm.tool_choice = None
         if self.durability is not None:
             self.durability.bind(self)
+
+    @classmethod
+    def from_harness(cls, path: Union[str, Path], **kwargs: Any) -> "Agent":
+        """An agent from a harness directory (see `gwenflow.harness`).
+
+        ``kwargs`` are those of `Harness.build_agent`: ``variables``, ``model``, ``llm``,
+        ``model_settings`` and any `Agent` argument. To build several agents from the same
+        files, load them once with `Harness.load` and call `build_agent` for each.
+        """
+        from gwenflow.harness import Harness
+
+        return Harness.load(path).build_agent(**kwargs)
+
+    @classmethod
+    def from_file(cls, path: Union[str, Path], **kwargs: Any) -> "Agent":
+        """An agent from one file: a Pydantic AI agent spec (``agent.yaml``, ``.json``) or a markdown file.
+
+        A markdown file's frontmatter is the definition and its body is its ``instructions``.
+
+        ``kwargs`` are those of `Harness.build_agent` (see `from_harness`).
+        """
+        from gwenflow.harness import Harness
+
+        return Harness.from_file(path).build_agent(**kwargs)
 
     def _build_handoff_tools(self) -> List[BaseTool]:
         """Expose each team member as a callable tool the orchestrator can invoke.
@@ -667,6 +698,7 @@ class Agent:
             llm=llm,
             tools=tools,
             skills=skills,
+            skill_script_tools=self.skill_script_tools,
             response_model=output_schema,
             max_turns=self.subagent_max_turns,
             max_tool_output_tokens=self.max_tool_output_tokens,
@@ -1100,7 +1132,7 @@ class Agent:
         if self.instructions:
             instructions = "## Instructions:\n\n"
             if isinstance(self.instructions, str):
-                instructions += "- {instructions}".format(instructions=self.instructions)
+                instructions += self.instructions.strip()
             elif isinstance(self.instructions, list):
                 instructions += "\n".join([f"- {i}" for i in self.instructions])
             system_prompt_parts.append(instructions)

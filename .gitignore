@@ -167,3 +167,6 @@ CLAUDE.md
 .DS_Store
 .idea
 internal_tests/
+
+# written by the long-term memory examples
+/memory/

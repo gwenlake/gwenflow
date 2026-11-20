@@ -263,6 +263,116 @@ def test_astream_accumulates_tool_call_opened_without_arguments(monkeypatch):
     assert tool_call.arguments == '{"query": "paris"}'
 
 
+def _astream_responses(monkeypatch, chunks, input="hello"):
+    async def fake_create(*args, **kwargs):
+        async def iterator():
+            for chunk in chunks:
+                yield chunk
+
+        return iterator()
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = fake_create
+    monkeypatch.setattr(ChatOpenAI, "get_async_client", lambda self: fake_client)
+    llm = ChatOpenAI(api_key="fake-key")
+
+    async def collect():
+        return [response async for response in llm.astream(input)]
+
+    return asyncio.run(collect())
+
+
+def _stream_responses(monkeypatch, chunks, input="hello"):
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = iter(chunks)
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+    return list(ChatOpenAI(api_key="fake-key").stream(input))
+
+
+@pytest.mark.parametrize("last_finish_reason", ["stop", None])
+def test_stream_keeps_tool_calls_the_server_did_not_close_with_tool_calls(monkeypatch, last_finish_reason):
+    """A turn that does not end on `finish_reason: "tool_calls"` keeps its calls.
+
+    Some servers end a tool-calling turn on `stop`, or with no finish_reason at
+    all (several local engines): the calls were asked for all the same.
+    """
+    chunks = [
+        _stream_chunk([_tool_call_delta(tool_id="call_a", name="search_medias", arguments='{"query": "paris"}')]),
+        _stream_chunk(None, finish_reason=last_finish_reason),
+    ]
+
+    for responses in (_stream_responses(monkeypatch, chunks), _astream_responses(monkeypatch, chunks)):
+        assert [(tc.id, tc.name, tc.arguments) for tc in _streamed_tool_calls(responses)] == [
+            ("call_a", "search_medias", '{"query": "paris"}')
+        ]
+
+
+def test_stream_sends_the_tool_calls_once(monkeypatch):
+    for responses in (
+        _stream_responses(monkeypatch, _vllm_tool_call_chunks()),
+        _astream_responses(monkeypatch, _vllm_tool_call_chunks()),
+    ):
+        assert len([r for r in responses if r.tool_calls]) == 1
+
+
+def _history_with_call(call_id):
+    return [
+        Message(role="user", content="read a"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[{"id": call_id, "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+        ),
+        Message(role="tool", content="A", tool_call_id=call_id),
+        Message(role="user", content="read b"),
+    ]
+
+
+def test_stream_gives_a_tool_call_its_own_id_in_the_conversation(monkeypatch):
+    """A tool call never reuses an id the conversation already holds.
+
+    A server that numbers its calls per turn (`call_1` every time) would hand out
+    an id the history already uses: the result would be matched to the wrong call.
+    """
+    chunks = [
+        _stream_chunk([_tool_call_delta(tool_id="call_1", name="read", arguments='{"x": 1}', index=0)]),
+        _stream_chunk([_tool_call_delta(tool_id="call_1", name="read", arguments='{"x": 2}', index=1)]),
+        _stream_chunk(None, finish_reason="tool_calls"),
+    ]
+
+    for responses in (
+        _stream_responses(monkeypatch, chunks, _history_with_call("call_1")),
+        _astream_responses(monkeypatch, chunks, _history_with_call("call_1")),
+    ):
+        tool_calls = _streamed_tool_calls(responses)
+        ids = [tc.id for tc in tool_calls]
+        assert [tc.arguments for tc in tool_calls] == ['{"x": 1}', '{"x": 2}']
+        assert "call_1" not in ids and len(set(ids)) == 2 and all(ids)
+
+
+def test_stream_gives_an_id_to_a_tool_call_sent_without_one(monkeypatch):
+    chunks = [
+        _stream_chunk([_tool_call_delta(tool_id="", name="tool_a", arguments="{}", index=0)]),
+        _stream_chunk([_tool_call_delta(tool_id="", name="tool_b", arguments="{}", index=1)]),
+        _stream_chunk(None, finish_reason="tool_calls"),
+    ]
+
+    ids = [tc.id for tc in _streamed_tool_calls(_stream_responses(monkeypatch, chunks))]
+    assert all(ids) and len(set(ids)) == 2
+
+
+def test_invoke_gives_a_tool_call_its_own_id_in_the_conversation(monkeypatch):
+    tool_call = SimpleNamespace(id="call_1", function=SimpleNamespace(name="read", arguments="{}"))
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _make_openai_response("", tool_calls=[tool_call])
+    monkeypatch.setattr(ChatOpenAI, "get_client", lambda self: fake_client)
+
+    result = ChatOpenAI(api_key="fake-key").invoke(_history_with_call("call_1"))
+
+    assert result.tool_calls[0].id and result.tool_calls[0].id != "call_1"
+    assert result.tool_calls[0].name == "read"
+
+
 # ---------------------------------------------------------------------------
 # _format_response
 # ---------------------------------------------------------------------------

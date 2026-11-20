@@ -13,6 +13,19 @@ from gwenflow.tools import BaseTool
 from gwenflow.types import Message, ModelResponse, RequestUsage, TextContent, ThinkingContent, ToolCall
 from gwenflow.utils import extract_json_str, make_pydantic_schema_strict_json
 
+_FAILURE_EVENTS = ("response.failed", "response.incomplete", "error")
+
+
+def _failure_message(event_type: str, event: Any) -> str:
+    if event_type == "error":
+        return f"stream error ({getattr(event, 'code', None) or 'unknown'}): {getattr(event, 'message', '') or ''}"
+    response = getattr(event, "response", event)
+    if event_type == "response.incomplete":
+        details = getattr(response, "incomplete_details", None)
+        return f"response incomplete ({getattr(details, 'reason', None) or 'unknown'})"
+    error = getattr(response, "error", None)
+    return f"response failed ({getattr(error, 'code', None) or 'unknown'}): {getattr(error, 'message', '') or ''}"
+
 
 @dataclass(kw_only=True)
 class ResponseOpenAI(ChatBase):
@@ -205,9 +218,11 @@ class ResponseOpenAI(ChatBase):
         output_tokens = getattr(usage, "output_tokens", 0) or 0
         details: Dict[str, int] = {}
         cache_read_tokens = 0
+        cache_write_tokens = 0
         input_details = getattr(usage, "input_tokens_details", None)
         if input_details is not None:
             cache_read_tokens = getattr(input_details, "cached_tokens", 0) or 0
+            cache_write_tokens = getattr(input_details, "cache_write_tokens", 0) or 0
         output_details = getattr(usage, "output_tokens_details", None)
         if output_details is not None:
             reasoning = getattr(output_details, "reasoning_tokens", None)
@@ -217,10 +232,15 @@ class ResponseOpenAI(ChatBase):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=min(cache_write_tokens, max(input_tokens - cache_read_tokens, 0)),
             details=details,
         )
 
     def _parse_response(self, response: Any) -> ModelResponse:
+        status = getattr(response, "status", None)
+        if status in ("failed", "incomplete"):
+            raise RuntimeError(_failure_message(f"response.{status}", response))
+
         parts: List[Any] = []
         finish_reason = "stop"
 
@@ -328,6 +348,9 @@ class ResponseOpenAI(ChatBase):
                         if response.parts or response.usage:
                             yield response
 
+                    elif event_type in _FAILURE_EVENTS:
+                        raise RuntimeError(_failure_message(event_type, event))
+
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
 
@@ -378,6 +401,9 @@ class ResponseOpenAI(ChatBase):
                             response.usage = self._get_usage(getattr(final, "usage", None))
                         if response.parts or response.usage:
                             yield response
+
+                    elif event_type in _FAILURE_EVENTS:
+                        raise RuntimeError(_failure_message(event_type, event))
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e

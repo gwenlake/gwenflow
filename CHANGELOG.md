@@ -6,8 +6,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [1.6.0] — 2026-11-06
-
 ### Added
 
 - Durable execution with Temporal, `gwenflow.durability` (install with
@@ -78,6 +76,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `agent.history.reset()` and `agent.total_usage` directly.
 - `gwenflow.agents.prompts`: its prompts now live in `gwenflow.agents.agent`
   (`PROMPT_PREVIOUS_INTERACTIONS`, unused, is gone).
+
+## [1.6.0] — 2026-11-17
+
+### Added
+
+- Harness, for agents whose skills depend on the user: `build_agent(only_skills=[...])` keeps the
+  harness skills of these names, for the agent and its subagents (an unknown name is an error);
+  `templating: jinja` in `harness.yaml` renders the prompt parts and the subagents' instructions as
+  Jinja templates (`{% if 'quote' in skills %}`), with `skills` (the names of the skills the agent
+  is built with) as a variable; requires the `gwenflow[harness]` extra. `- Skills: {script_tools: false}`
+  and `Agent(skill_script_tools=False)` leave the tools of the skills' `scripts/` to the application.
+- Harness: an agent described by files, with the key names of the Pydantic AI agent spec
+  (`model`, `name`, `description`, `instructions`, `model_settings`, `capabilities`,
+  `output_schema`, `metadata`); gwenflow adds `version`, `max_turns`, `guardrails`,
+  `knowledge`, `tool_guidance` and `long_term_memory`. A harness directory holds
+  `harness.yaml`, the prompt parts (in `harness.yaml` or in `system_prompt.md`,
+  `guardrails.md`, `knowledge.md`, `tool_guidance.md`), `output_schema.json`, `skills/`,
+  `subagents/<name>/AGENT.md` and `tools/*.py`. Capabilities: `Skills`, `MCP`, `Thinking`,
+  `WebSearch`, `WebFetch` and any tool of `gwenflow.tools` by class name.
+  `Agent.from_harness(path)` and `Agent.from_file(path)` (a Pydantic AI spec or a `.md`);
+  `Harness.load(path).build_agent(...)` makes a new agent per call.
+- `gwenflow harness check <path>` and `gwenflow harness schema`; the `gwenflow.Agent` flow
+  node accepts `harness: <path>`.
+
+### Changed
+
+- The Gwenlake API is served by Atlas: `ChatGwenlake` defaults to
+  `https://atlas.gwenlake.com/api/v1`, and `GwenlakeEmbeddings` / `GwenlakeReranker` (`gwenflow.api.Api`)
+  to `https://atlas.gwenlake.com/api`, in place of the former gateway. A `base_url` given
+  explicitly is untouched.
+- `Agent(instructions="...")`: a string is rendered as written, a block of text under
+  `## Instructions:`, no longer prefixed with `- `; a list is still rendered as bullets.
+
+### Fixed
+
+- `ChatOpenAI.stream` / `astream` lost the tool calls of a turn the server did not end
+  on `finish_reason: "tool_calls"`: a server that ends it on `stop`, or with no reason
+  at all (several local engines), got its calls dropped and the run ended without
+  them. They are now always handed over, once, at the end of the stream.
+- A tool call now always has an id of its own in the conversation it answers
+  (`ChatOpenAI`, streamed or not): a server that sends none, or numbers its calls per
+  turn (`call_1` every time), got an id that the history already used, so a result
+  could be matched to another call (`DeduplicateReads` then blanked it as a duplicate).
+  The server's id is kept unless it is empty or taken.
 
 ## [1.5.1] — 2026-11-03
 
