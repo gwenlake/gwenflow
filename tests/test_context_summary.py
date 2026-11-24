@@ -174,7 +174,7 @@ def test_agent_summarizer_defaults_to_a_copy_of_the_llm():
     assert agent.history.llm.model == "gpt-5-mini"
 
 
-def test_summary_spend_is_in_the_run_usage_and_the_breakdown():
+def test_summary_spend_is_in_the_run_usage():
     agent = scripted_agent(llm=ScriptedLLM(context_size=1500, tool_turns=30, summary="SUMMARY"))
     response = agent.run("TASK: analyse.")
     summary_calls = agent.history.llm.summary_calls
@@ -183,14 +183,3 @@ def test_summary_spend_is_in_the_run_usage_and_the_breakdown():
     assert agent.total_usage.requests == response.usage.requests
     assert agent.history.usage.requests == summary_calls
     assert agent.history.drain_usage().requests == 0  # nothing left pending
-    report = agent.run("/cost").content
-    assert "Compaction (included above)" in report
-
-
-def test_compact_command_folds_its_spend_into_the_session():
-    agent = scripted_agent(llm=ScriptedLLM(context_size=1500, tool_turns=0, summary="SUMMARY"))
-    agent.history.add_messages(agent_history(n_reads=20, result_words=200))
-    before = agent.total_usage.requests
-    report = agent.run("/compact").content
-    assert "summarize_older" in report or "clear_tool_results" in report
-    assert agent.total_usage.requests == before + agent.history.llm.summary_calls

@@ -1,4 +1,4 @@
-"""Unit tests for ChatSummaryMemoryBuffer and the agent slash commands.
+"""Unit tests for ChatSummaryMemoryBuffer and its wiring into the agent.
 
 Covers:
 - `get()` stays a pure read (no LLM call, no mutation of the stored history)
@@ -6,7 +6,7 @@ Covers:
   fixed point, incrementally, and retrying after an LLM failure
 - ChatMemoryBuffer keeps its plain drop behaviour (compact/acompact are no-ops)
 - Agent wiring: dedicated summarizer, compaction before every `get()`
-- Slash commands (/help, /reset, /compact, /cost, /tools, /save, /load, ...)
+- Slash commands are gone: a `/...` input goes to the model like any other
 
 The buffers are driven with a word-count tokenizer so the token budgets in the
 tests stay readable; the production tokenizer is exercised in
@@ -14,18 +14,12 @@ tests stay readable; the production tokenizer is exercised in
 """
 
 import asyncio
-import json
 
 import pytest
 
-from gwenflow.agents.agent import AGENT_COMMANDS, Agent
+from gwenflow.agents.agent import Agent
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
-from gwenflow.tools import Tool
 from gwenflow.types import (
-    AgentEventCompleted,
-    AgentEventContent,
-    AgentEventStarted,
-    AgentResponse,
     Message,
     ModelResponse,
     RequestUsage,
@@ -131,7 +125,6 @@ def filled(buf, n=6):
 def make_agent(**kwargs) -> Agent:
     """Agent on a MiniLLM, with the word-count tokenizer wired into its memory."""
     kwargs.setdefault("llm", MiniLLM())
-    kwargs.setdefault("commands", True)
     agent = Agent(**kwargs)
     agent.history.tokenizer_fn = tok
     return agent
@@ -403,107 +396,7 @@ def test_failed_validation_stores_the_answer_once():
 
 
 # ---------------------------------------------------------------------------
-# Slash commands
-# ---------------------------------------------------------------------------
-
-
-def test_help_lists_the_commands():
-    content = make_agent().run("/help").content
-    assert "/compact" in content
-    assert "/reset" in content
-    assert "/history" in content
-    assert "/cost" in content
-    assert all(c in content for c in ("/save", "/load", "/config", "/tools"))
-
-
-def test_a_command_costs_no_llm_call_and_leaves_no_trace():
-    agent = make_agent()
-    run_a_few_turns(agent)
-    stored, calls = len(agent.history.messages), len(agent.llm.main_inputs)
-    agent.run("/help")
-    assert len(agent.llm.main_inputs) == calls
-    assert len(agent.history.messages) == stored
-
-
-def test_history_command_reports_stats():
-    agent = make_agent()
-    run_a_few_turns(agent)
-    content = agent.run("/history").content
-    assert "message(s) stored" in content
-    assert "limit" in content
-
-
-def test_compact_command_is_case_and_space_insensitive():
-    agent = make_agent()
-    run_a_few_turns(agent)
-    before = agent.history._summarized_upto
-    content = agent.run("  /COMPACT  ").content
-    assert ("Compacted" in content and agent.history._summarized_upto >= before) or "Nothing to compact" in content
-
-
-def test_reset_clears_history_and_summary():
-    agent = make_agent()
-    run_a_few_turns(agent)
-    stored = len(agent.history.messages)
-    content = agent.run("/reset").content
-    assert f"{stored} message(s) removed" in content
-    assert agent.history.messages == []
-    assert agent.history.summary == ""
-
-
-def test_clear_is_an_alias_of_reset():
-    agent = make_agent()
-    agent.run("nouvelle question " + "mot " * 10)
-    assert "removed" in agent.run("/clear").content
-    assert agent.history.messages == []
-
-
-def test_a_command_followed_by_text_is_not_intercepted():
-    agent = make_agent()
-    agent.run("test " + "mot " * 5)
-    messages, calls = len(agent.history.messages), len(agent.llm.main_inputs)
-    agent.run("/reset the counter in my code please")
-    assert len(agent.llm.main_inputs) == calls + 1
-    assert len(agent.history.messages) > messages
-
-
-def test_an_unknown_command_goes_to_the_llm():
-    agent = make_agent()
-    agent.run("/foobar")
-    assert len(agent.llm.main_inputs) == 1
-
-
-def test_compact_on_a_plain_buffer_reports_what_it_did():
-    agent = Agent(
-        name="cmd-base", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok)
-    )
-    assert "Nothing to compact" in agent.run("/compact").content
-    filled(agent.history)
-    assert "sliding_window" in agent.run("/compact").content
-
-
-def test_arun_compact_command():
-    agent = make_agent()
-
-    async def go():
-        for i in range(5):
-            await agent.arun(f"question {i} " + "blabla " * 12)
-        return await agent.arun("/compact")
-
-    content = asyncio.run(go()).content
-    assert "Compacted" in content or "Nothing to compact" in content
-
-
-def test_run_stream_emits_events_and_a_final_response():
-    items = list(make_agent().run_stream("/help"))
-    kinds = [type(x).__name__ for x in items]
-    assert kinds[:3] == [AgentEventStarted.__name__, AgentEventContent.__name__, AgentEventCompleted.__name__]
-    assert isinstance(items[-1], AgentResponse)
-    assert "/compact" in items[-1].content
-
-
-# ---------------------------------------------------------------------------
-# /cost
+# Usage accounting
 # ---------------------------------------------------------------------------
 
 
@@ -528,242 +421,25 @@ def test_compaction_usage_is_counted_separately(costly_agent):
     assert costly_agent.history.usage.input_tokens == 100 * summary_calls
 
 
-def test_cost_without_pricing(costly_agent):
-    main_calls = len(costly_agent.llm.main_inputs)
-    content = costly_agent.run("/cost").content
-    assert "Session usage" in content
-    assert "Compaction (included above)" in content
-    assert "unavailable" in content
-    summary_calls = costly_agent.history.llm.summary_calls
-    assert f"{100 * (main_calls + summary_calls):,}" in content
-    # the command itself is free and not counted as a request
-    assert len(costly_agent.llm.main_inputs) == main_calls
-    assert costly_agent.total_usage.requests == main_calls + summary_calls
-
-
-def test_cost_with_pricing(costly_agent):
-    calls = len(costly_agent.llm.main_inputs) + costly_agent.history.llm.summary_calls
-    costly_agent.pricing = {"input": 1.0, "output": 10.0}
-    expected = (calls * 100 * 1.0 + calls * 10 * 10.0) / 1_000_000
-    content = costly_agent.run("/cost").content
-    assert f"${expected:.4f}" in content
-    assert "unavailable" not in content
-
-
-def test_reset_does_not_zero_the_cost(costly_agent):
-    main_calls = len(costly_agent.llm.main_inputs)
-    summary_calls = costly_agent.history.llm.summary_calls
-    costly_agent.run("/reset")
-    costly_agent.run("/cost")
-    assert costly_agent.total_usage.requests == main_calls + summary_calls
-    assert costly_agent.history.usage.requests == summary_calls
-
-
 # ---------------------------------------------------------------------------
-# /tools /summary /system /config
+# Slash commands (removed in 1.6.0)
 # ---------------------------------------------------------------------------
-
-
-def meteo(ville: str) -> str:
-    """Donne la meteo d'une ville."""
-    return "beau temps"
-
-
-@pytest.fixture
-def tooled_agent():
-    return make_agent(name="lot2", instructions=["Reponds en francais"], tools=[Tool(meteo)])
 
 
 def last_user_input(agent: Agent) -> str:
     return agent.llm.main_inputs[-1][-1]["content"]
 
 
-def test_commands_are_off_by_default():
-    """Without `commands`, a slash command is an ordinary input for the LLM."""
-    agent = Agent(llm=MiniLLM())
+def test_a_slash_input_is_an_ordinary_input_for_the_llm():
+    agent = make_agent()
     agent.run("/help")
     assert last_user_input(agent) == "/help"
     agent.run("/compact")
     assert last_user_input(agent) == "/compact"
-    assert len(agent.history.messages) == 4
 
 
-def test_commands_true_enables_all(tooled_agent):
-    content = tooled_agent.run("/help").content
-    assert all(name in content for name in AGENT_COMMANDS)
-
-
-def test_commands_subset_enables_only_those():
-    agent = make_agent(commands={"/cost", "/help"})
-    assert "/cost" in agent.run("/help").content
-    assert "/compact" not in agent.run("/help").content
-    before = len(agent.llm.main_inputs)
-    agent.run("/compact")
-    assert last_user_input(agent) == "/compact"
-    assert len(agent.llm.main_inputs) == before + 1
-
-
-def test_commands_with_args_are_off_by_default(tmp_path):
-    agent = Agent(llm=MiniLLM())
-    agent.run(f"/save {tmp_path / 's.json'}")
-    assert last_user_input(agent).startswith("/save")
-    assert not (tmp_path / "s.json").exists()
-
-
-def test_commands_unknown_name_raises():
-    with pytest.raises(ValueError, match="Unknown command"):
-        Agent(llm=MiniLLM(), commands=["/nope"])
-
-
-def test_tools_command_lists_the_tools(tooled_agent):
-    content = tooled_agent.run("/tools").content
-    assert "meteo" in content
-    assert "1 tool(s)" in content
-
-
-def test_tools_command_without_tools():
-    assert "No tools registered" in make_agent(name="vide").run("/tools").content
-
-
-def test_tools_command_followed_by_text_is_not_intercepted(tooled_agent):
-    calls = len(tooled_agent.llm.main_inputs)
-    tooled_agent.run("/tools et dis moi la meteo")
-    assert len(tooled_agent.llm.main_inputs) == calls + 1
-
-
-def test_summary_command_is_empty_before_compaction(tooled_agent):
-    assert "empty" in tooled_agent.run("/summary").content
-
-
-def test_summary_command_shows_the_summary(tooled_agent):
-    run_a_few_turns(tooled_agent)
-    assert "RESUME" in tooled_agent.run("/summary").content
-
-
-def test_summary_command_on_a_plain_buffer():
-    agent = Agent(name="base", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=90, tokenizer_fn=tok))
-    assert "does not keep a summary" in agent.run("/summary").content
-
-
-def test_system_command_shows_the_instructions(tooled_agent):
-    assert "Reponds en francais" in tooled_agent.run("/system").content
-
-
-def test_system_command_with_a_fixed_system_prompt():
-    content = make_agent(name="fixe", system_prompt="Tu es un pirate.").run("/system").content
-    assert "Tu es un pirate." in content
-    assert "(fixed)" in content
-
-
-def test_config_command(tooled_agent):
-    content = tooled_agent.run("/config").content
-    assert "lot2" in content
-    assert "ChatSummaryMemoryBuffer" in content
-    assert "max_turns" in content
-    assert "tools:           1" in content
-
-
-# ---------------------------------------------------------------------------
-# /save and /load
-# ---------------------------------------------------------------------------
-
-
-def test_save_without_an_argument_shows_the_usage():
-    assert "Usage: /save" in make_agent().run("/save").content
-
-
-def test_save_load_round_trip(tooled_agent, tmp_path):
-    run_a_few_turns(tooled_agent)
-    path = tmp_path / "session.json"
-    count = len(tooled_agent.history.messages)
-    saved_summary = tooled_agent.history.summary
-    saved_upto = tooled_agent.history._summarized_upto
-
-    content = tooled_agent.run(f"/save {path}").content
-    assert path.exists()
-    assert str(path) in content
-    assert f"{count} message(s)" in content
-
-    data = json.loads(path.read_text())
-    assert data["format"] == "gwenflow.session"
-    assert data["version"] == 1
-    assert len(data["messages"]) == count
-    assert data["summary"] == saved_summary
-
-    tooled_agent.run("/reset")
-    assert tooled_agent.history.messages == []
-    content = tooled_agent.run(f"/load {path}").content
-    assert f"{count} message(s)" in content
-    assert "summary restored" in content
-    assert len(tooled_agent.history.messages) == count
-    assert tooled_agent.history.summary == saved_summary
-    assert tooled_agent.history._summarized_upto == saved_upto
-
-    # and the agent keeps working on the restored history (which it may compact again)
-    tooled_agent.run("nouvelle question apres restauration " + "mot " * 8)
-    assert tooled_agent.history.messages[-2].content.startswith("nouvelle question")
-    assert tooled_agent.history.messages[-1].role == "assistant"
-
-
-def test_load_missing_file(tmp_path):
-    agent = make_agent()
-    assert "Could not load session" in agent.run(f"/load {tmp_path / 'absent.json'}").content
-
-
-def test_load_a_json_that_is_not_a_session(tmp_path):
-    path = tmp_path / "pas_une_session.json"
-    path.write_text('{"hello": 1}')
-    assert "not a gwenflow session" in make_agent().run(f"/load {path}").content
-
-
-def test_load_refuses_a_future_format_version(tmp_path):
-    path = tmp_path / "future.json"
-    path.write_text('{"format": "gwenflow.session", "version": 99, "messages": []}')
-    assert "newer than supported" in make_agent().run(f"/load {path}").content
-
-
-def test_save_on_a_plain_buffer_writes_no_summary(tmp_path):
-    agent = Agent(
-        name="base-save", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok)
-    )
-    path = tmp_path / "base_session.json"
-    agent.run("bonjour " + "mot " * 5)
-    agent.run(f"/save {path}")
-    assert "summary" not in json.loads(path.read_text())
-
-
-def test_load_on_a_plain_buffer_ignores_the_summary(tooled_agent, tmp_path):
-    run_a_few_turns(tooled_agent)
-    path = tmp_path / "session.json"
-    tooled_agent.run(f"/save {path}")
-
-    agent = Agent(
-        name="base-load", llm=MiniLLM(), commands=True, history=ChatMemoryBuffer(token_limit=200, tokenizer_fn=tok)
-    )
-    assert "summary in file ignored" in agent.run(f"/load {path}").content
-
-
-def test_round_trip_preserves_tool_calls_and_multipart_content(tmp_path):
-    agent = make_agent(name="rt")
-    agent.history.add_message(Message(role="user", content="quelle meteo ?"))
-    agent.history.add_message(
-        Message(
-            role="assistant",
-            content=None,
-            tool_calls=[
-                {"id": "tc1", "type": "function", "function": {"name": "meteo", "arguments": '{"ville": "Rennes"}'}}
-            ],
-        )
-    )
-    agent.history.add_message(Message(role="tool", tool_call_id="tc1", content="beau temps"))
-    agent.history.add_message(Message(role="assistant", content=[TextContent(content="Il fait beau a Rennes.")]))
-    before = [m.to_dict() for m in agent.history.messages]
-
-    path = tmp_path / "rt_session.json"
-    agent.run(f"/save {path}")
+def test_commands_parameter_is_deprecated_and_ignored():
+    with pytest.warns(DeprecationWarning, match="commands"):
+        agent = make_agent(commands=True)
     agent.run("/reset")
-    agent.run(f"/load {path}")
-
-    assert [m.to_dict() for m in agent.history.messages] == before
-    assert agent.history.messages[1].tool_calls[0]["id"] == "tc1"
-    assert isinstance(agent.history.messages[3].content[0], TextContent)
+    assert last_user_input(agent) == "/reset"
