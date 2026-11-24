@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Union
 
 from pydantic import TypeAdapter
 from temporalio import workflow
 
 from gwenflow.durability.errors import GwenflowDurabilityError
 from gwenflow.llms.base import ChatBase
-from gwenflow.tools import BaseTool
+from gwenflow.tools import BaseTool, ToolReturn
 from gwenflow.types import ModelResponse
 
 if TYPE_CHECKING:
@@ -110,13 +110,16 @@ class _ActivityTool(BaseTool):
     def _run(self, **kwargs: Any) -> Any:
         raise GwenflowDurabilityError(f"Tool {self.name!r} must be awaited (`arun`) inside a workflow.")
 
-    async def arun(self, **kwargs: Any) -> Optional[str]:
+    async def arun(self, **kwargs: Any) -> Union[str, ToolReturn, None]:
         request = {"name": self.name, "arguments": kwargs}
         if self.server is not None:
             request["server"] = self.server
-        return await workflow.execute_activity(
+        result = await workflow.execute_activity(
             self.durability._activity_name("call_tool"), request, **self.durability._config_for_tool(self.name)
         )
+        if isinstance(result, dict):  # a `ToolReturn`; any other result is text
+            return ToolReturn(**result)
+        return result
 
 
 MEMORY_PATH_ARGUMENTS = ("path", "old_path", "new_path")

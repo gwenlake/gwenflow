@@ -29,7 +29,7 @@ from temporalio.worker import Replayer, Worker  # noqa: E402
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner  # noqa: E402
 
 with workflow.unsafe.imports_passed_through():
-    from gwenflow import Agent, Tool
+    from gwenflow import Agent, Tool, ToolReturn
     from gwenflow.durability import (
         AgentWorkflow,
         ClaimCheckCodec,
@@ -42,7 +42,7 @@ with workflow.unsafe.imports_passed_through():
     from gwenflow.flows.handlers import node_type
     from gwenflow.llms.base import ChatBase
     from gwenflow.memory import ChatMemoryBuffer
-    from gwenflow.types import ModelResponse
+    from gwenflow.types import TOOL_METADATA_KEY, ModelResponse
     from gwenflow.types.message import TextContent, ToolCall
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -152,6 +152,12 @@ def get_currency_rate(currency: str) -> str:
     return "1.08"
 
 
+def get_cited_rate(currency: str) -> ToolReturn:
+    """Exchange rate for a currency, with its source."""
+    CALLS["tool"] += 1
+    return ToolReturn(return_value="1.08", metadata={"source": "ECB", "currency": currency})
+
+
 # ---------------------------------------------------------------------------
 # Flow node types
 # ---------------------------------------------------------------------------
@@ -222,6 +228,14 @@ finance_approval = Agent(
     durability=TemporalDurability(),
 )
 
+cited = Agent(
+    name="cited",
+    llm=RateChat(model="gpt-5-mini", context_window=128000),
+    tools=[Tool(get_cited_rate, name="get_currency_rate")],
+    history=_history(),
+    durability=TemporalDurability(),
+)
+
 
 @workflow.defn
 class MorningBrief:  # no Gwenflow base class
@@ -249,6 +263,17 @@ class ApprovalWorkflow(AgentWorkflow):
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await self.run_agent(finance_approval, prompt)).content
+
+
+@workflow.defn
+class CitedWorkflow(AgentWorkflow):
+    __gwenflow_agents__ = [cited]
+
+    @workflow.run
+    async def run(self, prompt: str) -> list:
+        response = await self.run_agent(cited, prompt)
+        tool_message = next(m for m in response.messages if m.role == "tool")
+        return [response.content, tool_message.content, tool_message.extra.get(TOOL_METADATA_KEY)]
 
 
 failing_flow = Flow.from_dict(
@@ -364,7 +389,7 @@ def reset_state():
     ATTEMPTS.clear()
     SPANS.clear()
     yield
-    for agent in (analyst, finance, finance_approval):
+    for agent in (analyst, finance, finance_approval, cited):
         agent.history.reset()
 
 
@@ -463,6 +488,33 @@ def test_agent_workflow_runs_and_replays():
         "gwenflow__finance__model_request",
     ]
     assert CALLS == calls  # deterministic replay: no new model or tool call
+
+
+def test_tool_return_metadata_crosses_the_activity():
+    async def go():
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            opts = _options(CitedWorkflow)
+            async with Worker(env.client, task_queue="q", **opts):
+                out = await env.client.execute_workflow(
+                    CitedWorkflow.run,
+                    "Taux EUR ?",
+                    id="wf-cited",
+                    task_queue="q",
+                    execution_timeout=timedelta(seconds=40),
+                )
+                history = await env.client.get_workflow_handle("wf-cited").fetch_history()
+                await Replayer(workflows=opts["workflows"], workflow_runner=opts["workflow_runner"]).replay_workflow(
+                    history
+                )
+                return out
+
+    content, tool_content, metadata = asyncio.run(go())
+
+    # The model reads the value only; the metadata reaches the application.
+    assert content == "1 EUR = 1.08 USD"
+    assert tool_content == "1.08"
+    assert metadata == {"source": "ECB", "currency": "EUR"}
+    assert CALLS["tool"] == 1
 
 
 def test_agent_workflow_tool_approval_by_query_and_signal():

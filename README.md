@@ -188,6 +188,28 @@ agent = Agent(
 )
 ```
 
+A tool that has data for the application, not for the model (the sources a search cited, ids, scores), returns a `ToolReturn`: the model reads `return_value`, and `metadata` reaches the application on the tool events and messages.
+
+```python
+from gwenflow import ToolReturn
+
+
+@agent.tool
+def search_reports(query: str) -> ToolReturn:
+    """Search the annual reports."""
+    hits = index.search(query)
+    return ToolReturn(
+        return_value=[hit.text for hit in hits],
+        metadata=[{"title": hit.title, "url": hit.url} for hit in hits],
+    )
+
+
+response = agent.run("How did revenue evolve in 2025?")
+sources = [e.tool_metadata for e in response.events if e.event_type == "tool_completed" and e.tool_metadata]
+```
+
+`response.finish_reason` tells how the run ended: `"stop"`, `"length"` when the final answer was cut by the model's output token limit, `"content_filter"` when the provider's filter stopped it (`content` holds what was produced in both cases; a run whose tool calls are cut twice in a row also ends with `"length"`), `"max_turns"`, `"approval_required"` or `"interrupted"`.
+
 ## Agents with Built-in Tools
 
 ```python

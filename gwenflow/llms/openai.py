@@ -11,7 +11,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from pydantic import BaseModel
 
-from gwenflow.llms.base import ChatBase
+from gwenflow.llms.base import ChatBase, normalize_finish_reason
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.tools import BaseTool
@@ -529,9 +529,12 @@ class ChatOpenAI(ChatBase):
                 recovered.extend(calls)
             parts = recovered
 
+        cut_short = next(
+            filter(None, (normalize_finish_reason(getattr(c, "finish_reason", None)) for c in completion.choices)), None
+        )
         model_response = ModelResponse(
             parts=parts,
-            finish_reason="stop",
+            finish_reason=cut_short or "stop",
             usage=self._get_usage(completion),
         )
 
@@ -587,6 +590,8 @@ class ChatOpenAI(ChatBase):
             _full_tool_calls: List[ToolCall] = []
             _tool_calls_by_index: Dict[int, ToolCall] = {}
             tool_calls_sent = False
+            cut_short = None
+            cut_short_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             for chunk in completion:
@@ -623,6 +628,7 @@ class ChatOpenAI(ChatBase):
                         response.parts.extend(_full_tool_calls)
 
                     finish_reason = chunk.choices[0].finish_reason
+                    cut_short = normalize_finish_reason(finish_reason) or cut_short
                     if finish_reason == "tool_calls" and _full_tool_calls:
                         _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
                         tool_calls_sent = True
@@ -640,6 +646,15 @@ class ChatOpenAI(ChatBase):
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
+                        if cut_short:
+                            # The answer was cut short (`length`, `content_filter`): the usage
+                            # chunk, last of the stream, says so and hands over the calls.
+                            if _full_tool_calls and not tool_calls_sent:
+                                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                                response.parts.extend(_full_tool_calls)
+                                tool_calls_sent = True
+                            response.finish_reason = cut_short
+                            cut_short_sent = True
                         yield response
 
             # A server that ends the stream otherwise than on `finish_reason:
@@ -647,7 +662,10 @@ class ChatOpenAI(ChatBase):
             # do) still asked for these calls: they must not be lost.
             if _full_tool_calls and not tool_calls_sent:
                 _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
-                yield ModelResponse(parts=list(_full_tool_calls))
+                yield ModelResponse(parts=list(_full_tool_calls), finish_reason=cut_short)
+            elif cut_short and not cut_short_sent:
+                # No usage chunk carried the reason: say so last.
+                yield ModelResponse(finish_reason=cut_short)
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e
@@ -667,6 +685,8 @@ class ChatOpenAI(ChatBase):
             _full_tool_calls: List[ToolCall] = []
             _tool_calls_by_index: Dict[int, ToolCall] = {}
             tool_calls_sent = False
+            cut_short = None
+            cut_short_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             async for chunk in completion:
@@ -703,6 +723,7 @@ class ChatOpenAI(ChatBase):
                         response.parts.extend(_full_tool_calls)
 
                     finish_reason = chunk.choices[0].finish_reason
+                    cut_short = normalize_finish_reason(finish_reason) or cut_short
                     if finish_reason == "tool_calls" and _full_tool_calls:
                         _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
                         tool_calls_sent = True
@@ -720,6 +741,15 @@ class ChatOpenAI(ChatBase):
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
+                        if cut_short:
+                            # The answer was cut short (`length`, `content_filter`): the usage
+                            # chunk, last of the stream, says so and hands over the calls.
+                            if _full_tool_calls and not tool_calls_sent:
+                                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                                response.parts.extend(_full_tool_calls)
+                                tool_calls_sent = True
+                            response.finish_reason = cut_short
+                            cut_short_sent = True
                         yield response
 
             # A server that ends the stream otherwise than on `finish_reason:
@@ -727,7 +757,10 @@ class ChatOpenAI(ChatBase):
             # do) still asked for these calls: they must not be lost.
             if _full_tool_calls and not tool_calls_sent:
                 _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
-                yield ModelResponse(parts=list(_full_tool_calls))
+                yield ModelResponse(parts=list(_full_tool_calls), finish_reason=cut_short)
+            elif cut_short and not cut_short_sent:
+                # No usage chunk carried the reason: say so last.
+                yield ModelResponse(finish_reason=cut_short)
 
         except Exception as e:
             raise RuntimeError(f"Error in calling openai API: {e}") from e

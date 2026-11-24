@@ -12,6 +12,7 @@ from gwenflow.types.message import (
     ToolCall,
 )
 from gwenflow.types.response import (
+    TOOL_METADATA_KEY,
     AgentEventCancelled,
     AgentEventCompleted,
     AgentEventContent,
@@ -46,6 +47,7 @@ __all__ = [
     "MessageContent",
     "ResponsePart",
     "ToolResponse",
+    "TOOL_METADATA_KEY",
     "ToolApprovalRequest",
     "ToolDenied",
     "ModelResponse",

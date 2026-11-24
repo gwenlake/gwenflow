@@ -453,7 +453,7 @@ class ChatMemoryBuffer(BaseChatMemory):
             return chat_history
         for index, message in enumerate(chat_history):
             if self._token_count_for_message(message) > per_message_limit:
-                clamped = copy.deepcopy(message)
+                clamped = copy.copy(message)  # only `content` is replaced: no need to copy the rest
                 self._clamp_message_text(clamped, max_tokens=per_message_limit)
                 chat_history[index] = clamped
         return chat_history

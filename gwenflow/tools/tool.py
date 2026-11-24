@@ -149,6 +149,21 @@ def function_to_json_schema(func, name: str = None, description: str = None) -> 
     }
 
 
+@dataclass
+class ToolReturn:
+    """A tool result that carries data for the application next to what the model reads.
+
+    Return it from a tool when the application needs more than the text the
+    model gets, the sources a search cited for instance. `return_value` is
+    sent to the model, cast to text like any tool result. `metadata` never
+    is: the application reads it on `ToolResponse.metadata`, on the tool
+    `Message` (`extra["tool_metadata"]`) and on `AgentEventToolCompleted.tool_metadata`.
+    """
+
+    return_value: Any = None
+    metadata: Any = None
+
+
 @dataclass(kw_only=True)
 class BaseTool(ABC):
     name: str = field(default=None)
@@ -172,7 +187,7 @@ class BaseTool(ABC):
             self.parameters = self.function_schema["function"]["parameters"]
 
     def _cast_response_to_str(self, response) -> str:
-        if not response:
+        if response is None:
             return None
         if isinstance(response, str):
             return response
@@ -192,7 +207,15 @@ class BaseTool(ABC):
         """One attempt for a tool that requires approval (see `requires_approval`)."""
         return 1 if self.requires_approval else self.max_retries
 
-    def run(self, **kwargs: Any) -> str:
+    def _cast_result(self, response: Any) -> str | ToolReturn:
+        """The text of a tool result; a `ToolReturn` keeps its metadata, with its value cast."""
+        if isinstance(response, ToolReturn):
+            return ToolReturn(
+                return_value=self._cast_response_to_str(response.return_value), metadata=response.metadata
+            )
+        return self._cast_response_to_str(response)
+
+    def run(self, **kwargs: Any) -> str | ToolReturn:
         attempts = self._max_attempts()
         _retry = retry(
             stop=stop_after_attempt(attempts),
@@ -204,9 +227,9 @@ class BaseTool(ABC):
         except RetryError as e:
             logger.error(f"Tool {self.name} failed after {attempts} retries: {e}")
             raise
-        return self._cast_response_to_str(response)
+        return self._cast_result(response)
 
-    async def arun(self, **kwargs: Any) -> str:
+    async def arun(self, **kwargs: Any) -> str | ToolReturn:
         attempts = self._max_attempts()
         _retry = retry(
             stop=stop_after_attempt(attempts),
@@ -218,7 +241,7 @@ class BaseTool(ABC):
         except RetryError as e:
             logger.error(f"Tool {self.name} failed after {attempts} retries: {e}")
             raise
-        return self._cast_response_to_str(response)
+        return self._cast_result(response)
 
 
 @dataclass(kw_only=True, init=False)
