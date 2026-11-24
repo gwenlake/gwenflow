@@ -1,4 +1,3 @@
-import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -17,6 +16,7 @@ from gwenflow.types.message import (
     ToolCall,
 )
 from gwenflow.types.usage import AgentUsage, RequestUsage
+from gwenflow.utils.durable import new_id
 from gwenflow.utils.utils import now_utc
 
 
@@ -31,7 +31,7 @@ class ToolResponse:
     """
 
     tool_name: str
-    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_call_id: str = field(default_factory=new_id)
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
     tool_call_error: bool | None = None
     content: str | None = None
@@ -84,7 +84,7 @@ class ModelResponse:
     when a `response_format` Pydantic model was requested.
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = field(default_factory=new_id)
     parts: Sequence[ResponsePart] = field(default_factory=list)
     parsed: Any | None = None
     finish_reason: str | None = None
@@ -231,7 +231,7 @@ class AgentEventThinking(BaseAgentEvent):
 @dataclass(kw_only=True)
 class AgentEventToolStarted(BaseAgentEvent):
     event_type: str = AgentEventType.TOOL_STARTED.value
-    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_call_id: str = field(default_factory=new_id)
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -239,7 +239,7 @@ class AgentEventToolStarted(BaseAgentEvent):
 @dataclass(kw_only=True)
 class AgentEventToolCompleted(BaseAgentEvent):
     event_type: str = AgentEventType.TOOL_COMPLETED.value
-    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_call_id: str = field(default_factory=new_id)
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -247,7 +247,7 @@ class AgentEventToolCompleted(BaseAgentEvent):
 @dataclass(kw_only=True)
 class AgentEventToolApprovalRequired(BaseAgentEvent):
     event_type: str = AgentEventType.TOOL_APPROVAL_REQUIRED.value
-    tool_call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    tool_call_id: str = field(default_factory=new_id)
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -309,7 +309,7 @@ class AgentResponse:
     """
 
     agent_id: str
-    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    run_id: str = field(default_factory=new_id)
     content: str | None = None
     parsed: Any | None = None
     reasoning_content: str | None = None

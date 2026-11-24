@@ -6,12 +6,78 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Durable execution with Temporal, `gwenflow.durability` (install with
+  `pip install 'gwenflow[temporal]'`). `TemporalDurability` attaches to an agent
+  (`Agent(..., durability=TemporalDurability())`) or a flow
+  (`Flow.from_file(..., durability=TemporalDurability())`). Outside a Temporal workflow it
+  changes nothing. Inside one, model requests, tool calls, the compaction that calls the
+  summarizer and flow nodes run as activities, and `agent.arun()` works on a per-run copy
+  of the agent whose history is rebuilt identically on replay. Activity timeouts and
+  retries are configurable globally, for model requests and per tool.
+- `AgentWorkflow`: optional base workflow for durable agents; tool approvals are exposed
+  through the `get_pending_approvals` query and decided with the `approve` signal.
+- `DurableFlow`: ready-made workflow that runs a flow definition (`Flow.to_dict()`) and
+  reports each node's state through the `progress` query.
+- `ClaimCheckCodec` with `InMemoryBlobStore` and `S3BlobStore`: payloads above 128 KB
+  (configurable) are stored in a blob store and the history keeps a reference.
+- `worker_options(*workflows, agents=[...])`: the workflows, activities and sandbox
+  configuration to pass to a Temporal `Worker`. A `FlowError` raised in workflow code
+  (a node out of retries) fails the run instead of retrying the workflow task forever.
+- `gwenflow[temporal]` optional extra (`temporalio>=1.35.0`). `import gwenflow` does not
+  need it; only `import gwenflow.durability` does.
+- Durable execution guide, `docs/durability.md`, and durable agent examples:
+  `examples/agent_temporal.py` (the simplest setup) and
+  `examples/agent_temporal_human_approval.py` (tool approvals).
+- `Flow.arun()` and `Flow.run()` return every node's result, keyed by node name;
+  `Flow.from_dict()` and `Flow.to_dict()` build and serialize a flow definition.
+- Per-node `settings` (`timeout` in seconds, `retries`) and `credentials` (parameter
+  name -> environment variable, resolved only when the node runs, so secrets stay out of
+  flow files and durable histories).
+- `AutoFlow.plan(query)` returns the planned `Flow` without running it, so it can be
+  saved, reviewed or run durably.
+- `gwenflow.registry`: built-in LLM providers and tools addressable by name
+  (`make_llm("anthropic/...")`, `make_tools([...])`), shared by the CLI and flows.
+- Identifiers are UUIDv7 (time-sortable; native on Python 3.14, polyfill before), and
+  deterministic inside a workflow (`gwenflow.utils.durable.new_id()`).
+
 ### Changed
 
-- The Gwenlake API is served by Atlas: `ChatGwenlake` defaults to
-  `https://atlas.gwenlake.com/api/v1`, and `GwenlakeEmbeddings` / `GwenlakeReranker` (`gwenflow.api.Api`)
-  to `https://atlas.gwenlake.com/api`, in place of the former gateway. A `base_url` given
-  explicitly is untouched.
+- Independent branches of a flow run in parallel: a node starts as soon as all its
+  parents are done.
+- `FlowRunner.run()` returns the results of every node as a dict instead of printing the
+  result, and raises `FlowNodeError` (a `FlowError`) instead of exiting with
+  `SystemExit(1)`. `gwenflow run` prints the flow's outputs (its sink nodes).
+- Flows are validated when loaded: cycles, duplicate node names and connections to
+  unknown nodes raise `FlowError`.
+- The `gwenflow.Agent` flow node uses the provider given by the model prefix
+  (`anthropic/…`, `mistral/…`) instead of always using the OpenAI client, and appends as
+  context the parent outputs that the task does not reference with a `{node_name}`
+  placeholder.
+- `AutoFlow.run()` runs independent agents in parallel.
+- Agent, response, memory and flow identifiers are UUIDv7 instead of UUIDv4.
+
+### Fixed
+
+- The `gwenflow.Agent` flow node ignored the provider of its `model` and could not be
+  given tools (it now accepts `tools`, built-in tool names).
+
+### Deprecated
+
+- `Agent(commands=...)` is accepted but ignored, with a `DeprecationWarning`; it will be
+  removed in a later release.
+
+### Removed
+
+- Slash commands (`/help`, `/compact`, `/reset`, `/clear`, `/history`, `/cost`, `/tools`,
+  `/summary`, `/system`, `/config`, `/save`, `/load`) and `AGENT_COMMANDS`: an input
+  starting with a slash now always goes to the model. Use `agent.history.compact()`,
+  `agent.history.reset()` and `agent.total_usage` directly.
+- `gwenflow.agents.prompts`: its prompts now live in `gwenflow.agents.agent`
+  (`PROMPT_PREVIOUS_INTERACTIONS`, unused, is gone).
+
+## [1.6.0] — 2026-11-17
 
 ### Added
 
@@ -33,6 +99,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Harness.load(path).build_agent(...)` makes a new agent per call.
 - `gwenflow harness check <path>` and `gwenflow harness schema`; the `gwenflow.Agent` flow
   node accepts `harness: <path>`.
+
+### Changed
+
+- The Gwenlake API is served by Atlas: `ChatGwenlake` defaults to
+  `https://atlas.gwenlake.com/api/v1`, and `GwenlakeEmbeddings` / `GwenlakeReranker` (`gwenflow.api.Api`)
+  to `https://atlas.gwenlake.com/api`, in place of the former gateway. A `base_url` given
+  explicitly is untouched.
+- `Agent(instructions="...")`: a string is rendered as written, a block of text under
+  `## Instructions:`, no longer prefixed with `- `; a list is still rendered as bullets.
+
+### Fixed
+
+- `ChatOpenAI.stream` / `astream` lost the tool calls of a turn the server did not end
+  on `finish_reason: "tool_calls"`: a server that ends it on `stop`, or with no reason
+  at all (several local engines), got its calls dropped and the run ended without
+  them. They are now always handed over, once, at the end of the stream.
+- A tool call now always has an id of its own in the conversation it answers
+  (`ChatOpenAI`, streamed or not): a server that sends none, or numbers its calls per
+  turn (`call_1` every time), got an id that the history already used, so a result
+  could be matched to another call (`DeduplicateReads` then blanked it as a duplicate).
+  The server's id is kept unless it is empty or taken.
+
+## [1.5.1] — 2026-11-03
+
+### Added
+
 - Sub-agents created on demand: `Agent(subagents=True)` adds a `spawn_agent` tool with
   which the model launches a fresh agent for a self-contained task and gets back only
   its final report. In each call the model writes the `description` and `prompt` and
@@ -74,8 +166,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- `Agent(instructions="...")`: a string is rendered as written, a block of text under
-  `## Instructions:`, no longer prefixed with `- `; a list is still rendered as bullets.
 - `Agent.run` and `Agent.run_stream` now run the delegation calls of one turn (team
   handoffs and `spawn_agent`) in parallel threads, as `arun` already did. Other tool
   calls still run one after the other, in order, and results keep the order of the calls.
@@ -87,15 +177,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `ChatOpenAI.stream` / `astream` lost the tool calls of a turn the server did not end
-  on `finish_reason: "tool_calls"`: a server that ends it on `stop`, or with no reason
-  at all (several local engines), got its calls dropped and the run ended without
-  them. They are now always handed over, once, at the end of the stream.
-- A tool call now always has an id of its own in the conversation it answers
-  (`ChatOpenAI`, streamed or not): a server that sends none, or numbers its calls per
-  turn (`call_1` every time), got an id that the history already used, so a result
-  could be matched to another call (`DeduplicateReads` then blanked it as a duplicate).
-  The server's id is kept unless it is empty or taken.
 - Tool calls had no span since 1.4.0: the `@tracer.tool` decorator had slid from
   `Agent.run_tool` onto `_calibrate_history`, so every "Tool Call" span wrapped a memory
   computation, with no `tool.name`, and no tool execution was traced. A delegated

@@ -1,45 +1,104 @@
 import json
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+from gwenflow.flows.runtime import bounded_timeout, raise_if_stopped, remaining_time, stop_requested
+
 NODE_TYPE_REGISTRY: dict[str, Callable] = {}
 
+Idempotency = bool | Callable[[dict], bool]
+PathParameters = Sequence[str] | Callable[[dict], Iterable[str]]
 
-def node_type(type_name: str) -> Callable:
+
+@dataclass(frozen=True)
+class NodeTypeOptions:
+    idempotent: Idempotency = False
+    paths: PathParameters = ()
+
+
+NODE_TYPE_OPTIONS: dict[str, NodeTypeOptions] = {}
+
+
+def node_type(type_name: str, *, idempotent: Idempotency = False, paths: PathParameters = ()) -> Callable:
     def decorator(fn: Callable) -> Callable:
         NODE_TYPE_REGISTRY[type_name] = fn
+        NODE_TYPE_OPTIONS[type_name] = NodeTypeOptions(idempotent=idempotent, paths=paths)
         return fn
 
     return decorator
 
 
-@node_type("gwenflow.Python")
+def is_idempotent(type_name: str, parameters: dict) -> bool:
+    flag = NODE_TYPE_OPTIONS.get(type_name, NodeTypeOptions()).idempotent
+    return bool(flag(parameters)) if callable(flag) else flag
+
+
+def node_paths(type_name: str, parameters: dict) -> list[str]:
+    paths = NODE_TYPE_OPTIONS.get(type_name, NodeTypeOptions()).paths
+    if callable(paths):
+        return [str(p) for p in paths(parameters) if p]
+    return [str(parameters[name]) for name in paths if parameters.get(name)]
+
+
+SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+READ_ONLY_OPENSEARCH_OPERATIONS = {"search", "count", "get"}
+POLL_INTERVAL = 0.2
+STDERR_TAIL = 2000
+
+
+def _python_paths(parameters: dict) -> list[str]:
+    directory = parameters.get("directory", ".")
+    return [directory, str(Path(directory) / parameters.get("file", ""))]
+
+
+def _communicate(process: subprocess.Popen, stdin: str | None) -> tuple[str, str]:
+    pending = stdin
+    while True:
+        try:
+            return process.communicate(pending, timeout=POLL_INTERVAL)
+        except subprocess.TimeoutExpired:
+            pending = None
+            if stop_requested():
+                process.kill()
+                process.communicate()
+                raise_if_stopped()
+
+
+@node_type("gwenflow.Python", paths=_python_paths)
 def handle_python(parameters: dict, input_data: dict | None) -> str:
+    script = parameters["file"]
     args = [str(a) for a in parameters.get("args", [])]
     stdin = json.dumps(input_data) if input_data else None
-    result = subprocess.run(
-        [sys.executable, parameters["file"], *args],
+    process = subprocess.Popen(
+        [sys.executable, script, *args],
         cwd=parameters.get("directory", "."),
-        input=stdin,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=True,
     )
-    return result.stdout.strip()
+    stdout, stderr = _communicate(process, stdin)
+    if process.returncode != 0:
+        detail = stderr.strip()[-STDERR_TAIL:] or "nothing on stderr"
+        raise RuntimeError(f"{script} exited with code {process.returncode}:\n{detail}")
+    return stdout.strip()
 
 
-@node_type("gwenflow.httpRequest")
+@node_type("gwenflow.httpRequest", idempotent=lambda p: str(p.get("method", "GET")).upper() in SAFE_HTTP_METHODS)
 def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
+    raise_if_stopped()
     url = parameters["url"]
     method = parameters.get("method", "GET").upper()
     headers = dict(parameters.get("headers", {}))
     query_params = parameters.get("query_params", {})
     body = parameters.get("body")
-    timeout = parameters.get("timeout", 30)
+    timeout = bounded_timeout(parameters.get("timeout", 30))
 
     auth = parameters.get("auth", {})
     if auth.get("type") == "bearer":
@@ -58,20 +117,37 @@ def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
         return response.text
 
 
-@node_type("gwenflow.Agent")
+def compose_task(task: str, input_data: dict | None) -> str:
+    """Fill `{node_name}` placeholders with parent outputs; append the others as context."""
+    unreferenced = []
+    for name, value in (input_data or {}).items():
+        serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        placeholder = f"{{{name}}}"
+        if placeholder in task:
+            task = task.replace(placeholder, serialized)
+        else:
+            unreferenced.append(f"Output from {name}:\n{serialized}")
+    if unreferenced:
+        task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(unreferenced)
+
+    return task
+
+
+@node_type("gwenflow.Agent", paths=("harness",))
 def handle_agent(parameters: dict, input_data: dict | None) -> str:
-    """An agent node, from a harness or from `model` and `instructions` written in the flow.
+    """Run an agent on the node's task, from a harness or from the parameters written in the flow.
 
-    `harness` is a harness directory or a single-file agent, relative to the working
-    directory; `model`, if given, overrides its model.
+    Parameters: `harness` (a harness directory or a single-file agent, relative to the
+    working directory) or `instructions`; `model` (`provider/model-name`, overrides the
+    harness model), `task`, `tools` (built-in tool names) and an optional `name`.
+
+    Parent outputs fill the `{node_name}` placeholders of `task`; those the task
+    does not reference are appended as context, so every input reaches the agent.
     """
-    from gwenflow import Agent, ChatOpenAI
+    from gwenflow import Agent
+    from gwenflow.registry import DEFAULT_MODEL, make_llm, make_tools
 
-    task = parameters.get("task", "")
-    if input_data:
-        for name, value in input_data.items():
-            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            task = task.replace(f"{{{name}}}", serialized)
+    task = compose_task(parameters.get("task", ""), input_data)
 
     harness = parameters.get("harness")
     if harness:
@@ -82,23 +158,17 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
         agent = Harness.load(harness).build_agent(model=parameters.get("model"))
         return agent.run(task).content
 
-    raw_model = parameters.get("model", "openai/gpt-4o-mini")
-    model = raw_model.split("/", 1)[-1]
-
     instructions = parameters.get("instructions", "")
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    llm = ChatOpenAI(model=model)
     agent = Agent(
-        name="Flow Agent",
+        name=parameters.get("name", "Flow Agent"),
         instructions=instructions,
-        llm=llm,
-        tools=[],
+        llm=make_llm(parameters.get("model", DEFAULT_MODEL)),
+        tools=make_tools(parameters.get("tools")),
     )
-
-    response = agent.run(task)
-    return response.content
+    return agent.run(task).content
 
 
 @node_type("gwenflow.postgresQuery")
@@ -119,6 +189,10 @@ def handle_postgres(parameters: dict, input_data: dict | None) -> Any:
     query_params = parameters.get("params") or []
 
     with psycopg.connect(conn_string, row_factory=dict_row) as conn:
+        left = remaining_time()
+        if left is not None:
+            raise_if_stopped()
+            conn.execute(f"SET statement_timeout = {max(1, int(left * 1000))}")
         with conn.cursor() as cur:
             cur.execute(query, query_params)
             if cur.description is None:
@@ -128,7 +202,7 @@ def handle_postgres(parameters: dict, input_data: dict | None) -> Any:
             return [dict(row) for row in rows]
 
 
-@node_type("gwenflow.pdfReader")
+@node_type("gwenflow.pdfReader", idempotent=True, paths=("file",))
 def handle_pdf_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
@@ -147,7 +221,7 @@ def handle_pdf_reader(parameters: dict, input_data: dict | None) -> Any:
     ]
 
 
-@node_type("gwenflow.csvReader")
+@node_type("gwenflow.csvReader", idempotent=True, paths=("file",))
 def handle_csv_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
@@ -166,7 +240,7 @@ def handle_csv_reader(parameters: dict, input_data: dict | None) -> Any:
     return {"content": doc.content, **doc.metadata}
 
 
-@node_type("gwenflow.excelReader")
+@node_type("gwenflow.excelReader", idempotent=True, paths=("file",))
 def handle_excel_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
@@ -181,7 +255,7 @@ def handle_excel_reader(parameters: dict, input_data: dict | None) -> Any:
     return [{"content": doc.content, **doc.metadata} for doc in documents]
 
 
-@node_type("gwenflow.jsonReader")
+@node_type("gwenflow.jsonReader", idempotent=True, paths=("file",))
 def handle_json_reader(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
@@ -190,7 +264,7 @@ def handle_json_reader(parameters: dict, input_data: dict | None) -> Any:
         return json.load(f)
 
 
-@node_type("gwenflow.websiteReader")
+@node_type("gwenflow.websiteReader", idempotent=True)
 def handle_website_reader(parameters: dict, input_data: dict | None) -> Any:
     from gwenflow.readers.website import WebsiteReader
 
@@ -203,7 +277,7 @@ def handle_website_reader(parameters: dict, input_data: dict | None) -> Any:
     return [{"url": doc.metadata.get("url"), "content": doc.content} for doc in documents]
 
 
-@node_type("gwenflow.csvWriter")
+@node_type("gwenflow.csvWriter", idempotent=True, paths=("file",))
 def handle_csv_writer(parameters: dict, input_data: dict | None) -> Any:
     import csv
     from pathlib import Path
@@ -228,7 +302,7 @@ def handle_csv_writer(parameters: dict, input_data: dict | None) -> Any:
     return {"file": str(path), "rows_written": len(data)}
 
 
-@node_type("gwenflow.jsonWriter")
+@node_type("gwenflow.jsonWriter", idempotent=True, paths=("file",))
 def handle_json_writer(parameters: dict, input_data: dict | None) -> Any:
     from pathlib import Path
 
@@ -250,7 +324,7 @@ def handle_json_writer(parameters: dict, input_data: dict | None) -> Any:
     return {"file": str(path)}
 
 
-@node_type("gwenflow.textSplitter")
+@node_type("gwenflow.textSplitter", idempotent=True)
 def handle_text_splitter(parameters: dict, input_data: dict | None) -> Any:
     from gwenflow.parsers.text_splitters import TokenTextSplitter
     from gwenflow.types.document import Document
@@ -279,7 +353,11 @@ def handle_text_splitter(parameters: dict, input_data: dict | None) -> Any:
     return [{"chunk_id": c.metadata.get("chunk_id"), "content": c.content} for c in chunks]
 
 
-@node_type("gwenflow.opensearchQuery")
+@node_type(
+    "gwenflow.opensearchQuery",
+    idempotent=lambda p: p.get("operation", "search") in READ_ONLY_OPENSEARCH_OPERATIONS,
+    paths=("ca_certs",),
+)
 def handle_opensearch_query(parameters: dict, input_data: dict | None) -> Any:
     from gwenflow.stores.opensearch import OpenSearchDocumentStore
 
@@ -319,7 +397,7 @@ def handle_opensearch_query(parameters: dict, input_data: dict | None) -> Any:
         raise ValueError(f"Unknown operation '{operation}'. Expected: search, count, get, put, delete.")
 
 
-@node_type("gwenflow.sqliteQuery")
+@node_type("gwenflow.sqliteQuery", paths=("database",))
 def handle_sqlite_query(parameters: dict, input_data: dict | None) -> Any:
     import sqlite3
 
@@ -329,8 +407,13 @@ def handle_sqlite_query(parameters: dict, input_data: dict | None) -> Any:
 
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(query, query_params)
-        if cur.description is None:
-            conn.commit()
-            return {"affected_rows": cur.rowcount}
-        return [dict(row) for row in cur.fetchall()]
+        conn.set_progress_handler(stop_requested, 10_000)
+        try:
+            cur = conn.execute(query, query_params)
+            if cur.description is None:
+                conn.commit()
+                return {"affected_rows": cur.rowcount}
+            return [dict(row) for row in cur.fetchall()]
+        except sqlite3.OperationalError:
+            raise_if_stopped()
+            raise
