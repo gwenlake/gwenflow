@@ -119,6 +119,61 @@ class _ActivityTool(BaseTool):
         )
 
 
+MEMORY_PATH_ARGUMENTS = ("path", "old_path", "new_path")
+
+
+@dataclass(kw_only=True)
+class _MemoryTool(BaseTool):
+    durability: TemporalDurability = None
+    memory: Any = None
+
+    @classmethod
+    def wrap(cls, target: BaseTool, memory: Any, durability: TemporalDurability) -> "_MemoryTool":
+        return cls(
+            name=target.name,
+            description=target.description,
+            parameters=target.parameters,
+            function_schema=target.function_schema,
+            durability=durability,
+            memory=memory,
+        )
+
+    def __post_init__(self) -> None:
+        pass
+
+    def _run(self, **kwargs: Any) -> Any:
+        raise GwenflowDurabilityError(f"Tool {self.name!r} must be awaited (`arun`) inside a workflow.")
+
+    async def arun(self, **kwargs: Any) -> Optional[str]:
+        paths = [kwargs[k] for k in MEMORY_PATH_ARGUMENTS if isinstance(kwargs.get(k), str)]
+        await self.durability._fetch_memory_files(self.memory, paths)
+        return getattr(self.memory, self.name)(**kwargs)
+
+
+class _RecordedReads:
+    def __init__(self) -> None:
+        self.files: Dict[str, Any] = {}
+
+    def read(self, path: str) -> Any:
+        if path not in self.files:
+            raise GwenflowDurabilityError(f"Memory file {path} was not fetched by an activity.")
+        return self.files[path]
+
+    def __getattr__(self, name: str) -> Any:
+        raise GwenflowDurabilityError(f"Memory store access `{name}` must run in an activity, not in a workflow.")
+
+
+def _query_text(input: Any) -> Optional[str]:
+    if isinstance(input, str):
+        return input
+    for message in reversed(input or []):
+        role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+        if role == "user" and isinstance(content, str):
+            return content
+    return None
+
+
 def _to_jsonable(obj: Any) -> Any:
     return obj.to_dict() if hasattr(obj, "to_dict") else str(obj)
 

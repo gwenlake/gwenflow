@@ -18,9 +18,10 @@ never with an exception. Nothing is stored before :meth:`MemoryToolset.aflush`.
 
 from __future__ import annotations
 
+import copy
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from gwenflow.logger import logger
@@ -43,6 +44,7 @@ from gwenflow.stores.files.base import (
     normalize_memory_path,
     normalize_memory_prefix,
 )
+from gwenflow.utils.durable import now_utc
 from gwenflow.utils.markdown import parse_frontmatter
 
 if TYPE_CHECKING:
@@ -77,6 +79,19 @@ class FlushReport:
     @property
     def ok(self) -> bool:
         return not self.conflicts and not self.lost_ops and not self.errors
+
+
+@dataclass
+class MemoryState:
+    files: list[MemoryFile] = field(default_factory=list)
+    index: list[MemoryFile] = field(default_factory=list)
+    recalled: list[str] = field(default_factory=list)
+    shown: list[str] = field(default_factory=list)
+    dirty: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+    ops: dict[str, list[MemoryOp]] = field(default_factory=dict)
+    read_paths: list[str] = field(default_factory=list)
+    loaded: bool = False
 
 
 class MemoryToolset:
@@ -261,6 +276,10 @@ class MemoryToolset:
 
     async def _replay_after_conflict(self, path: str, report: FlushReport) -> MemoryFile | None:
         fresh = await self.store.aread(path)
+        with self._lock:
+            intended = self._files.get(path)
+        if fresh is not None and intended is not None and fresh.content == (intended.content or ""):
+            return fresh
         base = fresh.content if fresh is not None and fresh.content is not None else default_template(path)
         with self._lock:
             ops = list(self._ops.get(path, []))
@@ -289,6 +308,75 @@ class MemoryToolset:
     # ------------------------------------------------------------------
     # Working copy accessors (used by the consolidator / the app)
     # ------------------------------------------------------------------
+
+    def fresh_copy(self, store: MemoryStore | None = None) -> MemoryToolset:
+        clone = copy.copy(self)
+        clone.store = store if store is not None else self.store
+        clone.recalled, clone.shown = [], []
+        clone.entities = [dict(e) for e in self.entities]
+        clone._files, clone._index = {}, {}
+        clone._dirty, clone._deleted = set(), set()
+        clone._ops, clone._read_paths = {}, set()
+        clone._lock = threading.RLock()
+        clone.loaded = False
+        return clone
+
+    def unloaded(self, paths: list[str]) -> list[str]:
+        missing = []
+        with self._lock:
+            for path in paths:
+                try:
+                    normalized = normalize_memory_path(path)
+                except MemoryPathError:
+                    continue
+                if normalized not in self._files and normalized not in self._deleted and normalized not in missing:
+                    missing.append(normalized)
+        return missing
+
+    def has_pending(self) -> bool:
+        with self._lock:
+            return bool(self._dirty or self._deleted or self._read_paths)
+
+    def dump_state(self, pending_only: bool = False) -> MemoryState:
+        with self._lock:
+            paths = sorted(self._dirty) if pending_only else list(self._files)
+            return MemoryState(
+                files=[copy.copy(self._files[p]) for p in paths if p in self._files],
+                index=[] if pending_only else [copy.copy(f) for f in self._index.values()],
+                recalled=list(self.recalled),
+                shown=list(self.shown),
+                dirty=sorted(self._dirty),
+                deleted=sorted(self._deleted),
+                ops={p: list(ops) for p, ops in self._ops.items()},
+                read_paths=sorted(self._read_paths),
+                loaded=self.loaded,
+            )
+
+    def restore_state(self, state: MemoryState) -> None:
+        with self._lock:
+            self._files = {f.path: copy.copy(f) for f in state.files}
+            self._index = {f.path: copy.copy(f) for f in state.index}
+            self.recalled = list(state.recalled)
+            self.shown = list(state.shown)
+            self._dirty = set(state.dirty)
+            self._deleted = set(state.deleted)
+            self._ops = {p: list(ops) for p, ops in state.ops.items()}
+            self._read_paths = set(state.read_paths)
+            self.loaded = state.loaded
+
+    def merge_flushed(self, state: MemoryState) -> None:
+        with self._lock:
+            for flushed in state.files:
+                file = self._files.get(flushed.path)
+                if file is not None:
+                    file.version = flushed.version
+                    file.content = flushed.content
+                if flushed.path in self._index:
+                    self._index[flushed.path].version = flushed.version
+            self._dirty = set(state.dirty)
+            self._deleted = set(state.deleted)
+            self._ops = {p: list(ops) for p, ops in state.ops.items()}
+            self._read_paths = set(state.read_paths)
 
     def snapshot(self) -> dict[str, str]:
         """Current working copy ``{path: content}`` of the loaded files."""
@@ -364,7 +452,7 @@ class MemoryToolset:
         entries = [f for f in self.index() if self.show_archived or not self._is_archived(f.path)]
         if not entries:
             return "\n<memory_files>\n(no topic files yet)\n</memory_files>\n"
-        now = datetime.now(timezone.utc)
+        now = now_utc()
         displayed = set(self._displayed())
         lines = []
         for f in entries:

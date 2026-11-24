@@ -18,15 +18,29 @@ from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from pydantic import TypeAdapter
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
 
-from gwenflow.durability.agents import _RESPONSE, _ActivityChat, _ActivityTool
+from gwenflow.durability.agents import (
+    _RESPONSE,
+    _ActivityChat,
+    _ActivityTool,
+    _MemoryTool,
+    _query_text,
+    _RecordedReads,
+)
 from gwenflow.durability.errors import GwenflowDurabilityError
 from gwenflow.durability.flows import FLOW_NODE_ACTIVITY, flow_node, node_activity_config
 from gwenflow.flows.flows import Flow, Node
+from gwenflow.memory.long_term.toolset import FlushReport, MemoryState
+from gwenflow.stores.files.base import MemoryFile
 from gwenflow.tools import BaseTool
 from gwenflow.tools.mcp import _MCPTool
+
+_MEMORY_STATE = TypeAdapter(MemoryState)
+_MEMORY_FILE = TypeAdapter(MemoryFile)
+_FLUSH_REPORT = TypeAdapter(FlushReport)
 
 DEFAULT_ACTIVITY_CONFIG: workflow.ActivityConfig = {"start_to_close_timeout": timedelta(seconds=60)}
 DEFAULT_MODEL_ACTIVITY_CONFIG: workflow.ActivityConfig = {
@@ -78,7 +92,6 @@ class TemporalDurability:
             for label, present in (
                 ("team", agent.team),
                 ("subagents", agent.subagents),
-                ("memory", agent.memory),
             )
             if present
         ]
@@ -174,9 +187,38 @@ class TemporalDurability:
                 for server, t in listing
             ]
 
+        @activity.defn(name=self._activity_name("memory_load"))
+        async def memory_load(request: Dict[str, Any]) -> Dict[str, Any]:
+            memory = durability._target.memory.fresh_copy()
+            await memory.aload(query=request.get("query"))
+            return _MEMORY_STATE.dump_python(memory.dump_state(), mode="json")
+
+        @activity.defn(name=self._activity_name("memory_read"))
+        async def memory_read(request: Dict[str, Any]) -> Dict[str, Any]:
+            store = durability._target.memory.store
+            files = {}
+            for path in request["paths"]:
+                file = await store.aread(path)
+                files[path] = None if file is None else _MEMORY_FILE.dump_python(file, mode="json")
+            return files
+
+        @activity.defn(name=self._activity_name("memory_flush"))
+        async def memory_flush(request: Dict[str, Any]) -> Dict[str, Any]:
+            memory = durability._target.memory.fresh_copy()
+            memory.restore_state(_MEMORY_STATE.validate_python(request))
+            report = await memory.aflush()
+            if report.errors:
+                raise ApplicationError(f"Memory flush failed: {report.errors}", type="MemoryFlushError")
+            return {
+                "state": _MEMORY_STATE.dump_python(memory.dump_state(), mode="json"),
+                "report": _FLUSH_REPORT.dump_python(report, mode="json"),
+            }
+
         activities = [model_request, call_tool, compact_history]
         if self._target.mcp_servers:
             activities.append(list_mcp_tools)
+        if self._target.memory is not None:
+            activities.extend([memory_load, memory_read, memory_flush])
         return activities
 
     def _list_mcp_tools(self) -> List[Tuple[str, BaseTool]]:
@@ -225,13 +267,38 @@ class TemporalDurability:
             history._summarized_upto = data["summarized_upto"]
         return None
 
-    async def before_run(self, agent: Any) -> None:
-        if not getattr(agent, "_mcp_pending", False):
+    async def before_run(self, agent: Any, input: Any = None) -> None:
+        if getattr(agent, "_mcp_pending", False):
+            listing = await workflow.execute_activity(self._activity_name("list_mcp_tools"), {}, **self.activity_config)
+            agent.tools = list(agent.tools) + [_ActivityTool.for_mcp(d, self) for d in listing]
+            agent.llm.tools = agent._llm_tools() or None
+            agent._mcp_pending = False
+        if agent.memory is not None and (input is not None or not agent.memory.loaded):
+            state = await workflow.execute_activity(
+                self._activity_name("memory_load"), {"query": _query_text(input)}, **self.activity_config
+            )
+            agent.memory.store.files.clear()
+            agent.memory.restore_state(_MEMORY_STATE.validate_python(state))
+
+    async def after_run(self, agent: Any) -> None:
+        if agent.memory is None or not agent.memory.has_pending():
             return
-        listing = await workflow.execute_activity(self._activity_name("list_mcp_tools"), {}, **self.activity_config)
-        agent.tools = list(agent.tools) + [_ActivityTool.for_mcp(d, self) for d in listing]
-        agent.llm.tools = agent._llm_tools() or None
-        agent._mcp_pending = False
+        result = await workflow.execute_activity(
+            self._activity_name("memory_flush"),
+            _MEMORY_STATE.dump_python(agent.memory.dump_state(pending_only=True), mode="json"),
+            **self.activity_config,
+        )
+        agent.memory.merge_flushed(_MEMORY_STATE.validate_python(result["state"]))
+
+    async def _fetch_memory_files(self, memory: Any, paths: List[str]) -> None:
+        missing = [p for p in memory.unloaded(paths) if p not in memory.store.files]
+        if not missing:
+            return
+        files = await workflow.execute_activity(
+            self._activity_name("memory_read"), {"paths": missing}, **self.activity_config
+        )
+        for path, data in files.items():
+            memory.store.files[path] = None if data is None else _MEMORY_FILE.validate_python(data)
 
     def before_model_request(self, agent: Any) -> None:
         """Hook called by the agent loop before each model request, in workflow code."""
@@ -257,7 +324,16 @@ class TemporalDurability:
         clone._workflow_copy = True
         clone._mcp_pending = bool(agent.mcp_servers)
         clone.mcp_servers = []
-        clone.tools = [_ActivityTool.wrap(t, self) for t in agent.tools]
+        memory_tools = set()
+        if agent.memory is not None:
+            clone.memory = agent.memory.fresh_copy(store=_RecordedReads())
+            memory_tools = {
+                id(t) for t in agent.tools if getattr(getattr(t, "function", None), "__self__", None) is agent.memory
+            }
+        clone.tools = [
+            _MemoryTool.wrap(t, clone.memory, self) if id(t) in memory_tools else _ActivityTool.wrap(t, self)
+            for t in agent.tools
+        ]
         proxy = _ActivityChat.wrap(agent.llm, self)
         proxy.tools = clone._llm_tools() if clone.tools else None
         proxy.tool_choice = agent.llm.tool_choice

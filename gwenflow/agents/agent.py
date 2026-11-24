@@ -1888,7 +1888,7 @@ class Agent:
             if not getattr(self, "_workflow_copy", False):
                 # Each workflow run gets its own copy (own history), rebuilt identically on replay.
                 return await self.durability.workflow_agent(self).arun(input, context=context, approvals=approvals)
-            await self.durability.before_run(self)
+            await self.durability.before_run(self, input)
         messages, task = self._run_input(input)
 
         agent_response = AgentResponse(agent_id=self.id)
@@ -2023,6 +2023,8 @@ class Agent:
         )
 
         self._finish_run(agent_response, self._end_reason(completed, paused))
+        if in_workflow() and self.durability is not None:
+            await self.durability.after_run(self)
 
         return agent_response
 

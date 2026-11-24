@@ -36,7 +36,18 @@ def worker_options(
             raise ValueError(f"Agent '{agent.name}' has no durability: nothing to register.")
         activities.extend(agent.durability.activities)
     restrictions = SandboxRestrictions.default.with_passthrough_modules(
-        "gwenflow", "openai", "anthropic", "mistralai", "google", "httpx", "tiktoken", "pydantic", "tenacity", "rich"
+        "gwenflow",
+        "openai",
+        "anthropic",
+        "mistralai",
+        "google",
+        "httpx",
+        "tiktoken",
+        "pydantic",
+        "tenacity",
+        "rich",
+        "boto3",
+        "botocore",
     )
     return {
         "workflows": list(workflow_classes),
