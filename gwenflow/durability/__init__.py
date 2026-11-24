@@ -21,8 +21,8 @@ rebuilt identically on replay), so the same module-level agent serves every
 run. `AgentWorkflow` (tool approvals) and `DurableFlow` (a flow definition as
 input, node progress as a query) are optional ready-made workflows.
 
-Not covered yet: team / subagents (thread based), MCP servers, long-term
-memory toolsets, streaming.
+Not covered yet: team / subagents (thread based), long-term memory toolsets,
+streaming.
 """
 
 try:

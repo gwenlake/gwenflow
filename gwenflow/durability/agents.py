@@ -46,6 +46,7 @@ class _ActivityChat(ChatBase):
         request = {
             "messages": json.loads(json.dumps(input, default=_to_jsonable)),
             "tool_names": [t.name for t in (self.tools or [])],
+            "mcp_tools": [t.definition() for t in (self.tools or []) if getattr(t, "server", None)],
             "tool_choice": self.tool_choice,
             "structured_output": self.response_format is not None,
         }
@@ -75,6 +76,7 @@ class _ActivityTool(BaseTool):
     """Same schema as the wrapped tool; `arun` executes the `call_tool` activity."""
 
     durability: TemporalDurability = None
+    server: Optional[str] = None
 
     @classmethod
     def wrap(cls, target: BaseTool, durability: TemporalDurability) -> "_ActivityTool":
@@ -87,6 +89,21 @@ class _ActivityTool(BaseTool):
             durability=durability,
         )
 
+    @classmethod
+    def for_mcp(cls, definition: Dict[str, Any], durability: TemporalDurability) -> "_ActivityTool":
+        function = {k: definition[k] for k in ("name", "description", "parameters")}
+        return cls(
+            name=definition["name"],
+            description=definition["description"],
+            parameters=definition["parameters"],
+            function_schema={"type": "function", "function": function},
+            durability=durability,
+            server=definition["server"],
+        )
+
+    def definition(self) -> Dict[str, Any]:
+        return {"name": self.name, "description": self.description, "parameters": self.parameters}
+
     def __post_init__(self) -> None:  # schema copied from the target, no introspection
         pass
 
@@ -94,10 +111,11 @@ class _ActivityTool(BaseTool):
         raise GwenflowDurabilityError(f"Tool {self.name!r} must be awaited (`arun`) inside a workflow.")
 
     async def arun(self, **kwargs: Any) -> Optional[str]:
+        request = {"name": self.name, "arguments": kwargs}
+        if self.server is not None:
+            request["server"] = self.server
         return await workflow.execute_activity(
-            self.durability._activity_name("call_tool"),
-            {"name": self.name, "arguments": kwargs},
-            **self.durability._config_for_tool(self.name),
+            self.durability._activity_name("call_tool"), request, **self.durability._config_for_tool(self.name)
         )
 
 

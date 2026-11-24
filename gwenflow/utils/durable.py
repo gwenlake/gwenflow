@@ -14,6 +14,14 @@ def in_workflow() -> bool:
     return workflow.in_workflow()
 
 
+def in_sandbox() -> bool:
+    try:
+        from temporalio import workflow
+    except ImportError:
+        return False
+    return workflow.unsafe.in_sandbox()
+
+
 # Per-workflow-instance state (last timestamp, last counter), so that ids stay
 # monotonic within a run and identical on replay. Never shared between runs.
 _workflow_uuid7_state: "weakref.WeakKeyDictionary[object, list[int]]" = weakref.WeakKeyDictionary()

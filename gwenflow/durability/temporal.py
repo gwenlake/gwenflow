@@ -12,17 +12,21 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import threading
 import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 
 from gwenflow.durability.agents import _RESPONSE, _ActivityChat, _ActivityTool
 from gwenflow.durability.errors import GwenflowDurabilityError
 from gwenflow.durability.flows import FLOW_NODE_ACTIVITY, flow_node, node_activity_config
 from gwenflow.flows.flows import Flow, Node
+from gwenflow.tools import BaseTool
+from gwenflow.tools.mcp import _MCPTool
 
 DEFAULT_ACTIVITY_CONFIG: workflow.ActivityConfig = {"start_to_close_timeout": timedelta(seconds=60)}
 DEFAULT_MODEL_ACTIVITY_CONFIG: workflow.ActivityConfig = {
@@ -50,6 +54,8 @@ class TemporalDurability:
     _target: Any = field(default=None, init=False, repr=False)
     _activities: List[Callable] = field(default_factory=list, init=False, repr=False)
     _copies: Any = field(default_factory=weakref.WeakKeyDictionary, init=False, repr=False)
+    _mcp_tools: Dict[Tuple[str, str], BaseTool] = field(default_factory=dict, init=False, repr=False)
+    _mcp_lock: Any = field(default_factory=threading.Lock, init=False, repr=False)
 
     # -- binding (called from Agent.__post_init__) --------------------------
 
@@ -72,13 +78,18 @@ class TemporalDurability:
             for label, present in (
                 ("team", agent.team),
                 ("subagents", agent.subagents),
-                ("mcp_servers", agent.mcp_servers),
                 ("memory", agent.memory),
             )
             if present
         ]
         if unsupported:
             raise GwenflowDurabilityError(f"Not supported yet with Temporal: {', '.join(unsupported)}.")
+        server_names = [server.name for server in agent.mcp_servers]
+        duplicates = sorted({n for n in server_names if server_names.count(n) > 1})
+        if duplicates:
+            raise GwenflowDurabilityError(
+                f"MCP servers of a durable agent need distinct names (pass `name=`): {', '.join(duplicates)}."
+            )
         self._target = agent
         self._activities = self._build_activities()
         # The tokenizer loads its vocabulary lazily (disk cache, network on first use):
@@ -108,7 +119,14 @@ class TemporalDurability:
             agent = durability._target
             # One llm copy per call: activities of concurrent workflows share this worker-side agent.
             llm = copy.copy(agent.llm)
-            tools_by_name = {t.name: t for t in agent._llm_tools()}
+            tools_by_name = {t.name: t for t in agent.tools}
+            if agent.response_model is not None:
+                final_result = agent._final_result_tool()
+                tools_by_name[final_result.name] = final_result
+            for d in request.get("mcp_tools") or []:
+                tools_by_name[d["name"]] = _MCPTool(
+                    _mcp_name=d["name"], _mcp_description=d["description"], _mcp_parameters=d["parameters"]
+                )
             names = request["tool_names"]
             llm.tools = [tools_by_name[n] for n in names] if names else None
             llm.tool_choice = request["tool_choice"]
@@ -119,7 +137,11 @@ class TemporalDurability:
 
         @activity.defn(name=self._activity_name("call_tool"))
         async def call_tool(request: Dict[str, Any]) -> Optional[str]:
-            tool = {t.name: t for t in durability._target.get_all_tools()}[request["name"]]
+            server = request.get("server")
+            if server is None:
+                tool = {t.name: t for t in durability._target.tools}[request["name"]]
+            else:
+                tool = await asyncio.to_thread(durability._mcp_tool, server, request["name"])
             # A single attempt: retries belong to Temporal, not to tenacity inside the activity.
             result = await asyncio.to_thread(tool._run, **request["arguments"])
             return tool._cast_response_to_str(result)
@@ -144,7 +166,40 @@ class TemporalDurability:
                 "summarized_upto": getattr(history, "_summarized_upto", 0),
             }
 
-        return [model_request, call_tool, compact_history]
+        @activity.defn(name=self._activity_name("list_mcp_tools"))
+        async def list_mcp_tools(request: Dict[str, Any]) -> List[Dict[str, Any]]:
+            listing = await asyncio.to_thread(durability._list_mcp_tools)
+            return [
+                {"server": server, "name": t.name, "description": t.description or "", "parameters": t.parameters}
+                for server, t in listing
+            ]
+
+        activities = [model_request, call_tool, compact_history]
+        if self._target.mcp_servers:
+            activities.append(list_mcp_tools)
+        return activities
+
+    def _list_mcp_tools(self) -> List[Tuple[str, BaseTool]]:
+        with self._mcp_lock:
+            listing = []
+            for server in self._target.mcp_servers:
+                for tool in server.get_tools():
+                    self._mcp_tools[(server.name, tool.name)] = tool
+                    listing.append((server.name, tool))
+            return listing
+
+    def _mcp_tool(self, server: str, name: str) -> BaseTool:
+        tool = self._mcp_tools.get((server, name))
+        if tool is None:
+            self._list_mcp_tools()
+            tool = self._mcp_tools.get((server, name))
+        if tool is None:
+            raise ApplicationError(
+                f"MCP tool {name!r} is no longer offered by server {server!r}.",
+                type="UnknownMCPTool",
+                non_retryable=True,
+            )
+        return tool
 
     async def _compact_in_activity(self, history: Any) -> None:
         data = await workflow.execute_activity(
@@ -170,6 +225,14 @@ class TemporalDurability:
             history._summarized_upto = data["summarized_upto"]
         return None
 
+    async def before_run(self, agent: Any) -> None:
+        if not getattr(agent, "_mcp_pending", False):
+            return
+        listing = await workflow.execute_activity(self._activity_name("list_mcp_tools"), {}, **self.activity_config)
+        agent.tools = list(agent.tools) + [_ActivityTool.for_mcp(d, self) for d in listing]
+        agent.llm.tools = agent._llm_tools() or None
+        agent._mcp_pending = False
+
     def before_model_request(self, agent: Any) -> None:
         """Hook called by the agent loop before each model request, in workflow code."""
         if self.continue_as_new is not None and workflow.info().is_continue_as_new_suggested():
@@ -192,6 +255,8 @@ class TemporalDurability:
             return clone
         clone = agent.clone()
         clone._workflow_copy = True
+        clone._mcp_pending = bool(agent.mcp_servers)
+        clone.mcp_servers = []
         clone.tools = [_ActivityTool.wrap(t, self) for t in agent.tools]
         proxy = _ActivityChat.wrap(agent.llm, self)
         proxy.tools = clone._llm_tools() if clone.tools else None

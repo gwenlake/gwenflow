@@ -82,7 +82,7 @@ from gwenflow.types import (
     ToolResponse,
 )
 from gwenflow.utils import extract_json_str
-from gwenflow.utils.durable import in_workflow, new_id
+from gwenflow.utils.durable import in_sandbox, in_workflow, new_id
 from gwenflow.utils.tokens import keep_tokens_from_text
 
 try:
@@ -1259,6 +1259,8 @@ class Agent:
     def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
         tools = list(self.tools)
+        if in_sandbox():
+            return tools
         for server in self.mcp_servers:
             tools += server.get_tools()
         return tools
@@ -1886,6 +1888,7 @@ class Agent:
             if not getattr(self, "_workflow_copy", False):
                 # Each workflow run gets its own copy (own history), rebuilt identically on replay.
                 return await self.durability.workflow_agent(self).arun(input, context=context, approvals=approvals)
+            await self.durability.before_run(self)
         messages, task = self._run_input(input)
 
         agent_response = AgentResponse(agent_id=self.id)
