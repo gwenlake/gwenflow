@@ -43,7 +43,7 @@ from gwenflow.llms.base import CONTEXT_SAFETY_RATIO, FINISH_CONTENT_FILTER, FINI
 from gwenflow.logger import logger
 from gwenflow.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer, MemoryToolset
 from gwenflow.memory.chat_memory_buffer import DEFAULT_MAX_FRACTION
-from gwenflow.memory.compaction import PINNED_KEY, calls_by_id, pin
+from gwenflow.memory.compaction import PINNED_KEY, pin
 from gwenflow.retriever import Retriever
 from gwenflow.skills import Skill, SkillsToolset
 from gwenflow.telemetry import tracer
@@ -170,11 +170,10 @@ CUT_SHORT_TOOL_CALL = (
 )
 
 
-def _event_args(arguments: Any) -> Dict[str, Any]:
-    """Tool-call arguments for an event payload, as `Agent._parse_tool_args` gives them."""
-    if isinstance(arguments, dict):
-        return arguments
-    return {"raw": arguments} if isinstance(arguments, str) and arguments.strip() else {}
+CUT_SHORT_ARGUMENTS = "{}"
+"""Arguments the history keeps for a tool call the output token limit cut:
+half-written JSON would be refused by the servers that parse the arguments of
+past calls."""
 
 
 def _complete_arguments(arguments: Any) -> bool:
@@ -185,6 +184,38 @@ def _complete_arguments(arguments: Any) -> bool:
         return isinstance(json.loads(arguments), dict)
     except json.JSONDecodeError:
         return False
+
+
+def _cut_tool_calls(tool_calls: List[ToolCall]) -> List[ToolCall]:
+    """The calls of a turn stopped by the output token limit that the limit cut.
+
+    Arguments left as incomplete JSON were cut. So was the last call, the one
+    being written when the limit fell, unless its arguments are text holding a
+    whole JSON object: with none, the limit fell before their first byte; as a
+    dict (Anthropic outside streaming), the provider parsed what it had and
+    nothing tells a whole call from a cut one.
+    """
+    last = len(tool_calls) - 1
+    return [
+        t
+        for i, t in enumerate(tool_calls)
+        if not _complete_arguments(t.arguments)
+        or (i == last and not (isinstance(t.arguments, str) and t.arguments.strip()))
+    ]
+
+
+def _model_messages(messages: List[Message]) -> List[Dict[str, Any]]:
+    """The messages of a model request, without the tool metadata kept for the application."""
+    dicts = []
+    for message in messages:
+        message_dict = message.to_dict()
+        if TOOL_METADATA_KEY in message.extra:
+            extra = {key: value for key, value in message.extra.items() if key != TOOL_METADATA_KEY}
+            message_dict.pop("extra")
+            if extra:
+                message_dict["extra"] = extra
+        dicts.append(message_dict)
+    return dicts
 
 
 ToolApprovals = Dict[str, Union[bool, ToolDenied]]
@@ -998,18 +1029,19 @@ class Agent:
             return json.dumps(parsed)
         return None
 
-    def _absorb_answer_tool_call(self, response: ModelResponse) -> None:
+    def _absorb_answer_tool_call(self, response: ModelResponse) -> bool:
         """Rewrite in place a response whose tool call is really the final answer.
 
         See `_answer_from_tool_calls`. The tool calls are replaced by a text
         part so that the history records a plain assistant message (no
         orphan tool call waiting for a tool result) and the normal
-        validation path runs.
+        validation path runs. Returns whether the response was rewritten.
         """
         answer = self._answer_from_tool_calls(response.tool_calls)
         if answer is None:
-            return
+            return False
         response.parts = [p for p in response.parts if not isinstance(p, ToolCall)] + [TextContent(content=answer)]
+        return True
 
     def _validate_final_response(
         self, content_to_parse: str | Dict[str, Any] | List[Any] | None
@@ -1529,16 +1561,22 @@ class Agent:
     ) -> tuple[List[ToolCall], List[AgentResponseEvent]]:
         """Answer, without running them, the tool calls the output token limit cut.
 
-        Their arguments are incomplete JSON: the model is told the call was cut
-        and can make it again with shorter arguments. Returns the other calls
-        and the events of the answered ones (already in `agent_response`).
+        See `_cut_tool_calls`: the model is told the call was cut and can make
+        it again with shorter arguments. Returns the other calls and the events
+        of the answered ones (already in `agent_response`).
         """
         if cut_short != FINISH_LENGTH:
             return tool_calls, []
-        cut = [t for t in tool_calls if not _complete_arguments(t.arguments)]
+        cut = _cut_tool_calls(tool_calls)
         if not cut:
             return tool_calls, []
         logger.warning(f"Tool call(s) cut by the output token limit: {[t.name for t in cut]}")
+        cut_ids = {id(t) for t in cut}
+        turn = next((m for m in reversed(self.history.messages) if m.role == "assistant" and m.tool_calls), None)
+        if turn is not None and len(turn.tool_calls) == len(tool_calls):
+            for call, tool_call in zip(turn.tool_calls, tool_calls, strict=True):
+                if id(tool_call) in cut_ids:
+                    call["function"]["arguments"] = CUT_SHORT_ARGUMENTS
         messages = [
             ToolResponse(
                 tool_call_id=t.id,
@@ -1549,8 +1587,7 @@ class Agent:
             for t in cut
         ]
         events = list(self._start_tool_calls(cut, agent_response))
-        events += list(self._record_tool_results(messages, agent_response))
-        cut_ids = {id(t) for t in cut}
+        events += list(self._record_tool_results(messages, agent_response, cut))
         return [t for t in tool_calls if id(t) not in cut_ids], events
 
     def _decide_pending(
@@ -1618,27 +1655,42 @@ class Agent:
             agent_response.events.append(event)
             yield event
 
-    def _latest_tool_calls(self) -> Dict[str, tuple[str, Any]]:
-        """`(name, arguments)` by id of the calls of the latest assistant turn that made some."""
+    def _latest_tool_calls(self) -> List[ToolCall]:
+        """The calls of the latest assistant turn that made some."""
         for message in reversed(self.history.messages):
             if message.role == "assistant" and message.tool_calls:
-                return calls_by_id([message])
-        return {}
+                return [
+                    ToolCall(id=call["id"], name=call["function"]["name"], arguments=call["function"]["arguments"])
+                    for call in message.tool_calls
+                ]
+        return []
 
     def _record_tool_results(
-        self, tool_messages: List[Message], agent_response: AgentResponse
+        self,
+        tool_messages: List[Message],
+        agent_response: AgentResponse,
+        tool_calls: Optional[List[ToolCall]] = None,
     ) -> Iterator[AgentResponseEvent]:
-        calls = self._latest_tool_calls()
+        """Record tool results, each with the name and arguments of the call it answers.
+
+        `tool_calls` are the calls the results answer, in order; without them
+        the calls are read from the history. Calls that share an id (a provider
+        that sends none) are matched in order.
+        """
+        calls: Dict[str, List[ToolCall]] = {}
+        for tool_call in self._latest_tool_calls() if tool_calls is None else tool_calls:
+            calls.setdefault(str(tool_call.id), []).append(tool_call)
         for m in tool_messages:
             self.history.add_message(m)
             agent_response.messages.append(m)
-            name, arguments = calls.get(str(m.tool_call_id), (None, None))
+            same_id = calls.get(str(m.tool_call_id)) or [None]
+            tool_call = same_id.pop(0) if len(same_id) > 1 else same_id[0]
             event = AgentEventToolCompleted(
                 agent_id=self.id,
                 run_id=agent_response.run_id,
                 tool_call_id=m.tool_call_id,
-                tool_name=name,
-                tool_args=_event_args(arguments),
+                tool_name=tool_call.name if tool_call else None,
+                tool_args=self._parse_tool_args(tool_call) if tool_call else {},
                 tool_metadata=m.extra.get(TOOL_METADATA_KEY),
                 content=m.content,
             )
@@ -1658,7 +1710,7 @@ class Agent:
         yield from self._start_tool_calls(tool_calls, agent_response)
         tool_messages = yield from self._execute_with_subagent_events(tool_calls, agent_response)
         agent_response.usage.tool_calls += len(tool_messages)
-        yield from self._record_tool_results(tool_messages, agent_response)
+        yield from self._record_tool_results(tool_messages, agent_response, tool_calls)
         if self.team or self.subagents:
             # Fold the sub-agents' spend into this run's usage.
             self._fold_delegation_usage(agent_response)
@@ -1757,7 +1809,7 @@ class Agent:
         for event in self._drain_subagent_events(agent_response):
             yield event
         agent_response.usage.tool_calls += len(tool_messages)
-        for event in self._record_tool_results(tool_messages, agent_response):
+        for event in self._record_tool_results(tool_messages, agent_response, tool_calls):
             yield event
         if self.team or self.subagents:
             self._fold_delegation_usage(agent_response)
@@ -1845,7 +1897,7 @@ class Agent:
 
         if self.reasoning_model and messages:
             self.history.compact()
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = _model_messages(self.history.get())
             response = self.reason(messages_for_reasoning_model)
             if response is not None:
                 agent_response.reasoning_content = response.reasoning_content
@@ -1876,12 +1928,13 @@ class Agent:
             # format messages
             self.history.compact()
             window = self.history.get()
-            messages_for_model = [m.to_dict() for m in window]
+            messages_for_model = _model_messages(window)
 
             # call llm and tool
             response = self.llm.invoke(input=messages_for_model)
             cut_short = response.finish_reason if response.finish_reason in CUT_SHORT_REASONS else None
-            self._absorb_answer_tool_call(response)
+            if self._absorb_answer_tool_call(response):
+                cut_short = None  # the answer is whole: the limit cut another call of the turn
 
             # usage
             agent_response.usage.add(response.usage)
@@ -1918,6 +1971,7 @@ class Agent:
 
             # stop if not tool call
             if not response.tool_calls:
+                cut_turns = 0
                 content_to_check = response.parsed if response.parsed else response.content
                 is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
 
@@ -2019,7 +2073,7 @@ class Agent:
 
         if self.reasoning_model and messages:
             await self.history.acompact()
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = _model_messages(self.history.get())
             reasoning_agent_response = await self.areason(messages_for_reasoning_model)
             if reasoning_agent_response is not None:
                 agent_response.reasoning_content = reasoning_agent_response.reasoning_content
@@ -2049,11 +2103,12 @@ class Agent:
 
             await self.history.acompact()
             window = self.history.get()
-            messages_for_model = [m.to_dict() for m in window]
+            messages_for_model = _model_messages(window)
 
             response = await self.llm.ainvoke(input=messages_for_model)
             cut_short = response.finish_reason if response.finish_reason in CUT_SHORT_REASONS else None
-            self._absorb_answer_tool_call(response)
+            if self._absorb_answer_tool_call(response):
+                cut_short = None  # the answer is whole: the limit cut another call of the turn
 
             # usage
             agent_response.usage.add(response.usage)
@@ -2087,6 +2142,7 @@ class Agent:
             self._calibrate_history(window, response.usage)
 
             if not response.tool_calls:
+                cut_turns = 0
                 content_to_check = response.parsed if response.parsed else response.content
                 is_valid, parsed_data, error_msg = self._validate_final_response(content_to_check)
 
@@ -2199,7 +2255,7 @@ class Agent:
 
         if self.reasoning_model and messages:
             self.history.compact()
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = _model_messages(self.history.get())
             reasoning_response = self.reason(messages_for_reasoning_model)
             if reasoning_response is not None and reasoning_response.reasoning_content:
                 agent_response.reasoning_content = reasoning_response.reasoning_content
@@ -2226,7 +2282,7 @@ class Agent:
 
             self.history.compact()
             window = self.history.get()
-            messages_for_model = [m.to_dict() for m in window]
+            messages_for_model = _model_messages(window)
 
             full_content = ""
             full_thinking = ""
@@ -2270,6 +2326,7 @@ class Agent:
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:
+                cut_short = None  # the answer is whole: the limit cut another call of the turn
                 full_content, final_tool_calls = answer, []
                 event = AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=answer)
                 agent_response.events.append(event)
@@ -2288,6 +2345,7 @@ class Agent:
             self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
+                cut_turns = 0
                 if self.response_model:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:
@@ -2396,7 +2454,7 @@ class Agent:
 
         if self.reasoning_model and messages:
             await self.history.acompact()
-            messages_for_reasoning_model = [m.to_dict() for m in self.history.get()]
+            messages_for_reasoning_model = _model_messages(self.history.get())
             reasoning_response = await self.areason(messages_for_reasoning_model)
             if reasoning_response is not None and reasoning_response.reasoning_content:
                 agent_response.reasoning_content = reasoning_response.reasoning_content
@@ -2423,7 +2481,7 @@ class Agent:
 
             await self.history.acompact()
             window = self.history.get()
-            messages_for_model = [m.to_dict() for m in window]
+            messages_for_model = _model_messages(window)
 
             full_content = ""
             full_thinking = ""
@@ -2467,6 +2525,7 @@ class Agent:
 
             answer = self._answer_from_tool_calls(final_tool_calls)
             if answer is not None:
+                cut_short = None  # the answer is whole: the limit cut another call of the turn
                 full_content, final_tool_calls = answer, []
                 event = AgentEventContent(agent_id=self.id, run_id=agent_response.run_id, content=answer)
                 agent_response.events.append(event)
@@ -2485,6 +2544,7 @@ class Agent:
             self._calibrate_history(window, turn_usage)
 
             if not final_tool_calls:
+                cut_turns = 0
                 if self.response_model:
                     is_valid, parsed_data, error_msg = self._validate_final_response(full_content)
                     if not is_valid and validation_retries_left > 0:

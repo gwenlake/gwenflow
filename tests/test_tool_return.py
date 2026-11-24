@@ -7,6 +7,7 @@ behaves as before.
 """
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
@@ -254,3 +255,94 @@ def test_failed_tool_has_no_metadata():
     tool_message = next(m for m in response.messages if m.role == "tool")
     assert tool_message.content.startswith("Error executing tool 'search'")
     assert TOOL_METADATA_KEY not in tool_message.extra
+
+
+# ---------------------------------------------------------------------------
+# Metadata stays with the application
+# ---------------------------------------------------------------------------
+
+
+@dataclass(kw_only=True)
+class HandleTool(BaseTool):
+    """Metadata the application alone can use: an object that can be neither copied nor serialized."""
+
+    name: str = "search"
+    description: str = "Searches"
+
+    def _run(self, query: str) -> ToolReturn:
+        return ToolReturn(return_value="hit", metadata={"lock": threading.Lock()})
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_metadata_is_left_out_of_the_model_request(path):
+    _, _, seen = _search_run(path)
+    tool_message = next(m for m in seen[1] if m["role"] == "tool")
+    assert "extra" not in tool_message
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_metadata_that_cannot_be_copied_does_not_break_the_next_turn(path):
+    seen = []
+    call = ToolCall(id="c1", name="search", arguments='{"query": "x"}')
+    llm = _scripted_llm([_turn(tool_calls=[call]), _turn("done")], seen)
+    agent = Agent(llm=llm, tools=[HandleTool()])
+    response = _run(agent, path)
+
+    assert response.content == "done"
+    ChatBase.input_to_message_list(llm, seen[1])  # what every client does with its input
+    tool_message = next(m for m in agent.history.messages if m.role == "tool")
+    assert "lock" in tool_message.extra[TOOL_METADATA_KEY]
+
+
+def test_other_extra_keys_still_reach_the_client():
+    from gwenflow.agents.agent import _model_messages
+
+    message = Message(role="tool", tool_call_id="c1", content="x", extra={TOOL_METADATA_KEY: SOURCES, "pinned": True})
+    assert _model_messages([message])[0]["extra"] == {"pinned": True}
+    assert message.extra == {TOOL_METADATA_KEY: SOURCES, "pinned": True}
+
+
+def test_clamping_a_long_result_does_not_copy_its_metadata():
+    from gwenflow.memory import ChatMemoryBuffer
+
+    history = ChatMemoryBuffer(token_limit=300)
+    long_result = Message(
+        role="tool", tool_call_id="c1", content="mot " * 2000, extra={TOOL_METADATA_KEY: {"lock": threading.Lock()}}
+    )
+    history.add_message(Message(role="user", content="q"))
+    history.add_message(
+        Message(
+            role="assistant",
+            tool_calls=[{"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{}"}}],
+        )
+    )
+    history.add_message(long_result)
+
+    window = history.get()
+    clamped = next(m for m in window if m.role == "tool")
+    assert len(clamped.content) < len(long_result.content)
+    assert long_result.content == "mot " * 2000  # the stored message is untouched
+
+
+# ---------------------------------------------------------------------------
+# Falsy results
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value, text", [(0, "0"), (False, "false"), ([], "[]"), ({}, "{}"), ("", "")])
+def test_a_falsy_result_is_still_a_result(value, text):
+    def lookup():
+        """Looks something up."""
+        return value
+
+    assert Tool(lookup).run() == text
+    assert (
+        Tool(lambda: ToolReturn(return_value=value, metadata=1), name="t", description="d").run().return_value == text
+    )
+
+
+def test_no_result_is_still_empty():
+    def nothing() -> None:
+        """Returns nothing."""
+
+    assert Tool(nothing).run() is None

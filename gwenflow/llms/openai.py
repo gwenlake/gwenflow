@@ -591,6 +591,7 @@ class ChatOpenAI(ChatBase):
             _tool_calls_by_index: Dict[int, ToolCall] = {}
             tool_calls_sent = False
             cut_short = None
+            cut_short_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             for chunk in completion:
@@ -645,6 +646,15 @@ class ChatOpenAI(ChatBase):
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
+                        if cut_short:
+                            # The answer was cut short (`length`, `content_filter`): the usage
+                            # chunk, last of the stream, says so and hands over the calls.
+                            if _full_tool_calls and not tool_calls_sent:
+                                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                                response.parts.extend(_full_tool_calls)
+                                tool_calls_sent = True
+                            response.finish_reason = cut_short
+                            cut_short_sent = True
                         yield response
 
             # A server that ends the stream otherwise than on `finish_reason:
@@ -653,8 +663,8 @@ class ChatOpenAI(ChatBase):
             if _full_tool_calls and not tool_calls_sent:
                 _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
                 yield ModelResponse(parts=list(_full_tool_calls), finish_reason=cut_short)
-            elif cut_short:
-                # The answer was cut short (`length`, `content_filter`): say so last.
+            elif cut_short and not cut_short_sent:
+                # No usage chunk carried the reason: say so last.
                 yield ModelResponse(finish_reason=cut_short)
 
         except Exception as e:
@@ -676,6 +686,7 @@ class ChatOpenAI(ChatBase):
             _tool_calls_by_index: Dict[int, ToolCall] = {}
             tool_calls_sent = False
             cut_short = None
+            cut_short_sent = False
             think_extractor = _ThinkTagStreamExtractor() if self.extract_think_tags else None
 
             async for chunk in completion:
@@ -730,6 +741,15 @@ class ChatOpenAI(ChatBase):
                 else:
                     if hasattr(response, "usage"):
                         response.usage = self._get_usage(chunk)
+                        if cut_short:
+                            # The answer was cut short (`length`, `content_filter`): the usage
+                            # chunk, last of the stream, says so and hands over the calls.
+                            if _full_tool_calls and not tool_calls_sent:
+                                _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
+                                response.parts.extend(_full_tool_calls)
+                                tool_calls_sent = True
+                            response.finish_reason = cut_short
+                            cut_short_sent = True
                         yield response
 
             # A server that ends the stream otherwise than on `finish_reason:
@@ -738,8 +758,8 @@ class ChatOpenAI(ChatBase):
             if _full_tool_calls and not tool_calls_sent:
                 _give_tool_calls_their_own_ids(_full_tool_calls, messages_for_model)
                 yield ModelResponse(parts=list(_full_tool_calls), finish_reason=cut_short)
-            elif cut_short:
-                # The answer was cut short (`length`, `content_filter`): say so last.
+            elif cut_short and not cut_short_sent:
+                # No usage chunk carried the reason: say so last.
                 yield ModelResponse(finish_reason=cut_short)
 
         except Exception as e:

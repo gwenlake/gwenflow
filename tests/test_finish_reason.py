@@ -521,3 +521,96 @@ def test_a_complete_turn_resets_the_count_of_cut_turns(path):
     response = _run(Agent(llm=llm, tools=[tool]), path)
     assert response.finish_reason == "stop"
     assert response.content == "done"
+
+
+@pytest.mark.parametrize("path", PATHS)
+@pytest.mark.parametrize("arguments", [{}, {"a": 1}, "", None])
+def test_last_call_that_nothing_proves_whole_is_not_run(path, arguments):
+    """The limit fell while the last call was written: parsed by the provider, or with no arguments yet."""
+    tool = AddTool()
+    whole = ToolCall(id="c1", name="add", arguments={"a": 2, "b": 2})
+    last = ToolCall(id="c2", name="add", arguments=arguments)
+    agent = Agent(
+        llm=_scripted_llm([_turn(tool_calls=[whole, last], finish_reason="length"), _turn("4")]), tools=[tool]
+    )
+    response = _run(agent, path)
+
+    assert response.content == "4"
+    assert tool.calls == 1  # the call before it was whole: the model had moved on
+    results = {m.tool_call_id: m.content for m in agent.history.messages if m.role == "tool"}
+    assert results == {"c1": "4", "c2": CUT_SHORT_TOOL_CALL.format(name="add")}
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_cut_call_keeps_valid_arguments_in_the_history(path):
+    """Half-written JSON is not replayed to the provider; the events still show what the model wrote."""
+    tool = AddTool()
+    whole = ToolCall(id="c1", name="add", arguments='{"a": 2, "b": 2}')
+    cut = ToolCall(id="c2", name="add", arguments='{"a": 1, "b"')
+    agent = Agent(llm=_scripted_llm([_turn(tool_calls=[whole, cut], finish_reason="length"), _turn("4")]), tools=[tool])
+    response = _run(agent, path)
+
+    turn = next(m for m in agent.history.messages if m.role == "assistant" and m.tool_calls)
+    assert [c["function"]["arguments"] for c in turn.tool_calls] == ['{"a": 2, "b": 2}', "{}"]
+    started = {e.tool_call_id: e.tool_args for e in response.events if e.event_type == "tool_started"}
+    assert started["c2"] == {"raw": '{"a": 1, "b"'}
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_valid_final_result_beside_a_cut_call_is_a_whole_answer(path):
+    answer = ToolCall(id="c1", name="final_result", arguments='{"total": 3}')
+    cut = ToolCall(id="c2", name="add", arguments='{"a": 1, "b"')
+    llm = _scripted_llm([_turn(tool_calls=[answer, cut], finish_reason="length")])
+    response = _run(Agent(llm=llm, tools=[AddTool()], response_model=_Total), path)
+    assert response.parsed == _Total(total=3)
+    assert response.finish_reason == "stop"
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_a_turn_without_tool_call_resets_the_count_of_cut_turns(path):
+    """Two cut turns apart from each other, with a refused structured answer in between, are not in a row."""
+    turns = [_cut_turn("c1"), _turn('{"tot'), _cut_turn("c2"), _turn('{"total": 7}')]
+    response = _run(Agent(llm=_scripted_llm(turns), tools=[AddTool()], response_model=_Total), path)
+    assert response.finish_reason == "stop"
+    assert response.parsed == _Total(total=7)
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_results_of_calls_sharing_an_id_keep_their_own_arguments(path):
+    """A provider that sends no id (Gemini) gives the calls of a turn the same one."""
+    calls = [
+        ToolCall(id="add", name="add", arguments='{"a": 1, "b": 2}'),
+        ToolCall(id="add", name="add", arguments='{"a": 5, "b": 5}'),
+    ]
+    llm = _scripted_llm([_turn(tool_calls=calls, finish_reason="tool_calls"), _turn("done")])
+    response = _run(Agent(llm=llm, tools=[AddTool()]), path)
+    completed = [(e.tool_args, e.content) for e in response.events if e.event_type == "tool_completed"]
+    assert completed == [({"a": 1, "b": 2}, "3"), ({"a": 5, "b": 5}, "10")]
+
+
+def test_started_and_completed_events_show_the_same_arguments():
+    odd = ToolCall(id="c1", name="add", arguments="[1, 2]")
+    llm = _scripted_llm([_turn(tool_calls=[odd], finish_reason="tool_calls"), _turn("done")])
+    response = Agent(llm=llm, tools=[AddTool()]).run("go")
+    started = next(e for e in response.events if e.event_type == "tool_started")
+    completed = next(e for e in response.events if e.event_type == "tool_completed")
+    assert started.tool_args == completed.tool_args == {"raw": "[1, 2]"}
+
+
+def test_openai_stream_cut_short_reason_comes_with_the_usage(monkeypatch):
+    """The last chunk carries both: a tracer that reads the last chunk keeps the token counts."""
+    delta = SimpleNamespace(id="c1", index=0, type="function", function=SimpleNamespace(name="add", arguments='{"a"'))
+    for chunks in (
+        [_openai_chunk("Once"), _openai_chunk(finish_reason="length"), _openai_usage_chunk()],
+        [_openai_chunk(tool_calls=[delta]), _openai_chunk(finish_reason="length"), _openai_usage_chunk()],
+    ):
+        responses = list(_openai(monkeypatch, iter(chunks)).stream("hi"))
+        assert responses[-1].finish_reason == "length"
+        assert responses[-1].usage.input_tokens == 10
+        assert sum(len(r.tool_calls) for r in responses) == (1 if chunks[0].choices[0].delta.tool_calls else 0)
+
+
+def test_openai_stream_without_usage_chunk_still_reports_length(monkeypatch):
+    chunks = [_openai_chunk("Once"), _openai_chunk(finish_reason="length")]
+    responses = list(_openai(monkeypatch, iter(chunks)).stream("hi"))
+    assert responses[-1].finish_reason == "length"

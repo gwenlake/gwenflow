@@ -187,7 +187,7 @@ class BaseTool(ABC):
             self.parameters = self.function_schema["function"]["parameters"]
 
     def _cast_response_to_str(self, response) -> str:
-        if not response:
+        if response is None:
             return None
         if isinstance(response, str):
             return response

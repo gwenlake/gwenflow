@@ -14,7 +14,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ModelResponse` (OpenAI and the OpenAI-compatible clients, Mistral, Anthropic, Google, the
   Responses API; on the last chunk when streaming), through `normalize_finish_reason`; other
   reasons are unchanged. A tool call cut by the limit is not run: the model gets a tool result
-  saying so and can make the call again; when its calls are cut two turns in a row
+  saying so and can make the call again, and the history keeps `{}` as its arguments (servers that
+  parse past calls refuse half-written JSON). A call counts as cut when its arguments are incomplete
+  JSON, or when it is the last call of the turn and nothing proves it whole (no arguments yet, or
+  arguments the provider parsed itself, as Anthropic does outside streaming). A valid `final_result`
+  beside a cut call is a whole answer and ends the run with `"stop"`. When its calls are cut two turns in a row
   (`MAX_CUT_SHORT_TOOL_TURNS`), the run stops with `"length"` and no `content` instead of
   retrying until `max_turns`. A structured answer cut short still gets the
   validation retries. A delegated agent's answer cut short is flagged as such to the orchestrator.
@@ -24,11 +28,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application on `ToolResponse.metadata`, the tool message (`Message.extra["tool_metadata"]`,
   `TOOL_METADATA_KEY`, so in `AgentResponse.messages` and the history) and
   `AgentEventToolCompleted.tool_metadata`. `BaseTool.run()` / `arun()` return the `ToolReturn`
-  (its value cast to text) for such a tool and text for any other, as before. Under
-  `TemporalDurability` the metadata crosses the `call_tool` activity, so it must be serializable
+  (its value cast to text) for such a tool and text for any other, as before. The
+  metadata is left out of the messages handed to the LLM client, so it can be any object. Under
+  `TemporalDurability` it crosses the `call_tool` activity, so it must be serializable
   by the workflow's data converter.
-- `AgentEventToolCompleted` now carries the `tool_name` and `tool_args` of the call it answers;
-  both were left empty.
+- `AgentEventToolCompleted` now carries the `tool_name` and `tool_args` of the call it answers
+  (the same `tool_args` as `AgentEventToolStarted`); both were left empty.
 - Durable execution with Temporal, `gwenflow.durability` (install with
   `pip install 'gwenflow[temporal]'`). `TemporalDurability` attaches to an agent
   (`Agent(..., durability=TemporalDurability())`) or a flow
@@ -81,6 +86,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A tool that returned `0`, `False`, `[]` or `{}` sent an empty result to the model: the value is
+  now cast to text like any other (`"0"`, `"false"`, `"[]"`, `"{}"`). `None` is still an empty result.
 - `ResponseOpenAI` raised on a response left `incomplete` by `max_output_tokens` or the content
   filter, losing the partial answer; it now returns it with `finish_reason="length"` /
   `"content_filter"`. An `incomplete` response for any other reason still raises.
