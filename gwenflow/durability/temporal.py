@@ -73,7 +73,6 @@ class TemporalDurability:
                 ("team", agent.team),
                 ("subagents", agent.subagents),
                 ("mcp_servers", agent.mcp_servers),
-                ("skills", agent.skills),
                 ("memory", agent.memory),
             )
             if present
