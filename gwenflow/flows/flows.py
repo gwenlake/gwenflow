@@ -1,14 +1,22 @@
 import asyncio
+import base64
+import dataclasses
+import datetime
+import decimal
+import enum
 import json
+import numbers
 import os
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from gwenflow.flows.handlers import NODE_TYPE_REGISTRY
+from gwenflow.flows.handlers import NODE_TYPE_REGISTRY, is_idempotent
+from gwenflow.flows.runtime import NodeCancelledError, NodeControl, NodeTimeoutError, start_in_thread
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.utils.durable import in_workflow, new_id
@@ -30,10 +38,26 @@ class FlowNodeError(FlowError):
     def __init__(self, node: str, message: str):
         super().__init__(f"Node '{node}' failed: {message}")
         self.node = node
+        self.reason = message
 
 
 NodeExecutor = Callable[["Node", dict[str, Any] | None], Awaitable[Any]]
 StatusListener = Callable[[str, str], None]
+
+DEFAULT_IDEMPOTENT_RETRIES = 2
+RETRY_INITIAL_INTERVAL = 1.0
+RETRY_MAX_INTERVAL = 30.0
+STOP_GRACE = 1.0
+NON_RETRYABLE_ERRORS: tuple[type[BaseException], ...] = (
+    KeyError,
+    ValueError,
+    TypeError,
+    NotImplementedError,
+    FileNotFoundError,
+    IsADirectoryError,
+    NotADirectoryError,
+    PermissionError,
+)
 
 
 @dataclass
@@ -86,56 +110,29 @@ class Flow:
     @classmethod
     def from_dict(cls, data: dict[str, Any], durability: Any = None) -> "Flow":
         """Build a flow from its YAML/JSON shape (connections keyed by node name)."""
-        nodes = [
-            Node(
-                id=n.get("id") or new_id(),
-                type=n["type"],
-                name=n["name"],
-                version=n.get("version", 1),
-                position=n.get("position", [0, 0]),
-                parameters=n.get("parameters") or {},
-                credentials=n.get("credentials") or {},
-                settings=n.get("settings") or {},
-            )
-            for n in data.get("nodes", [])
-        ]
-        errors = []
-        names = [n.name for n in nodes]
-        duplicates = sorted({name for name in names if names.count(name) > 1})
-        if duplicates:
-            errors.append(f"Duplicate node names: {', '.join(duplicates)}")
-
-        name_to_id = {n.name: n.id for n in nodes}
-        connections: dict[str, list[list[ConnectionEndpoint]]] = {}
-        for source_name, port_list in (data.get("connections") or {}).items():
-            source_id = name_to_id.get(source_name)
-            if source_id is None:
-                errors.append(f"Connection references unknown source node '{source_name}'")
-                continue
-            connections[source_id] = []
-            for port_targets in port_list:
-                targets = []
-                for t in port_targets:
-                    target_id = name_to_id.get(t["node"])
-                    if target_id is None:
-                        errors.append(f"Connection references unknown target node '{t['node']}'")
-                    else:
-                        targets.append(
-                            ConnectionEndpoint(node=target_id, type=t.get("type", "main"), index=t.get("index", 0))
-                        )
-                connections[source_id].append(targets)
-
-        if errors:
-            raise FlowError("Invalid flow:\n" + "\n".join(f"  - {e}" for e in errors))
+        if not isinstance(data, dict):
+            raise FlowError(f"Invalid flow: expected a mapping, got {type(data).__name__}")
+        errors: list[str] = []
+        nodes = _parse_nodes(data.get("nodes"), errors)
+        connections = _parse_connections(data.get("connections"), {n.name: n.id for n in nodes}, errors)
+        settings = data.get("settings") or {}
+        if not isinstance(settings, dict):
+            errors.append("`settings` must be a mapping")
+            settings = {}
+        for key in ("id", "name"):
+            if data.get(key) is not None and not isinstance(data[key], str):
+                errors.append(f"`{key}` must be a string")
 
         flow = cls(
-            id=data.get("id") or new_id(),
-            name=data.get("name", "Untitled"),
+            id=str(data.get("id") or new_id()),
+            name=str(data.get("name") or "Untitled"),
             nodes=nodes,
             connections=connections,
-            settings=data.get("settings", {}),
+            settings=settings,
         )
-        flow.topological_order()  # fails early on a cycle
+        errors.extend(flow._problems())
+        if errors:
+            raise FlowError(_invalid("Invalid flow", errors))
         if durability is not None:
             flow.durability = durability
             durability.bind(flow)
@@ -164,7 +161,8 @@ class Flow:
 
         Locally, each node runs in a worker thread. Inside a workflow, each node
         runs through the flow's durability (an activity with Temporal).
-        `on_status(node_name, status)` is told when a node is running, done or failed.
+        `on_status(node_name, status)` is told when a node is running, done, failed,
+        cancelled (stopped by another node's failure) or skipped (never started).
         """
         if in_workflow():
             if self.durability is None:
@@ -172,8 +170,14 @@ class Flow:
                     f"Flow '{self.name}' runs inside a workflow without durability: "
                     "give it `durability=TemporalDurability()` so its nodes run in activities."
                 )
+            self.validate()
             return await execute_flow(self, self.durability.execute_node, on_status)
-        return await execute_flow(self, run_node_locally, on_status)
+        self.validate()
+
+        async def execute_locally(node: Node, input_data: dict[str, Any] | None) -> Any:
+            return await run_node_locally(node, input_data, node_execution(node, self))
+
+        return await execute_flow(self, execute_locally, on_status)
 
     def run(self) -> dict[str, Any]:
         if in_workflow():
@@ -215,6 +219,137 @@ class Flow:
         consumed = {p for ps in self.parents().values() for p in ps}
         return [n.name for n in self.nodes if n.name not in consumed]
 
+    def validate(self, node_types: Mapping[str, Any] | None = None) -> None:
+        problems = self._problems(NODE_TYPE_REGISTRY if node_types is None else node_types)
+        if problems:
+            raise FlowError(_invalid(f"Invalid flow '{self.name}'", problems))
+
+    def _problems(self, node_types: Mapping[str, Any] | None = None) -> list[str]:
+        problems = []
+        for label, values in (("names", [n.name for n in self.nodes]), ("ids", [n.id for n in self.nodes])):
+            duplicates = sorted({v for v in values if values.count(v) > 1})
+            if duplicates:
+                problems.append(f"Duplicate node {label}: {', '.join(duplicates)}")
+        known = {n.id for n in self.nodes}
+        endpoints = list(self.connections) + [
+            e.node for ports in self.connections.values() for port in ports for e in port
+        ]
+        problems.extend(
+            f"Connection references unknown node id '{i}'" for i in dict.fromkeys(endpoints) if i not in known
+        )
+        for node in self.nodes:
+            problems.extend(f"node '{node.name}': {p}" for p in _settings_problems(node.settings, "timeout", "retries"))
+            if node_types is not None and node.type not in node_types:
+                problems.append(f"node '{node.name}' has an unknown type '{node.type}'")
+        problems.extend(
+            f"flow settings: {p}" for p in _settings_problems(self.settings, "node_timeout", "node_retries")
+        )
+        if not problems:
+            try:
+                self.topological_order()
+            except FlowError as e:
+                problems.append(str(e))
+        return problems
+
+
+def _invalid(title: str, errors: list[str]) -> str:
+    return f"{title}:\n" + "\n".join(f"  - {e}" for e in errors)
+
+
+def _parse_nodes(raw: Any, errors: list[str]) -> list[Node]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        errors.append("`nodes` must be a list")
+        return []
+    nodes = []
+    for index, item in enumerate(raw, 1):
+        before = len(errors)
+        label = f"node #{index}"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        name, type_ = item.get("name"), item.get("type")
+        if isinstance(name, str) and name:
+            label = f"node '{name}'"
+        else:
+            errors.append(f"{label} needs a non-empty `name`")
+        if not (isinstance(type_, str) and type_):
+            errors.append(f"{label} needs a non-empty `type`")
+        for key in ("parameters", "credentials", "settings"):
+            if item.get(key) is not None and not isinstance(item[key], dict):
+                errors.append(f"{label}: `{key}` must be a mapping")
+        credentials = item.get("credentials")
+        if isinstance(credentials, dict) and not all(isinstance(v, str) and v for v in credentials.values()):
+            errors.append(f"{label}: each credential must name an environment variable")
+        if item.get("id") is not None and not isinstance(item["id"], str):
+            errors.append(f"{label}: `id` must be a string")
+        if not isinstance(item.get("version", 1), int):
+            errors.append(f"{label}: `version` must be an integer")
+        if not isinstance(item.get("position", []), list):
+            errors.append(f"{label}: `position` must be a list")
+        if len(errors) > before:
+            continue
+        nodes.append(
+            Node(
+                id=item.get("id") or new_id(),
+                type=type_,
+                name=name,
+                version=item.get("version", 1),
+                position=item.get("position", [0, 0]),
+                parameters=item.get("parameters") or {},
+                credentials=item.get("credentials") or {},
+                settings=item.get("settings") or {},
+            )
+        )
+    return nodes
+
+
+def _parse_connections(
+    raw: Any, name_to_id: dict[str, str], errors: list[str]
+) -> dict[str, list[list[ConnectionEndpoint]]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        errors.append("`connections` must be a mapping of source node name to output ports")
+        return {}
+    connections: dict[str, list[list[ConnectionEndpoint]]] = {}
+    for source_name, ports in raw.items():
+        source_id = name_to_id.get(source_name)
+        if source_id is None:
+            errors.append(f"Connection references unknown source node '{source_name}'")
+            continue
+        if not isinstance(ports, list) or not all(isinstance(port, list) for port in ports):
+            errors.append(f"connections of '{source_name}' must be a list of output ports, each a list of targets")
+            continue
+        connections[source_id] = []
+        for port in ports:
+            targets = []
+            for target in port:
+                if not isinstance(target, dict) or not isinstance(target.get("node"), str):
+                    errors.append(f"a connection of '{source_name}' needs a target `node`")
+                    continue
+                target_id = name_to_id.get(target["node"])
+                if target_id is None:
+                    errors.append(f"Connection references unknown target node '{target['node']}'")
+                    continue
+                targets.append(
+                    ConnectionEndpoint(node=target_id, type=target.get("type", "main"), index=target.get("index", 0))
+                )
+            connections[source_id].append(targets)
+    return connections
+
+
+def _settings_problems(settings: dict[str, Any], timeout_key: str, retries_key: str) -> list[str]:
+    problems = []
+    timeout = settings.get(timeout_key)
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int | float) or timeout <= 0):
+        problems.append(f"`{timeout_key}` must be a positive number of seconds")
+    retries = settings.get(retries_key)
+    if retries is not None and (isinstance(retries, bool) or not isinstance(retries, int) or retries < 0):
+        problems.append(f"`{retries_key}` must be a whole number, 0 or more")
+    return problems
+
 
 # ---------------------------------------------------------------------------
 # Execution
@@ -235,19 +370,24 @@ async def execute_flow(
     tasks: dict[str, asyncio.Task] = {}
 
     async def run(name: str) -> Any:
-        inputs = [await tasks[p] for p in parents[name]]
+        try:
+            inputs = [await tasks[p] for p in parents[name]]
+        except BaseException:
+            notify(name, "skipped")
+            raise
         input_data = dict(zip(parents[name], inputs, strict=True)) if parents[name] else None
         notify(name, "running")
         try:
             result = await execute_node(flow.node(name), input_data)
         except asyncio.CancelledError:
+            notify(name, "cancelled")
             raise
         except FlowNodeError:
             notify(name, "failed")
             raise
         except Exception as e:
             notify(name, "failed")
-            raise FlowNodeError(name, str(getattr(e, "cause", None) or e)) from e
+            raise FlowNodeError(name, describe_error(e)) from e
         notify(name, "done")
         return result
 
@@ -267,6 +407,47 @@ async def execute_flow(
     return {name: task.result() for name, task in tasks.items()}
 
 
+@dataclass(frozen=True)
+class NodeExecution:
+    timeout: float | None = None
+    retries: int = 0
+
+    @property
+    def attempts(self) -> int:
+        return 1 + self.retries
+
+
+def node_execution(node: Node, flow: Flow | None = None) -> NodeExecution:
+    flow_settings = flow.settings if flow is not None else {}
+    timeout = _first_set(node.settings.get("timeout"), flow_settings.get("node_timeout"))
+    retries = _first_set(node.settings.get("retries"), flow_settings.get("node_retries"))
+    if retries is None:
+        retries = DEFAULT_IDEMPOTENT_RETRIES if is_idempotent(node.type, node.parameters) else 0
+    return NodeExecution(timeout=float(timeout) if timeout is not None else None, retries=int(retries))
+
+
+def _first_set(*values: Any) -> Any:
+    return next((v for v in values if v is not None), None)
+
+
+def retry_delay(attempt: int) -> float:
+    return min(RETRY_INITIAL_INTERVAL * 2 ** (attempt - 1), RETRY_MAX_INTERVAL)
+
+
+def is_retryable(error: BaseException) -> bool:
+    if isinstance(error, NodeTimeoutError):
+        return not error.still_running
+    return not isinstance(error, (FlowNodeError, NodeCancelledError, *NON_RETRYABLE_ERRORS))
+
+
+def describe_error(error: BaseException) -> str:
+    error = getattr(error, "cause", None) or error
+    text = str(error)
+    if isinstance(error, KeyError):
+        return f"KeyError: {text}"
+    return text or type(error).__name__
+
+
 def resolve_credentials(node: Node) -> dict[str, Any]:
     """The node's parameters with its credentials filled in from the environment."""
     parameters = dict(node.parameters)
@@ -274,33 +455,107 @@ def resolve_credentials(node: Node) -> dict[str, Any]:
         value = os.environ.get(variable)
         if value is None:
             raise FlowNodeError(node.name, f"credential '{param}' needs the environment variable {variable}")
-        parameters[param] = value
+        _set_parameter(parameters, param, value, node.name)
     return parameters
+
+
+def _set_parameter(parameters: dict[str, Any], path: str, value: str, node_name: str) -> None:
+    *parents, leaf = path.split(".")
+    target = parameters
+    for key in parents:
+        child = target.get(key, {})
+        if not isinstance(child, dict):
+            raise FlowNodeError(node_name, f"credential '{path}': '{key}' is not a mapping")
+        child = dict(child)
+        target[key] = child
+        target = child
+    target[leaf] = value
+
+
+def to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    if isinstance(value, dict):
+        return {_json_key(k): to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [to_jsonable(v) for v in value]
+    if isinstance(value, datetime.datetime | datetime.date | datetime.time):
+        return value.isoformat()
+    if isinstance(value, datetime.timedelta):
+        return value.total_seconds()
+    if isinstance(value, decimal.Decimal | uuid.UUID | PurePath):
+        return str(value)
+    if isinstance(value, bytes | bytearray | memoryview):
+        return base64.b64encode(bytes(value)).decode("ascii")
+    if isinstance(value, enum.Enum):
+        return to_jsonable(value.value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        return float(value)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return to_jsonable(dataclasses.asdict(value))
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return to_jsonable(model_dump(mode="json"))
+    raise TypeError(f"a {type(value).__name__} is not JSON serializable")
+
+
+def _json_key(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if key is None or isinstance(key, bool | int | float):
+        return json.dumps(key)
+    return str(to_jsonable(key))
 
 
 def call_handler(node_type: str, parameters: dict[str, Any], input_data: dict[str, Any] | None) -> Any:
     handler = NODE_TYPE_REGISTRY.get(node_type)
     if handler is None:
         raise NotImplementedError(f"Node type '{node_type}' is not supported.")
-    return handler(parameters, input_data)
+    result = handler(parameters, input_data)
+    try:
+        return to_jsonable(result)
+    except TypeError as e:
+        raise TypeError(
+            f"node type '{node_type}' returned a value that is not JSON serializable ({e}): "
+            "return dicts, lists, strings, numbers, booleans or None"
+        ) from e
 
 
-async def run_node_locally(node: Node, input_data: dict[str, Any] | None) -> Any:
+async def run_in_thread(fn: Callable[..., Any], *args: Any, timeout: float | None = None) -> Any:
+    control = NodeControl(timeout)
+    future = start_in_thread(control, fn, *args)
+    try:
+        done, _ = await asyncio.wait({future}, timeout=timeout)
+    except asyncio.CancelledError:
+        control.stop()
+        raise
+    if done:
+        return future.result()
+    control.stop()
+    done, _ = await asyncio.wait({future}, timeout=STOP_GRACE)
+    if not done:
+        raise NodeTimeoutError(timeout, still_running=True)
+    raise NodeTimeoutError(timeout) from future.exception()
+
+
+async def run_node_locally(
+    node: Node, input_data: dict[str, Any] | None, execution: NodeExecution | None = None
+) -> Any:
     """Local executor: a worker thread, with the node's timeout and retries."""
-    attempts = 1 + int(node.settings.get("retries", 0))
-    timeout = node.settings.get("timeout")
-    for attempt in range(1, attempts + 1):
+    execution = execution or node_execution(node)
+    parameters = resolve_credentials(node)
+    for attempt in range(1, execution.attempts + 1):
         logger.info(f"Running node: {node.name} [{node.type}]" + (f" (attempt {attempt})" if attempt > 1 else ""))
         try:
-            call = asyncio.to_thread(call_handler, node.type, resolve_credentials(node), input_data)
-            return await asyncio.wait_for(call, timeout) if timeout else await call
-        except (NotImplementedError, FlowNodeError):
-            raise
+            return await run_in_thread(call_handler, node.type, parameters, input_data, timeout=execution.timeout)
         except Exception as e:
-            if attempt == attempts:
+            if attempt == execution.attempts or not is_retryable(e):
                 raise
-            logger.warning(f"Node '{node.name}' failed ({e}), retrying.")
-            await asyncio.sleep(min(2 ** (attempt - 1), 10))
+            delay = retry_delay(attempt)
+            logger.warning(f"Node '{node.name}' failed ({describe_error(e)}), retrying in {delay:g}s.")
+            await asyncio.sleep(delay)
 
 
 class FlowRunner:

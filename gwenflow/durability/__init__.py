@@ -33,7 +33,7 @@ except ImportError as e:  # pragma: no cover
 from gwenflow.durability.agents import AgentWorkflow
 from gwenflow.durability.claim_check import BlobStore, ClaimCheckCodec, InMemoryBlobStore, S3BlobStore
 from gwenflow.durability.errors import GwenflowDurabilityError
-from gwenflow.durability.flows import DurableFlow, flow_node
+from gwenflow.durability.flows import DurableFlow, FlowNodeActivity, flow_node
 from gwenflow.durability.temporal import TemporalDurability
 from gwenflow.durability.worker import worker_options
 
@@ -42,6 +42,7 @@ __all__ = [
     "BlobStore",
     "ClaimCheckCodec",
     "DurableFlow",
+    "FlowNodeActivity",
     "GwenflowDurabilityError",
     "InMemoryBlobStore",
     "S3BlobStore",

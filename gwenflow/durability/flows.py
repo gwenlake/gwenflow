@@ -4,34 +4,65 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
 
-from gwenflow.flows.flows import Flow, FlowError, FlowNodeError, Node, call_handler, resolve_credentials
+from gwenflow.flows.flows import (
+    NON_RETRYABLE_ERRORS,
+    RETRY_INITIAL_INTERVAL,
+    RETRY_MAX_INTERVAL,
+    Flow,
+    FlowError,
+    FlowNodeError,
+    Node,
+    call_handler,
+    node_execution,
+)
+from gwenflow.flows.policy import FlowPolicy, FlowPolicyError
+from gwenflow.flows.runtime import NodeControl, start_in_thread
 
 FLOW_NODE_ACTIVITY = "gwenflow__flow_node"
-DEFAULT_NODE_TIMEOUT = 300.0
-DEFAULT_NODE_RETRIES = 2
+MAX_NODE_DURATION = 3600.0
 HEARTBEAT_EVERY = 10.0
 
 
-@activity.defn(name=FLOW_NODE_ACTIVITY)
-async def flow_node(request: Dict[str, Any]) -> Any:
-    """Run one flow node. Credentials are resolved here, on the worker, never in history."""
-    node = Node(**request["node"])
-    try:
-        parameters = resolve_credentials(node)
-    except FlowNodeError as e:
-        raise ApplicationError(str(e), type="MissingCredential", non_retryable=True) from e
-    if node.type not in _node_types():
-        raise ApplicationError(f"Node type '{node.type}' is not supported.", type="UnknownNodeType", non_retryable=True)
-    task = asyncio.ensure_future(asyncio.to_thread(call_handler, node.type, parameters, request["input_data"]))
-    while not task.done():  # long nodes (agents, big queries) keep reporting they are alive
-        activity.heartbeat()
-        await asyncio.wait({task}, timeout=HEARTBEAT_EVERY)
-    return task.result()
+class FlowNodeActivity:
+    def __init__(self, policy: Optional[FlowPolicy] = None) -> None:
+        self.policy = policy or FlowPolicy()
+
+    @activity.defn(name=FLOW_NODE_ACTIVITY)
+    async def run(self, request: Dict[str, Any]) -> Any:
+        """Run one flow node. Credentials are resolved here, on the worker, never in history."""
+        node = Node(**request["node"])
+        try:
+            parameters = self.policy.resolve(node)
+        except FlowPolicyError as e:
+            raise ApplicationError(e.reason, type="FlowPolicyViolation", non_retryable=True) from e
+        except FlowNodeError as e:
+            raise ApplicationError(e.reason, type="MissingCredential", non_retryable=True) from e
+        if node.type not in _node_types():
+            raise ApplicationError(
+                f"Node type '{node.type}' is not supported.", type="UnknownNodeType", non_retryable=True
+            )
+        timeout = activity.info().start_to_close_timeout
+        control = NodeControl(timeout.total_seconds() if timeout else None)
+        task = start_in_thread(control, call_handler, node.type, parameters, request["input_data"])
+        try:
+            while not task.done():  # long nodes (agents, big queries) keep reporting they are alive
+                activity.heartbeat()
+                await asyncio.wait({task}, timeout=HEARTBEAT_EVERY)
+        except asyncio.CancelledError:
+            control.stop()
+            raise
+        try:
+            return task.result()
+        except NON_RETRYABLE_ERRORS as e:
+            raise ApplicationError(str(e), type=type(e).__name__, non_retryable=True) from e
+
+
+flow_node = FlowNodeActivity().run
 
 
 def _node_types() -> Dict[str, Callable]:
@@ -43,15 +74,14 @@ def _node_types() -> Dict[str, Callable]:
 def node_activity_config(node: Node, flow: Flow) -> workflow.ActivityConfig:
     from temporalio.common import RetryPolicy
 
-    timeout = node.settings.get("timeout", flow.settings.get("node_timeout", DEFAULT_NODE_TIMEOUT))
-    retries = node.settings.get("retries", flow.settings.get("node_retries", DEFAULT_NODE_RETRIES))
+    execution = node_execution(node, flow)
     return {
-        "start_to_close_timeout": timedelta(seconds=float(timeout)),
+        "start_to_close_timeout": timedelta(seconds=execution.timeout or MAX_NODE_DURATION),
         "heartbeat_timeout": timedelta(seconds=3 * HEARTBEAT_EVERY),
         "retry_policy": RetryPolicy(
-            maximum_attempts=1 + int(retries),
-            initial_interval=timedelta(seconds=1),
-            maximum_interval=timedelta(seconds=30),
+            maximum_attempts=execution.attempts,
+            initial_interval=timedelta(seconds=RETRY_INITIAL_INTERVAL),
+            maximum_interval=timedelta(seconds=RETRY_MAX_INTERVAL),
         ),
     }
 
@@ -70,7 +100,7 @@ class DurableFlow:
 
     @workflow.query
     def progress(self) -> Dict[str, str]:
-        """Node name -> pending | running | done | failed."""
+        """Node name -> pending | running | done | failed | cancelled | skipped."""
         return self.status
 
     @workflow.run
@@ -79,6 +109,7 @@ class DurableFlow:
 
         try:
             flow = Flow.from_dict(definition, durability=TemporalDurability())
+            flow.validate()
         except FlowError as e:
             raise ApplicationError(str(e), type="InvalidFlow", non_retryable=True) from e
         self.status = dict.fromkeys(flow.topological_order(), "pending")

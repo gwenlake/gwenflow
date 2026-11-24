@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-from gwenflow.durability.flows import flow_node
+from gwenflow.durability.flows import FlowNodeActivity, flow_node
 from gwenflow.flows.flows import FlowError
+from gwenflow.flows.policy import FlowPolicy
 
 
-def worker_options(*workflow_classes: type, agents: Iterable[Any] = ()) -> Dict[str, Any]:
+def worker_options(
+    *workflow_classes: type, agents: Iterable[Any] = (), flow_policy: Optional[FlowPolicy] = None
+) -> Dict[str, Any]:
     """`Worker(client, task_queue=..., **worker_options(MyWorkflow, agents=[agent]))`.
 
     Registers the workflows, the flow node activity, and every activity of the
@@ -22,7 +25,7 @@ def worker_options(*workflow_classes: type, agents: Iterable[Any] = ()) -> Dict[
     an invalid flow) fails the workflow run instead of retrying the workflow
     task forever; workflow code can still catch it.
     """
-    activities: List[Callable] = [flow_node]
+    activities: List[Callable] = [FlowNodeActivity(flow_policy).run if flow_policy else flow_node]
     declared = [a for cls in workflow_classes for a in getattr(cls, "__gwenflow_agents__", [])]
     seen: set[int] = set()
     for agent in [*agents, *declared]:
