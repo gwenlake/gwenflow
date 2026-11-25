@@ -13,6 +13,14 @@ from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from gwenflow.logger import logger
 
 
+def _require_sync_context(async_method: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(f"An event loop is running. Use `await {async_method}`.")
+
+
 def _parse_docstring(func) -> tuple[str, dict[str, str]]:
     """Extract the summary and per-parameter descriptions from a docstring.
 
@@ -203,6 +211,10 @@ class BaseTool(ABC):
     def _run(self, **kwargs: Any) -> Any:
         """Actual implementation of the tool."""
 
+    async def _arun(self, **kwargs: Any) -> Any:
+        """Run a synchronous tool off the event loop unless it has an async implementation."""
+        return await asyncio.to_thread(self._run, **kwargs)
+
     def _max_attempts(self) -> int | None:
         """One attempt for a tool that requires approval (see `requires_approval`)."""
         return 1 if self.requires_approval else self.max_retries
@@ -230,6 +242,11 @@ class BaseTool(ABC):
         return self._cast_result(response)
 
     async def arun(self, **kwargs: Any) -> str | ToolReturn:
+        if type(self)._arun is BaseTool._arun:
+            return await asyncio.to_thread(self.run, **kwargs)
+        return await self._arun_with_retries(self._arun, **kwargs)
+
+    async def _arun_with_retries(self, function: Callable, /, **kwargs: Any) -> str | ToolReturn:
         attempts = self._max_attempts()
         _retry = retry(
             stop=stop_after_attempt(attempts),
@@ -237,7 +254,7 @@ class BaseTool(ABC):
             reraise=True,
         )
         try:
-            response = await asyncio.to_thread(_retry(self._run), **kwargs)
+            response = await _retry(function)(**kwargs)
         except RetryError as e:
             logger.error(f"Tool {self.name} failed after {attempts} retries: {e}")
             raise
@@ -283,3 +300,14 @@ class Tool(BaseTool):
 
     def _run(self, **kwargs: Any) -> Any:
         return self.function(**kwargs)
+
+    def run(self, **kwargs: Any) -> str | ToolReturn:
+        if inspect.iscoroutinefunction(self.function):
+            _require_sync_context("tool.arun(...)")
+            return asyncio.run(self.arun(**kwargs))
+        return super().run(**kwargs)
+
+    async def arun(self, **kwargs: Any) -> str | ToolReturn:
+        if inspect.iscoroutinefunction(self.function):
+            return await self._arun_with_retries(self.function, **kwargs)
+        return await super().arun(**kwargs)

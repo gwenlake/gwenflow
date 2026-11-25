@@ -34,6 +34,8 @@ if TYPE_CHECKING:
         MCPServerSseParams,
         MCPServerStdio,
         MCPServerStdioParams,
+        MCPServerStreamableHttp,
+        MCPServerStreamableHttpParams,
     )
     from gwenflow.tools.pdf import PDFReaderTool
     from gwenflow.tools.pubmed import PubMedTool
@@ -65,6 +67,8 @@ _LAZY_TOOLS = {
     "MCPServerSseParams": "gwenflow.tools.mcp",
     "MCPServerStdio": "gwenflow.tools.mcp",
     "MCPServerStdioParams": "gwenflow.tools.mcp",
+    "MCPServerStreamableHttp": "gwenflow.tools.mcp",
+    "MCPServerStreamableHttpParams": "gwenflow.tools.mcp",
     "PDFReaderTool": "gwenflow.tools.pdf",
     "PubMedTool": "gwenflow.tools.pubmed",
     "PythonCodeTool": "gwenflow.tools.python",
@@ -126,4 +130,6 @@ __all__ = [
     "MCPServerSseParams",
     "MCPServerStdio",
     "MCPServerStdioParams",
+    "MCPServerStreamableHttp",
+    "MCPServerStreamableHttpParams",
 ]
