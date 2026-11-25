@@ -11,6 +11,7 @@ authors = [{ name = "Gwenlake", email = "info@gwenlake.com" }, { name = "Sylvain
 dependencies = [
     "click>=8.1",
     "httpx==0.28.1",
+    "httpx2>=2.10.0,<3",
     "pydantic==2.12.5",
     "tqdm==4.67.3",
     "fsspec==2026.2.0",
@@ -20,7 +21,7 @@ dependencies = [
     "mistralai>=2.0",
     "google-genai>=1.0",
     "boto3==1.42.56",
-    "mcp==2.0.0",
+    "mcp==2.3.0",
     "beautifulsoup4==4.14.3",
     "asyncio==3.4.3",
     "tiktoken==0.12.0",
@@ -77,6 +78,7 @@ include = ["gwenflow*"]
 
 [dependency-groups]
 dev = [
+    "fastapi>=0.135.1",
     "jinja2>=3.1",
     "tavily-python>=0.7.22",
     "openai-responses>=0.13.1",

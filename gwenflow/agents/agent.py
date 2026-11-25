@@ -9,6 +9,7 @@ import threading
 import time
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import (
@@ -96,6 +97,11 @@ except ImportError:  # temporal is optional
 
 _CURRENT_TOOL_CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "gwenflow_current_tool_call_id", default=None
+)
+
+# One tool catalog per run, shared with that run's worker threads.
+_RUN_TOOLS: contextvars.ContextVar[Optional[tuple["Agent", List[BaseTool]]]] = contextvars.ContextVar(
+    "gwenflow_run_tools", default=None
 )
 
 FINAL_RESULT_TOOL = "final_result"
@@ -434,7 +440,7 @@ class Agent:
             self._spawn_tools = self._build_spawn_tools()
             self.tools = list(self.tools) + self._spawn_tools
         if self.tools or self.mcp_servers:
-            self.llm.tools = self._llm_tools()
+            self.llm.tools = self._llm_tools(self.tools)
             self.llm.tool_choice = self.tool_choice
         else:
             self.llm.tools = None
@@ -549,14 +555,16 @@ class Agent:
             return self._spawn_subagent(description, prompt, tools or [], skills or [], model, output_schema)
 
         tool = Tool(spawn_agent, name=SPAWN_AGENT_TOOL, max_retries=1)
-        self._describe_spawn_tool(tool)
+        self._describe_spawn_tool(tool, self.tools)
         return [tool]
 
-    def _describe_spawn_tool(self, tool: BaseTool) -> None:
+    def _describe_spawn_tool(self, tool: BaseTool, tools: Optional[List[BaseTool]] = None) -> None:
         with_model = self.subagent_llm is not None
         skill_names = list(dict.fromkeys(s.name for s in self.skills))
         tool.description = spawn_agent_description(with_model, with_skills=bool(skill_names))
-        tool.parameters = spawn_agent_parameters([t.name for t in self._delegable_tools()], skill_names, with_model)
+        tool.parameters = spawn_agent_parameters(
+            [t.name for t in self._delegable_tools(tools)], skill_names, with_model
+        )
 
     def _spawn_subagent(
         self,
@@ -777,14 +785,16 @@ class Agent:
             pricing=self.pricing,
         )
 
-    def _delegable_tools(self) -> List[BaseTool]:
+    def _delegable_tools(self, tools: Optional[List[BaseTool]] = None) -> List[BaseTool]:
         excluded = {SPAWN_AGENT_TOOL, READ_TOOL_OUTPUT}
         if self.skills:
             excluded |= {t.name for t in SkillsToolset(self.skills).get_tools()}
         if self.memory:
             excluded |= {t.name for t in self.memory.get_tools()}
         delegation_ids = {id(t) for t in self._handoff_tools + self._spawn_tools}
-        return [t for t in self.get_all_tools() if t.name not in excluded and id(t) not in delegation_ids]
+        if tools is None:
+            tools = self.get_all_tools()
+        return [t for t in tools if t.name not in excluded and id(t) not in delegation_ids]
 
     def _skill_script_tools(self) -> List[BaseTool]:
         """Tools defined in the skills' `scripts/` files, deduplicated by name.
@@ -834,7 +844,9 @@ class Agent:
             worker._subagent_events = None
             worker._spawn_tools = worker._build_spawn_tools() if self.subagents else []
             worker.tools = worker.tools + worker._spawn_tools
-            worker.llm.tools = worker.get_all_tools()
+            worker.llm.tools = list(worker.tools)
+        if self.mcp_servers:
+            worker.llm.tools = worker._llm_tools(worker.tools)
         return worker
 
     def _fresh_history(self) -> ChatMemoryBuffer:
@@ -899,7 +911,7 @@ class Agent:
 
         def register(func: Callable) -> Callable:
             self.tools = list(self.tools) + [Tool(func, requires_approval=requires_approval)]
-            self.llm.tools = self._llm_tools()
+            self.llm.tools = self._llm_tools(self.tools)
             self.llm.tool_choice = self.tool_choice
             return func
 
@@ -978,13 +990,15 @@ class Agent:
             schema = dict(self.response_model)
         return FinalResultTool(parameters=schema)
 
-    def _llm_tools(self) -> List[BaseTool]:
+    def _llm_tools(self, tools: Optional[List[BaseTool]] = None) -> List[BaseTool]:
         """Tools to put on the wire.
 
         The agent's own tools, plus `final_result` when a `response_model`
-        has to coexist with them (see `FinalResultTool`).
+        has to coexist with them (see `FinalResultTool`). Without `tools`,
+        the whole catalog is used, MCP tools included.
         """
-        tools = self.get_all_tools()
+        if tools is None:
+            tools = self.get_all_tools()
         if tools and self.response_model is not None:
             tools = tools + [self._final_result_tool()]
         return tools
@@ -1331,12 +1345,50 @@ class Agent:
 
     def get_all_tools(self) -> list[BaseTool]:
         """All agent tools, including MCP tools and function tools."""
+        current = _RUN_TOOLS.get()
+        if current is not None and current[0] is self:
+            return list(current[1])
         tools = list(self.tools)
         if in_sandbox():
             return tools
         for server in self.mcp_servers:
             tools += server.get_tools()
         return tools
+
+    async def aget_all_tools(self) -> list[BaseTool]:
+        """Discover MCP tools on the caller's event loop."""
+        current = _RUN_TOOLS.get()
+        if current is not None and current[0] is self:
+            return list(current[1])
+        tools = list(self.tools)
+        if in_sandbox():
+            return tools
+        for server in self.mcp_servers:
+            discover = getattr(server, "aget_tools", None)
+            if discover is None:
+                tools.extend(await asyncio.to_thread(server.get_tools))
+            else:
+                tools.extend(await discover())
+        return tools
+
+    def _run_tool_scope(self, tools: Optional[list[BaseTool]]):
+        """Prepare one catalog and bind it while the run is executing or advancing a stream."""
+        if tools is None:
+            return nullcontext
+        llm_tools = self._llm_tools(tools)
+
+        @contextmanager
+        def scope():
+            previous = self.llm.tools
+            token = _RUN_TOOLS.set((self, tools))
+            try:
+                self.llm.tools = llm_tools
+                yield
+            finally:
+                self.llm.tools = previous
+                _RUN_TOOLS.reset(token)
+
+        return scope
 
     def _calibrate_history(self, window: List[Message], usage: Any) -> None:
         """Anchor the memory buffer on the provider's reported usage.
@@ -1396,21 +1448,40 @@ class Agent:
             f"Read the rest with {READ_TOOL_OUTPUT}(ref='{ref}', offset={len(head)}).]"
         )
 
-    @tracer.tool(name="Tool Call")
-    def run_tool(self, tool_call: ToolCall) -> Message:
-        tool_execution = ToolResponse(
-            tool_call_id=tool_call.id,
-            tool_name=tool_call.name,
-        )
+    @contextmanager
+    def _tool_execution(self, tool_call: ToolCall) -> Iterator[ToolResponse]:
+        """The response of one tool call; a failure becomes the text the model reads."""
+        response = ToolResponse(tool_call_id=tool_call.id, tool_name=tool_call.name)
+        token = _CURRENT_TOOL_CALL_ID.set(tool_call.id)
+        try:
+            yield response
+        except _SubagentPausedError:
+            pass
+        except Exception as e:
+            if in_workflow() and not isinstance(e, ActivityError):
+                raise  # a bug in workflow code must fail the task, not be shown to the model
+            logger.error(f"Error executing tool '{tool_call.name}': {e}")
+            cause = None
+            if in_workflow():
+                cause = getattr(e, "cause", None)
+            else:
+                tracer.mark_error(e)
+            response.content = f"Error executing tool '{tool_call.name}': {cause or e}"
+        finally:
+            _CURRENT_TOOL_CALL_ID.reset(token)
 
-        tool_map = {tool.name: tool for tool in self.get_all_tools()}
+    def _resolve_tool_call(
+        self, tool_call: ToolCall, tool_execution: ToolResponse, tools: list[BaseTool]
+    ) -> Optional[BaseTool]:
+        """The tool to execute, or None when the response is already settled (error, skill)."""
+        tool_map = {tool.name: tool for tool in tools}
 
         if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
             _, _, error_msg = self._validate_final_response(self._parse_tool_args(tool_call))
             logger.warning(f"final_result arguments failed validation: {error_msg}")
             tool_execution.content = error_msg or "Invalid final_result arguments"
             tracer.mark_error(message=tool_execution.content, error_type="invalid_final_result")
-            return tool_execution.to_message()
+            return None
 
         if tool_call.name not in tool_map.keys():
             logger.error(f"Tool {tool_call.name} does not exist")
@@ -1418,7 +1489,7 @@ class Agent:
             tool_execution.content = f"Tool {tool_call.name} does not exist"
             if self.response_model is not None:
                 tool_execution.content += f". To give your final answer, call the `{FINAL_RESULT_TOOL}` tool."
-            return tool_execution.to_message()
+            return None
 
         if self.skills and tool_call.name == "load_skill":
             try:
@@ -1428,62 +1499,41 @@ class Agent:
                 skill = next((s for s in self.skills if s.name == skill_name), None)
                 if skill:
                     tool_execution.content = skill.to_prompt()
-                    return tool_execution.to_message()
+                    return None
             except Exception as e:
                 logger.error(f"Error loading skill '{tool_call.name}': {e}")
 
-        try:
-            tool = tool_map[tool_call.name]
-            arguments = tool_call.arguments
-            if not isinstance(arguments, dict):
-                arguments = json.loads(arguments) if arguments and arguments.strip() else {}
-            logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
-            token = _CURRENT_TOOL_CALL_ID.set(tool_call.id)
-            try:
-                result = tool.run(**arguments)
-            finally:
-                _CURRENT_TOOL_CALL_ID.reset(token)
-        except _SubagentPausedError:
-            return None
-        except Exception as e:
-            logger.error(f"Error executing tool '{tool_call.name}': {e}")
-            tracer.mark_error(e)
-            tool_execution.content = f"Error executing tool '{tool_call.name}': {e}"
-            return tool_execution.to_message()
+        arguments = tool_call.arguments
+        if not isinstance(arguments, dict):
+            arguments = json.loads(arguments) if arguments and arguments.strip() else {}
+        tool_execution.tool_args = arguments
+        logger.info(f"[Tool Call] '{tool_call.name}'({arguments})")
+        return tool_map[tool_call.name]
 
+    def _set_tool_result(self, tool_execution: ToolResponse, tool: BaseTool, result: Any) -> None:
         if isinstance(result, ToolReturn):
             tool_execution.metadata = result.metadata
             result = result.return_value
-        if result is None:
-            tool_execution.content = ""
-        elif isinstance(result, str):
-            tool_execution.content = result
-        else:
-            tool_execution.content = str(result)
-        tool_execution.content = self._set_aside_long_output(tool_call.name, tool_execution.content)
-        return tool_execution.to_message()
+        tool_execution.content = self._set_aside_long_output(tool.name, "" if result is None else str(result))
 
-    async def arun_tool(self, tool_call: ToolCall) -> Message:
-        """Async twin of `run_tool` for tools whose `arun` does the work (durable proxies)."""
-        tool_execution = ToolResponse(tool_call_id=tool_call.id, tool_name=tool_call.name)
-        tool_map = {tool.name: tool for tool in self.get_all_tools()}
-        if tool_call.name == FINAL_RESULT_TOOL and self.response_model is not None:
-            return self.run_tool(tool_call)  # pure validation, no I/O
-        if tool_call.name not in tool_map:
-            return self.run_tool(tool_call)  # error message, no I/O
-        try:
-            result = await tool_map[tool_call.name].arun(**self._parse_tool_args(tool_call))
-        except Exception as e:
-            if in_workflow() and not isinstance(e, ActivityError):
-                raise  # a bug in workflow code must fail the task, not be shown to the model
-            logger.error(f"Error executing tool '{tool_call.name}': {e}")
-            tool_execution.content = f"Error executing tool '{tool_call.name}': {getattr(e, 'cause', None) or e}"
-            return tool_execution.to_message()
-        if isinstance(result, ToolReturn):
-            tool_execution.metadata = result.metadata
-            result = result.return_value
-        tool_execution.content = self._set_aside_long_output(tool_call.name, result or "")
-        return tool_execution.to_message()
+    @tracer.tool(name="Tool Call")
+    def run_tool(self, tool_call: ToolCall) -> Optional[Message]:
+        tools = self.get_all_tools()
+        with self._tool_execution(tool_call) as response:
+            tool = self._resolve_tool_call(tool_call, response, tools)
+            if tool is not None:
+                self._set_tool_result(response, tool, tool.run(**response.tool_args))
+        return response.to_message() if response.content is not None else None
+
+    @tracer.tool(name="Tool Call")
+    async def arun_tool(self, tool_call: ToolCall) -> Optional[Message]:
+        """Async twin of `run_tool`: an async tool (MCP, durable proxy) runs on the caller's event loop."""
+        tools = await self.aget_all_tools()
+        with self._tool_execution(tool_call) as response:
+            tool = self._resolve_tool_call(tool_call, response, tools)
+            if tool is not None:
+                self._set_tool_result(response, tool, await tool.arun(**response.tool_args))
+        return response.to_message() if response.content is not None else None
 
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
         delegation_names = {t.name for t in self._handoff_tools + self._spawn_tools}
@@ -1503,17 +1553,8 @@ class Agent:
         return results
 
     async def aexecute_tool_calls(self, tool_calls: List[ToolCall]) -> List[Message]:
-        if in_workflow():
-            # No threads in workflow code: the calls are awaited, each one an activity.
-            results = await asyncio.gather(*(self.arun_tool(tool_call) for tool_call in tool_calls))
-            return [result for result in results if result]
-        tasks = []
-        for tool_call in tool_calls:
-            task = asyncio.create_task(asyncio.to_thread(self.run_tool, tool_call))
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks)
-
+        # Async tools run on this loop, synchronous ones in threads (see `BaseTool.arun`).
+        results = await asyncio.gather(*(self.arun_tool(tool_call) for tool_call in tool_calls))
         return [result for result in results if result]
 
     def _pending_tool_calls(self) -> List[ToolCall]:
@@ -1876,7 +1917,18 @@ class Agent:
                 "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
             )
         messages, task = self._run_input(input)
+        tools = self.get_all_tools() if self.mcp_servers else None
+        scope = self._run_tool_scope(tools)
+        with scope():
+            return self._run(messages, task, context, approvals)
 
+    def _run(
+        self,
+        messages: List[Message],
+        task: Any,
+        context: Optional[Union[str, Dict[str, str]]],
+        approvals: Optional[ToolApprovals],
+    ) -> AgentResponse:
         # init agent response
         agent_response = AgentResponse(agent_id=self.id)
         agent_response.events.append(
@@ -2054,7 +2106,18 @@ class Agent:
                 return await self.durability.workflow_agent(self).arun(input, context=context, approvals=approvals)
             await self.durability.before_run(self, input)
         messages, task = self._run_input(input)
+        tools = await self.aget_all_tools() if self.mcp_servers else None
+        scope = self._run_tool_scope(tools)
+        with scope():
+            return await self._arun(messages, task, context, approvals)
 
+    async def _arun(
+        self,
+        messages: List[Message],
+        task: Any,
+        context: Optional[Union[str, Dict[str, str]]],
+        approvals: Optional[ToolApprovals],
+    ) -> AgentResponse:
         agent_response = AgentResponse(agent_id=self.id)
         agent_response.events.append(
             AgentEventStarted(
@@ -2221,9 +2284,18 @@ class Agent:
                 "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
             )
         agent_response = AgentResponse(agent_id=self.id)
-        events = self._run_stream(agent_response, input, context, approvals)
+        messages, task = self._run_input(input)
+        tools = self.get_all_tools() if self.mcp_servers else None
+        scope = self._run_tool_scope(tools)
+        events = self._run_stream(agent_response, messages, task, context, approvals)
         try:
-            yield from events
+            # The catalog is bound only while the stream advances, never across a yield.
+            while True:
+                with scope():
+                    event = next(events, None)
+                if event is None:
+                    break
+                yield event
         except GeneratorExit:
             self._interrupt_run(agent_response)
             raise
@@ -2233,12 +2305,11 @@ class Agent:
     def _run_stream(
         self,
         agent_response: AgentResponse,
-        input: Union[str, List[Message], List[Dict[str, str]], None],
+        messages: List[Message],
+        task: Any,
         context: Optional[Union[str, Dict[str, str]]],
         approvals: Optional[ToolApprovals],
     ) -> Iterator[AgentResponse]:
-        messages, task = self._run_input(input)
-
         event = AgentEventStarted(
             agent_id=self.id,
             run_id=agent_response.run_id,
@@ -2418,9 +2489,16 @@ class Agent:
                 "Inside a workflow, use `await agent.arun(...)`: synchronous and streaming runs are not durable."
             )
         agent_response = AgentResponse(agent_id=self.id)
-        events = self._arun_stream(agent_response, input, context, approvals)
+        messages, task = self._run_input(input)
+        tools = await self.aget_all_tools() if self.mcp_servers else None
+        scope = self._run_tool_scope(tools)
+        events = self._arun_stream(agent_response, messages, task, context, approvals)
         try:
-            async for event in events:
+            while True:
+                with scope():
+                    event = await anext(events, None)
+                if event is None:
+                    break
                 yield event
         except (GeneratorExit, asyncio.CancelledError):
             self._interrupt_run(agent_response)
@@ -2431,12 +2509,11 @@ class Agent:
     async def _arun_stream(
         self,
         agent_response: AgentResponse,
-        input: Union[str, List[Message], List[Dict[str, str]], None],
+        messages: List[Message],
+        task: Any,
         context: Optional[Union[str, Dict[str, str]]],
         approvals: Optional[ToolApprovals],
     ) -> AsyncIterator[AgentResponse]:
-        messages, task = self._run_input(input)
-
         event = AgentEventStarted(
             agent_id=self.id,
             run_id=agent_response.run_id,
