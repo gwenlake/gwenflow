@@ -522,9 +522,9 @@ false}` at the top of the flow runs the nodes one at a time instead. Each node a
 `settings` (`timeout` in seconds, `retries`) and `credentials` (parameter name →
 environment variable, resolved only when the node runs).
 
-An agent node uses the OpenAI client (`model: gpt-5-mini`, or any model of an
-OpenAI-compatible server). Add `provider` to use another one; `model` is then sent as
-written:
+An agent node uses the OpenAI client: `model: gpt-5-mini`, or any model of an
+OpenAI-compatible endpoint, such as `model: Qwen/Qwen3-32B`, sent whole. Add `provider`
+to use another client; `model` is then sent as written:
 
 ```yaml
     parameters:

@@ -535,14 +535,17 @@ def agent_runs(monkeypatch):
         (None, "ChatOpenAI", "gpt-4o-mini"),
         ("openai/gpt-4o-mini", "ChatOpenAI", "gpt-4o-mini"),
         ("gpt-4o-mini", "ChatOpenAI", "gpt-4o-mini"),
-        ("Qwen/Qwen3-32B", "ChatOpenAI", "Qwen3-32B"),  # an open-weights name on an OpenAI-compatible server
+        # An open-weights name keeps its organization: v1.5.1 cut it, and the endpoint refused the model.
+        ("Qwen/Qwen3-32B", "ChatOpenAI", "Qwen/Qwen3-32B"),
+        ("meta-llama/Llama-3.3-70B-Instruct", "ChatOpenAI", "meta-llama/Llama-3.3-70B-Instruct"),
+        ("mistralai/Mistral-Small-24B", "ChatOpenAI", "mistralai/Mistral-Small-24B"),
+        ("openai/Qwen/Qwen3-32B", "ChatOpenAI", "Qwen/Qwen3-32B"),
+        # A prefix that names a provider is removed, as in v1.5.1, and does not choose the client.
         ("mistral/mistral-large-latest", "ChatOpenAI", "mistral-large-latest"),
         ("gwenlake/qwen3", "ChatOpenAI", "qwen3"),
     ],
 )
-def test_without_provider_the_agent_node_uses_an_openai_client_as_in_v1_5_1(
-    model, client, sent, provider_keys, agent_runs
-):
+def test_without_provider_the_agent_node_uses_an_openai_client(model, client, sent, provider_keys, agent_runs):
     parameters = {"instructions": "be brief", "task": "Summarize {news}"}
     if model:
         parameters["model"] = model
@@ -578,6 +581,10 @@ def test_a_provider_prefix_without_provider_is_reported(provider_keys, warnings_
     agent_llm({"model": "mistral/mistral-large-latest"})
     assert len(warnings_logged) == 1
     assert "mistral/mistral-large-latest" in warnings_logged[0] and "provider: mistral" in warnings_logged[0]
+
+    warnings_logged.clear()
+    agent_llm({"model": "google/gemma-3-27b-it"})  # an open-weights name whose organization is a provider's name
+    assert "'gemma-3-27b-it'" in warnings_logged[0] and "provider: openai" in warnings_logged[0]
 
     warnings_logged.clear()
     for model in ("openai/gpt-4o-mini", "gpt-4o-mini", "Qwen/Qwen3-32B"):

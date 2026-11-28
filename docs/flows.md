@@ -111,11 +111,13 @@ history, so they are converted to JSON data (see [durability.md](durability.md))
 | `append_inputs` | `true`: parent results the task does not reference are appended as context |
 | `name` | the agent's name, `Flow Agent` by default |
 
-Without `provider`, the client is the OpenAI one (so also any OpenAI-compatible server
-set by `OPENAI_BASE_URL`), and `model` loses what comes before its first `/`:
-`gpt-5-mini` and `openai/gpt-5-mini` are the same model, and `Qwen/Qwen3-32B` is sent as
-`Qwen3-32B`. The prefix never chooses the client: `mistral/mistral-large-latest` runs on
-the OpenAI client, with a warning.
+Without `provider`, the client is the OpenAI one (so also any OpenAI-compatible endpoint
+set by `OPENAI_BASE_URL`). A prefix that names a provider is removed and never chooses
+the client: `gpt-5-mini` and `openai/gpt-5-mini` are the same model, and
+`mistral/mistral-large-latest` runs on the OpenAI client as `mistral-large-latest`, with
+a warning. Any other prefix is part of the model name and is sent whole, so an
+open-weights model keeps its organization: `Qwen/Qwen3-32B`,
+`meta-llama/Llama-3.3-70B-Instruct`.
 
 With `provider` (`openai`, `anthropic`, `azure`, `google`, `mistral`, `ollama`,
 `deepseek`, `gwenlake`), the client is that provider's and `model` is sent as written:
@@ -126,8 +128,8 @@ parameters:
   model: mistral-large-latest
 ---
 parameters:
-  provider: openai            # an OpenAI-compatible server that serves open-weights models
-  model: Qwen/Qwen3-32B       # sent whole
+  provider: openai            # an organization that is also a provider's name:
+  model: google/gemma-3-27b-it   # sent whole only with `provider`
 ```
 
 With a `harness`, `provider` runs the harness on that provider's client (with `model`,
@@ -170,4 +172,6 @@ A flow written for v1.5.1 runs as it did, with these differences:
 - an unknown node type is found before anything runs;
 - nodes run in worker threads, not in the main thread;
 - node types that are safe to repeat are retried up to 2 times (see above);
+- an agent `model` whose prefix is not a provider's name is sent whole (`Qwen/Qwen3-32B`;
+  v1.5.1 sent `Qwen3-32B`);
 - a failing `gwenflow.Python` script raises a `RuntimeError` carrying its stderr.

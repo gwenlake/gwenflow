@@ -106,7 +106,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     retried up to 2 times; `settings.retries: 0` (node) or `settings.node_retries: 0`
     (flow) switches it off;
   - a `gwenflow.Python` script that fails raises a `RuntimeError` carrying its stderr
-    (it was a `subprocess.CalledProcessError`).
+    (it was a `subprocess.CalledProcessError`);
+  - `gwenflow.Agent` node: a `model` whose prefix is not a provider's name is sent whole
+    (`Qwen/Qwen3-32B`). v1.5.1 removed any prefix and sent `Qwen3-32B`, which endpoints
+    serving open-weights models do not know.
 - Agent, response, memory and flow identifiers are UUIDv7 instead of UUIDv4.
 
 ### Fixed
@@ -149,10 +152,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     failed, and `Decimal`, `datetime`, `tuple` and `set` changed type. Locally the next
     node receives the result as it is; the conversion only happens in the Temporal
     activity, where results are recorded in the history.
-  - `gwenflow.Agent` node: without `provider`, the client is the OpenAI one and `model`
-    loses what comes before its first `/`, as in v1.5.1 (`Qwen/Qwen3-32B` was refused as
-    an unknown provider; `mistral/…` and `gwenlake/…` chose another client). A warning
-    names the `provider` to add when the prefix is a provider's name.
+  - `gwenflow.Agent` node: without `provider`, the client is the OpenAI one, as in
+    v1.5.1, and a `model` prefix that names a provider is removed without choosing the
+    client (`mistral/…` and `gwenlake/…` chose another client); a warning names the
+    `provider` to add. Any other prefix is part of the model name and is sent whole:
+    `Qwen/Qwen3-32B` was refused as an unknown provider.
   - `gwenflow.Agent` node: parent outputs the task does not reference are no longer
     appended to the prompt, unless `append_inputs: true`.
   - A `credentials` block whose values do not name environment variables (blocks written

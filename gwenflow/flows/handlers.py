@@ -140,12 +140,15 @@ def compose_task(task: str, input_data: dict | None, append_inputs: bool = False
 def agent_llm(parameters: dict) -> Any:
     """The LLM client of an agent node.
 
-    Without `provider`, as in v1.5.1: an OpenAI client, and `model` loses what comes
-    before its first `/` (`openai/gpt-4o-mini` and `gpt-4o-mini` are the same model;
-    `Qwen/Qwen3-32B` is sent as `Qwen3-32B`). The prefix never chooses the client.
+    Without `provider`, the client is the OpenAI one (so any OpenAI-compatible
+    endpoint too). A `model` prefix that names a provider is removed, as in v1.5.1:
+    `openai/gpt-4o-mini` and `gpt-4o-mini` are the same model. It never chooses the
+    client. Any other prefix is part of the model name and is sent whole: an
+    open-weights model keeps its organization (`Qwen/Qwen3-32B`).
 
     With `provider` (`openai`, `mistral`, `anthropic`, `gwenlake`...), the client is
-    that provider's, and `model` is sent as written (`Qwen/Qwen3-32B` stays whole).
+    that provider's, and `model` is sent as written, whatever its prefix
+    (`google/gemma-3-27b-it` on an OpenAI-compatible endpoint needs `provider: openai`).
     """
     from gwenflow.registry import DEFAULT_MODEL, PROVIDERS, make_llm
 
@@ -159,14 +162,17 @@ def agent_llm(parameters: dict) -> Any:
     from gwenflow import ChatOpenAI
     from gwenflow.logger import logger
 
-    raw_model = parameters.get("model", DEFAULT_MODEL)
-    prefix, _, name = raw_model.partition("/")
-    if name and prefix.lower() in PROVIDERS and prefix.lower() != "openai":
-        logger.warning(
-            f"Agent node model '{raw_model}': the prefix does not choose the client, "
-            f"an OpenAI client is used. Add `provider: {prefix.lower()}` to use that provider."
-        )
-    return ChatOpenAI(model=raw_model.split("/", 1)[-1])
+    model = parameters.get("model", DEFAULT_MODEL)
+    prefix, _, name = model.partition("/")
+    if name and prefix.lower() in PROVIDERS:
+        if prefix.lower() != "openai":
+            logger.warning(
+                f"Agent node model '{model}': the prefix does not choose the client. An OpenAI client "
+                f"is used, with the model '{name}'. Add `provider: {prefix.lower()}` to use that "
+                f"provider, or `provider: openai` to send '{model}' whole."
+            )
+        model = name
+    return ChatOpenAI(model=model)
 
 
 @node_type("gwenflow.Agent", paths=("harness",))
