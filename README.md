@@ -582,9 +582,8 @@ scheduled on Temporal). The full guide (activity timeouts and retries, approvals
 A node that exhausts its retries raises `FlowNodeError` in the workflow: catch it, or let
 it fail the run (`worker_options()` declares it as a workflow failure).
 
-Not supported yet: a durable agent cannot have a team or sub-agents, MCP servers, skills
-or long-term memory (an explicit error is raised when it is built), and streaming raises
-inside a workflow.
+Not supported yet in a workflow: a team or sub-agents (the worker refuses to start, and such
+an agent still runs normally outside a workflow), and streaming.
 
 ## Context Management
 

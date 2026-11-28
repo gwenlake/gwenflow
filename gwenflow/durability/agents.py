@@ -28,9 +28,10 @@ class _ActivityChat(ChatBase):
     target: ChatBase = None
     durability: TemporalDurability = None
     response_format: Any = None
+    activity: str = "model_request"
 
     @classmethod
-    def wrap(cls, target: ChatBase, durability: TemporalDurability) -> "_ActivityChat":
+    def wrap(cls, target: ChatBase, durability: TemporalDurability, activity: str = "model_request") -> "_ActivityChat":
         if target.context_window == "auto":
             raise GwenflowDurabilityError("context_window='auto' queries the server: set an int for durable agents.")
         return cls(
@@ -40,6 +41,7 @@ class _ActivityChat(ChatBase):
             fallback_context_window=target.fallback_context_window,
             target=target,
             durability=durability,
+            activity=activity,
         )
 
     async def ainvoke(self, input: Any = None, **kwargs: Any) -> ModelResponse:
@@ -51,7 +53,7 @@ class _ActivityChat(ChatBase):
             "structured_output": self.response_format is not None,
         }
         data = await workflow.execute_activity(
-            self.durability._activity_name("model_request"), request, **self.durability._config_for_model()
+            self.durability._activity_name(self.activity), request, **self.durability._config_for_model()
         )
         return _RESPONSE.validate_python(data)
 
@@ -85,6 +87,7 @@ class _ActivityTool(BaseTool):
             description=target.description,
             parameters=target.parameters,
             function_schema=target.function_schema,
+            max_retries=target.max_retries,
             requires_approval=target.requires_approval,
             durability=durability,
         )
@@ -115,7 +118,9 @@ class _ActivityTool(BaseTool):
         if self.server is not None:
             request["server"] = self.server
         result = await workflow.execute_activity(
-            self.durability._activity_name("call_tool"), request, **self.durability._config_for_tool(self.name)
+            self.durability._activity_name("call_tool"),
+            request,
+            **self.durability._config_for_tool(self.name, self._max_attempts()),
         )
         if isinstance(result, dict):  # a `ToolReturn`; any other result is text
             return ToolReturn(**result)

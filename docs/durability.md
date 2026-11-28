@@ -134,8 +134,20 @@ TemporalDurability(
 Each value is a Temporal activity config (`start_to_close_timeout`, `heartbeat_timeout`,
 `retry_policy`...). `model_activity_config` and the `tool_activity_config` entries are
 merged over `activity_config`. Defaults: 60 s for tools, 5 min with a 30 s heartbeat for
-model requests, Temporal's default retry policy. Retries belong to Temporal: a tool
-runs a single attempt inside its activity.
+model requests. Retries belong to Temporal: a tool runs a single attempt inside its
+activity, and attempts are bounded unless you pass your own `retry_policy`:
+
+- a tool gets its own `max_retries` attempts (one if it `requires_approval`); once they
+  fail, the model reads the error as a tool result, as outside Temporal;
+- a model request gets 10 attempts over about 4 minutes; a client error a retry cannot fix (400, 401, 403,
+  404, 413, 422...) fails at once, while 408, 409, 429 and 5xx are retried; when they are
+  exhausted, the run fails;
+- the other activities (MCP listing, memory) get 3 attempts.
+
+A model request, a reasoning request and a compaction send heartbeats while they run,
+three times per `heartbeat_timeout` (every 10 s without one), so a request longer than
+the heartbeat timeout is not taken for a dead worker. A provider adapter wraps the SDK
+error in a `RuntimeError`: the HTTP status is read along the chain of causes.
 
 ### Long conversations: `continue_as_new`
 
@@ -269,7 +281,23 @@ workers must use the same codec.
 
 ## Not supported yet
 
-A durable agent cannot have a team or sub-agents, MCP servers, skills or long-term
-memory: `TemporalDurability` raises `GwenflowDurabilityError` when the agent is built.
-Inside a workflow, streaming and the synchronous API (`agent.run()`) raise the same
-error.
+A durable agent cannot run in a workflow with a team or sub-agents. Nothing is refused
+when the agent is built, since it runs unchanged outside a workflow: `worker_options()`
+raises `GwenflowDurabilityError` when the worker starts, and a run that still reaches
+such an agent fails at once with a non-retryable `UnsupportedAgent` error. The same
+applies to `context_window="auto"` and to MCP servers sharing a name. Inside a workflow,
+streaming and the synchronous API (`agent.run()`) raise `GwenflowDurabilityError`.
+
+## Testing
+
+Workflow tests need a Temporal server: the server keeps the history workflows are
+replayed from, and there is no in-process mode. `tests/test_durability_temporal.py`
+uses, in this order:
+
+- `TEMPORAL_TEST_SERVER_PATH`: an existing time-skipping test server binary;
+- `TEMPORAL_CLI_PATH`: an existing `temporal` CLI, started as a local dev server;
+- otherwise the time-skipping test server, downloaded by the SDK on first use.
+
+Without any of them (offline, download blocked), the workflow tests are skipped with
+the reason, and the tests that need no server still run. In CI (`CI` set) they fail
+instead: a skipped test there would hide that nothing ran.

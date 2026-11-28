@@ -1311,6 +1311,9 @@ class Agent:
             instructions=self._reasoning_instructions(),
             llm=self.reasoning_model,
         )
+        if in_workflow() and self.durability is not None:
+            # `reasoning_model` is this run's activity proxy: the step runs as an activity.
+            self.durability.adopt(reasoning_agent)
 
         response = await reasoning_agent.arun(input)
 

@@ -86,6 +86,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Durable agents (Temporal): activities no longer retry forever. Temporal's default retry
+  policy has no limit, so a tool that kept failing blocked the run, and the model never saw
+  the error. A tool now gets its own `max_retries` attempts (one if it requires approval),
+  after which the model reads the error as a tool result, as outside Temporal. A model
+  request gets 10 attempts (about 4 minutes), and a client error a retry cannot fix (400, 401, 403, 404...)
+  fails the run at once. Other activities get 3 attempts. An explicit `retry_policy` still
+  wins.
+- Durable agents (Temporal): a model request longer than the heartbeat timeout (30 s by
+  default) no longer fails. The model activities declared a heartbeat timeout but never sent
+  a heartbeat, so the server timed them out and retried them; model requests, reasoning
+  requests and compactions now report they are alive while they run.
+- Durable agents (Temporal): an agent with a `reasoning_model` now works inside a workflow.
+  Its reasoning step ran a second agent without durability, which failed every workflow task;
+  it now runs as a `reasoning_request` activity. Nothing changes outside a workflow.
+- Durable agents (Temporal): options a workflow cannot run (team, sub-agents, MCP servers
+  sharing a name, `context_window="auto"`) are no longer refused when the agent is built, as
+  such an agent runs unchanged outside a workflow. `worker_options()` refuses them when the
+  worker starts, and a run that still reaches one fails with a non-retryable `UnsupportedAgent`
+  error. Before, `context_window="auto"` made the workflow task fail and retry forever.
+- Temporal tests: the server can be given with `TEMPORAL_TEST_SERVER_PATH` (test server) or
+  `TEMPORAL_CLI_PATH` (local dev server); without a server, workflow tests are skipped with
+  the reason instead of failing, except in CI where they still fail.
+
 - A tool that returned `0`, `False`, `[]` or `{}` sent an empty result to the model: the value is
   now cast to text like any other (`"0"`, `"false"`, `"[]"`, `"{}"`). `None` is still an empty result.
 - `ResponseOpenAI` raised on a response left `incomplete` by `max_output_tokens` or the content

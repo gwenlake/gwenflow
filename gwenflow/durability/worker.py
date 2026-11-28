@@ -34,6 +34,7 @@ def worker_options(
         seen.add(id(agent))
         if agent.durability is None:
             raise ValueError(f"Agent '{agent.name}' has no durability: nothing to register.")
+        agent.durability.check_supported()  # fail when the worker starts, not in a run
         activities.extend(agent.durability.activities)
     restrictions = SandboxRestrictions.default.with_passthrough_modules(
         "gwenflow",
