@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from pydantic import TypeAdapter
 from temporalio import activity, workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 
 from gwenflow.durability.agents import (
@@ -48,11 +49,98 @@ DEFAULT_MODEL_ACTIVITY_CONFIG: workflow.ActivityConfig = {
     "heartbeat_timeout": timedelta(seconds=30),
 }
 
+# Temporal's own default retries an activity forever. Bounded defaults keep a run
+# from hanging: a tool that keeps failing reaches the model as an error message
+# (as outside Temporal), a model request that keeps failing fails the run.
+DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(seconds=30))
+# 10 attempts spread over about 4 minutes: rides out a rate limit or a short provider outage.
+DEFAULT_MODEL_RETRY_POLICY = RetryPolicy(maximum_attempts=10, maximum_interval=timedelta(seconds=60))
+
+# Client errors a retry cannot fix (bad request, auth, not found, too large...).
+# 408, 409 and 429 are transient and stay retryable.
+_RETRYABLE_CLIENT_STATUSES = {408, 409, 429}
+
+
+# Without a configured heartbeat timeout, how often a long activity reports it is alive.
+HEARTBEAT_EVERY = 10.0
+
+
+def _http_status(error: BaseException) -> Optional[int]:
+    # `status_code`: openai, anthropic, mistralai. `code`: google-genai (openai also has a
+    # `code`, but it is a string such as "invalid_api_key").
+    for attribute in ("status_code", "code"):
+        status = getattr(error, attribute, None)
+        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status < 600:
+            return status
+    return None
+
+
+def _status_error(error: BaseException) -> Optional[BaseException]:
+    """The exception that carries an HTTP status: `error` itself, or one of its causes.
+
+    The provider adapters wrap the SDK error (`RuntimeError(...) from e`), so the
+    status is looked for along the chain of causes; the first one found decides.
+    """
+    seen: set[int] = set()
+    source: Optional[BaseException] = error
+    while source is not None and id(source) not in seen:
+        seen.add(id(source))
+        if _http_status(source) is not None:
+            return source
+        source = source.__cause__
+    return None
+
+
+def _non_retryable_status(error: BaseException) -> Optional[int]:
+    """The HTTP status of a provider SDK error when retrying it is pointless, else None."""
+    source = _status_error(error)
+    status = None if source is None else _http_status(source)
+    if status is not None and 400 <= status < 500 and status not in _RETRYABLE_CLIENT_STATUSES:
+        return status
+    return None  # no status (network...), 5xx, 408, 409, 429: Temporal retries it
+
+
+async def _alive(awaitable: Any) -> Any:
+    """Await `awaitable` in an activity, sending heartbeats until it is done.
+
+    A model request or a compaction can outlast the heartbeat timeout, and the
+    server takes a silent activity for a dead worker. Heartbeats go out three
+    times per timeout, as for flow nodes.
+    """
+    task = asyncio.ensure_future(awaitable)
+    if not activity.in_activity():
+        return await task
+    timeout = activity.info().heartbeat_timeout
+    every = timeout.total_seconds() / 3 if timeout else HEARTBEAT_EVERY
+    try:
+        while not task.done():
+            activity.heartbeat()
+            await asyncio.wait({task}, timeout=every)
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    return task.result()
+
+
+async def _model_response(llm: Any, messages: Any) -> Dict[str, Any]:
+    """One request to `llm` from an activity: kept alive, and failed at once when rejected."""
+    try:
+        response = await _alive(llm.ainvoke(input=messages))
+    except Exception as e:
+        status = _non_retryable_status(e)
+        if status is None:
+            raise  # transient or unknown: Temporal retries it
+        raise ApplicationError(
+            f"Model request rejected ({status}): {e}", type=type(_status_error(e)).__name__, non_retryable=True
+        ) from e
+    return _RESPONSE.dump_python(response, mode="json")
+
 
 @dataclass
 class TemporalDurability:
     activity_config: workflow.ActivityConfig = field(default_factory=lambda: dict(DEFAULT_ACTIVITY_CONFIG))
-    """Base config for every activity."""
+    """Base config for every activity. Without a `retry_policy`, an activity gets at most
+    3 attempts (a tool: its own `max_retries`, 1 if it requires approval)."""
 
     model_activity_config: workflow.ActivityConfig = field(default_factory=lambda: dict(DEFAULT_MODEL_ACTIVITY_CONFIG))
     """Merged over `activity_config` for model requests (agent llm and summarizer)."""
@@ -87,27 +175,36 @@ class TemporalDurability:
                 "A durable agent needs a stable `name` (letters, digits, '_' or '-'): "
                 "activity names are derived from it and must not change once deployed."
             )
-        unsupported = [
-            label
-            for label, present in (
-                ("team", agent.team),
-                ("subagents", agent.subagents),
-            )
-            if present
-        ]
-        if unsupported:
-            raise GwenflowDurabilityError(f"Not supported yet with Temporal: {', '.join(unsupported)}.")
-        server_names = [server.name for server in agent.mcp_servers]
-        duplicates = sorted({n for n in server_names if server_names.count(n) > 1})
-        if duplicates:
-            raise GwenflowDurabilityError(
-                f"MCP servers of a durable agent need distinct names (pass `name=`): {', '.join(duplicates)}."
-            )
         self._target = agent
         self._activities = self._build_activities()
         # The tokenizer loads its vocabulary lazily (disk cache, network on first use):
         # do it now, outside any workflow, so token counting stays pure in workflow code.
         agent.history.tokenizer_fn("warm-up")
+
+    def check_supported(self) -> None:
+        """Raise if the bound agent cannot run inside a workflow.
+
+        Not checked when the agent is built: an agent with a durability runs
+        unchanged outside a workflow, whatever its options. `worker_options()`
+        calls this when the worker starts, and a workflow run that still
+        reaches such an agent fails at once instead of hanging.
+        """
+        agent = self._target
+        if agent is None or isinstance(agent, Flow):
+            return
+        problems = []
+        unsupported = [label for label, present in (("team", agent.team), ("subagents", agent.subagents)) if present]
+        if unsupported:
+            problems.append(f"not supported yet with Temporal: {', '.join(unsupported)}")
+        server_names = [server.name for server in agent.mcp_servers]
+        duplicates = sorted({n for n in server_names if server_names.count(n) > 1})
+        if duplicates:
+            problems.append(f"its MCP servers need distinct names (pass `name=`): {', '.join(duplicates)}")
+        for label, llm in (("llm", agent.llm), ("reasoning_model", agent.reasoning_model)):
+            if llm is not None and llm.context_window == "auto":
+                problems.append(f"{label} has context_window='auto', which queries the server: set an int")
+        if problems:
+            raise GwenflowDurabilityError(f"Agent '{agent.name}' cannot run in a workflow: {'; '.join(problems)}.")
 
     @property
     def activities(self) -> List[Callable]:
@@ -116,11 +213,21 @@ class TemporalDurability:
     def _activity_name(self, kind: str) -> str:
         return f"gwenflow__{self._target.name}__{kind}"
 
-    def _config_for_model(self) -> workflow.ActivityConfig:
-        return {**self.activity_config, **self.model_activity_config}
+    def _config(self) -> workflow.ActivityConfig:
+        return {"retry_policy": DEFAULT_RETRY_POLICY, **self.activity_config}
 
-    def _config_for_tool(self, tool_name: str) -> workflow.ActivityConfig:
-        return {**self.activity_config, **self.tool_activity_config.get(tool_name, {})}
+    def _config_for_model(self) -> workflow.ActivityConfig:
+        return {"retry_policy": DEFAULT_MODEL_RETRY_POLICY, **self.activity_config, **self.model_activity_config}
+
+    def _config_for_tool(self, tool_name: str, max_attempts: Optional[int] = None) -> workflow.ActivityConfig:
+        # The tool's own attempt count (1 for a tool that requires approval) replaces
+        # its in-process retries, which do not run inside the activity.
+        retry_policy = (
+            DEFAULT_RETRY_POLICY
+            if max_attempts is None
+            else RetryPolicy(maximum_attempts=max(max_attempts, 1), maximum_interval=timedelta(seconds=30))
+        )
+        return {"retry_policy": retry_policy, **self.activity_config, **self.tool_activity_config.get(tool_name, {})}
 
     # -- worker side: the activities that do the real I/O --------------------
 
@@ -145,8 +252,14 @@ class TemporalDurability:
             llm.tool_choice = request["tool_choice"]
             if hasattr(llm, "response_format"):
                 llm.response_format = agent.response_model if request["structured_output"] else None
-            response = await llm.ainvoke(input=request["messages"])
-            return _RESPONSE.dump_python(response, mode="json")
+            return await _model_response(llm, request["messages"])
+
+        @activity.defn(name=self._activity_name("reasoning_request"))
+        async def reasoning_request(request: Dict[str, Any]) -> Dict[str, Any]:
+            # The reasoning step: one request to `reasoning_model`, without tools.
+            llm = copy.copy(durability._target.reasoning_model)
+            llm.tools = None
+            return await _model_response(llm, request["messages"])
 
         @activity.defn(name=self._activity_name("call_tool"))
         async def call_tool(request: Dict[str, Any]) -> Union[str, Dict[str, Any], None]:
@@ -174,7 +287,7 @@ class TemporalDurability:
             if hasattr(history, "summary"):
                 history.summary = request["summary"] or ""
                 history._summarized_upto = request["summarized_upto"]
-            record = await asyncio.to_thread(history.compact)
+            record = await _alive(asyncio.to_thread(history.compact))
             return {
                 "changed": record is not None,
                 "messages": [m.to_dict() for m in history.messages],
@@ -218,6 +331,8 @@ class TemporalDurability:
             }
 
         activities = [model_request, call_tool, compact_history]
+        if self._target.reasoning_model is not None:
+            activities.append(reasoning_request)
         if self._target.mcp_servers:
             activities.append(list_mcp_tools)
         if self._target.memory is not None:
@@ -272,13 +387,13 @@ class TemporalDurability:
 
     async def before_run(self, agent: Any, input: Any = None) -> None:
         if getattr(agent, "_mcp_pending", False):
-            listing = await workflow.execute_activity(self._activity_name("list_mcp_tools"), {}, **self.activity_config)
+            listing = await workflow.execute_activity(self._activity_name("list_mcp_tools"), {}, **self._config())
             agent.tools = list(agent.tools) + [_ActivityTool.for_mcp(d, self) for d in listing]
             agent.llm.tools = agent._llm_tools() or None
             agent._mcp_pending = False
         if agent.memory is not None and (input is not None or not agent.memory.loaded):
             state = await workflow.execute_activity(
-                self._activity_name("memory_load"), {"query": _query_text(input)}, **self.activity_config
+                self._activity_name("memory_load"), {"query": _query_text(input)}, **self._config()
             )
             agent.memory.store.files.clear()
             agent.memory.restore_state(_MEMORY_STATE.validate_python(state))
@@ -289,7 +404,7 @@ class TemporalDurability:
         result = await workflow.execute_activity(
             self._activity_name("memory_flush"),
             _MEMORY_STATE.dump_python(agent.memory.dump_state(pending_only=True), mode="json"),
-            **self.activity_config,
+            **self._config(),
         )
         agent.memory.merge_flushed(_MEMORY_STATE.validate_python(result["state"]))
 
@@ -298,13 +413,15 @@ class TemporalDurability:
         if not missing:
             return
         files = await workflow.execute_activity(
-            self._activity_name("memory_read"), {"paths": missing}, **self.activity_config
+            self._activity_name("memory_read"), {"paths": missing}, **self._config()
         )
         for path, data in files.items():
             memory.store.files[path] = None if data is None else _MEMORY_FILE.validate_python(data)
 
     def before_model_request(self, agent: Any) -> None:
         """Hook called by the agent loop before each model request, in workflow code."""
+        if getattr(agent, "_durable_helper", False):
+            return  # the reasoning step's own agent: nothing to carry over
         if self.continue_as_new is not None and workflow.info().is_continue_as_new_suggested():
             self.continue_as_new(agent)
 
@@ -323,6 +440,11 @@ class TemporalDurability:
         clone = self._copies.get(instance)
         if clone is not None:
             return clone
+        try:
+            self.check_supported()
+        except GwenflowDurabilityError as e:
+            # A configuration error: fail the run, a retried workflow task would hang on it.
+            raise ApplicationError(str(e), type="UnsupportedAgent", non_retryable=True) from e
         clone = agent.clone()
         clone._workflow_copy = True
         clone._mcp_pending = bool(agent.mcp_servers)
@@ -342,10 +464,19 @@ class TemporalDurability:
         proxy.tool_choice = agent.llm.tool_choice
         proxy.response_format = getattr(agent.llm, "response_format", None)
         clone.llm = proxy
+        if agent.reasoning_model is not None:
+            clone.reasoning_model = _ActivityChat.wrap(agent.reasoning_model, self, activity="reasoning_request")
         # Over-budget compaction (the one that calls the summarizer) becomes an activity.
         clone.history.durable_compactor = self._compact_in_activity
         self._copies[instance] = clone
         return clone
+
+    def adopt(self, helper: Any) -> None:
+        """Make the agent of the reasoning step durable: its llm is already the activity proxy."""
+        helper.durability = self
+        helper._workflow_copy = True
+        helper._durable_helper = True
+        helper.history.durable_compactor = self._compact_in_activity
 
     async def execute_node(self, node: Node, input_data: Optional[Dict[str, Any]]) -> Any:
         """Flow side: run one node of the bound flow as a `gwenflow__flow_node` activity."""

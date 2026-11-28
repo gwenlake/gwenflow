@@ -1,7 +1,8 @@
 import asyncio
+import contextvars
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from typing import Any
 
@@ -67,6 +68,36 @@ def start_in_thread(control: NodeControl, fn: Callable[..., Any], *args: Any) ->
     future = asyncio.ensure_future(asyncio.to_thread(control.run, fn, *args))
     future.add_done_callback(_retrieve)
     return future
+
+
+def run_sync(make_coroutine: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+    """Run a coroutine to its end from synchronous code, and return its result.
+
+    `asyncio.run` refuses to start when a loop is already running in this thread
+    (a FastAPI endpoint, a notebook). The coroutine then runs on a loop of its
+    own in a dedicated thread, with a copy of the caller's context variables, and
+    the caller waits for it: `run()` stays a blocking call, as it always was.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(make_coroutine())
+
+    context = contextvars.copy_context()
+    outcome: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            outcome["value"] = context.run(asyncio.run, make_coroutine())
+        except BaseException as e:  # handed back to the caller, whatever it is
+            outcome["error"] = e
+
+    thread = threading.Thread(target=target, name="gwenflow-flow-run", daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def remaining_time() -> float | None:

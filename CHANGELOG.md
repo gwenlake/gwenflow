@@ -62,7 +62,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name -> environment variable, resolved only when the node runs, so secrets stay out of
   flow files and durable histories).
 - `AutoFlow.plan(query)` returns the planned `Flow` without running it, so it can be
-  saved, reviewed or run durably.
+  saved, reviewed or run durably. Its agent nodes name their `provider` explicitly.
+- Flow setting `settings.parallel` (default `true`). Set to `false`, nodes run one at a
+  time, in the order v1.5.1 ran them (`Flow.sequential_order()`, the order
+  `networkx.topological_sort` gave), locally and in a Temporal workflow.
+- `Flow.concurrent_pairs()`: the pairs of nodes without a path between them, which may
+  run at the same time. `Flow.concurrent_report()` adds the files and SQLite databases
+  both nodes declare, and `gwenflow check <flow file>` prints it for a flow file.
+- `gwenflow.Agent` node parameters: `provider` (the client comes from that provider, and
+  `model` is sent as written, so `Qwen/Qwen3-32B` stays whole), `append_inputs` (append
+  as context the parent outputs the task does not reference), `tools` (built-in tool
+  names) and `name`.
+- `FlowRunner._execute_node(node, input_data)` is back: every local run of a
+  `FlowRunner` goes through it, once per attempt, inside the node's timeout and retries,
+  so a subclass that overrides it is called again.
 - `gwenflow.registry`: built-in LLM providers and tools addressable by name
   (`make_llm("anthropic/...")`, `make_tools([...])`), shared by the CLI and flows.
 - Identifiers are UUIDv7 (time-sortable; native on Python 3.14, polyfill before), and
@@ -72,27 +85,83 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Independent branches of a flow run in parallel: a node starts as soon as all its
   parents are done.
-- `FlowRunner.run()` returns the results of every node as a dict instead of printing the
-  result, and raises `FlowNodeError` (a `FlowError`) instead of exiting with
-  `SystemExit(1)`. `gwenflow run` prints the flow's outputs (its sink nodes).
+- `FlowRunner.run()` returns the results of every node as a dict (it returned `None`),
+  and raises `FlowNodeError` (a `FlowError`) instead of exiting with `SystemExit(1)`. It
+  still prints the result of the last node, as v1.5.1 did; `Flow.run()`, `Flow.arun()` and
+  `FlowRunner.arun()` print nothing. `gwenflow run` prints the flow's outputs (its sink
+  nodes).
 - Flows are validated when loaded: cycles, duplicate node names and connections to
   unknown nodes raise `FlowError`.
-- The `gwenflow.Agent` flow node uses the provider given by the model prefix
-  (`anthropic/…`, `mistral/…`) instead of always using the OpenAI client, and appends as
-  context the parent outputs that the task does not reference with a `{node_name}`
-  placeholder.
 - `AutoFlow.run()` runs independent agents in parallel.
+- Differences with v1.5.1 kept on purpose for flows:
+  - two nodes that are not connected no longer run in declaration order but in parallel
+    (`settings.parallel: false` restores the old behaviour; `gwenflow check` lists them);
+  - two nodes of the same name: the flow is refused (v1.5.1 ran both, a bug);
+  - `run()` returns a dict instead of `None`;
+  - an invalid flow raises `FlowError`, a failed node `FlowNodeError`;
+  - an unknown node type is found before anything runs, not when its turn comes;
+  - nodes run in worker threads, no longer in the main thread;
+  - idempotent nodes (file readers and writers, `websiteReader`, `textSplitter`,
+    `httpRequest` with GET / HEAD / OPTIONS, `opensearchQuery` search / count / get) are
+    retried up to 2 times; `settings.retries: 0` (node) or `settings.node_retries: 0`
+    (flow) switches it off;
+  - a `gwenflow.Python` script that fails raises a `RuntimeError` carrying its stderr
+    (it was a `subprocess.CalledProcessError`);
+  - `gwenflow.Agent` node: a `model` whose prefix is not a provider's name is sent whole
+    (`Qwen/Qwen3-32B`). v1.5.1 removed any prefix and sent `Qwen3-32B`, which endpoints
+    serving open-weights models do not know.
 - Agent, response, memory and flow identifiers are UUIDv7 instead of UUIDv4.
 
 ### Fixed
+
+- Durable agents (Temporal): activities no longer retry forever. Temporal's default retry
+  policy has no limit, so a tool that kept failing blocked the run, and the model never saw
+  the error. A tool now gets its own `max_retries` attempts (one if it requires approval),
+  after which the model reads the error as a tool result, as outside Temporal. A model
+  request gets 10 attempts (about 4 minutes), and a client error a retry cannot fix (400, 401, 403, 404...)
+  fails the run at once. Other activities get 3 attempts. An explicit `retry_policy` still
+  wins.
+- Durable agents (Temporal): a model request longer than the heartbeat timeout (30 s by
+  default) no longer fails. The model activities declared a heartbeat timeout but never sent
+  a heartbeat, so the server timed them out and retried them; model requests, reasoning
+  requests and compactions now report they are alive while they run.
+- Durable agents (Temporal): an agent with a `reasoning_model` now works inside a workflow.
+  Its reasoning step ran a second agent without durability, which failed every workflow task;
+  it now runs as a `reasoning_request` activity. Nothing changes outside a workflow.
+- Durable agents (Temporal): options a workflow cannot run (team, sub-agents, MCP servers
+  sharing a name, `context_window="auto"`) are no longer refused when the agent is built, as
+  such an agent runs unchanged outside a workflow. `worker_options()` refuses them when the
+  worker starts, and a run that still reaches one fails with a non-retryable `UnsupportedAgent`
+  error. Before, `context_window="auto"` made the workflow task fail and retry forever.
+- Temporal tests: the server can be given with `TEMPORAL_TEST_SERVER_PATH` (test server) or
+  `TEMPORAL_CLI_PATH` (local dev server); without a server, workflow tests are skipped with
+  the reason instead of failing, except in CI where they still fail.
 
 - A tool that returned `0`, `False`, `[]` or `{}` sent an empty result to the model: the value is
   now cast to text like any other (`"0"`, `"false"`, `"[]"`, `"{}"`). `None` is still an empty result.
 - `ResponseOpenAI` raised on a response left `incomplete` by `max_output_tokens` or the content
   filter, losing the partial answer; it now returns it with `finish_reason="length"` /
   `"content_filter"`. An `incomplete` response for any other reason still raises.
-- The `gwenflow.Agent` flow node ignored the provider of its `model` and could not be
-  given tools (it now accepts `tools`, built-in tool names).
+- Flows written for v1.5.1 run as they did (the differences kept on purpose are listed
+  under Changed):
+  - `Flow.run()`, `FlowRunner.run()` and `AutoFlow.run()` failed with `asyncio.run()
+    cannot be called from a running event loop` when called from async code (a FastAPI
+    endpoint, a notebook). The flow then runs in a thread of its own, with the caller's
+    context variables, and the call waits for its result.
+  - A node result was always converted to JSON data: a node returning any other object
+    failed, and `Decimal`, `datetime`, `tuple` and `set` changed type. Locally the next
+    node receives the result as it is; the conversion only happens in the Temporal
+    activity, where results are recorded in the history.
+  - `gwenflow.Agent` node: without `provider`, the client is the OpenAI one, as in
+    v1.5.1, and a `model` prefix that names a provider is removed without choosing the
+    client (`mistral/…` and `gwenlake/…` chose another client); a warning names the
+    `provider` to add. Any other prefix is part of the model name and is sent whole:
+    `Qwen/Qwen3-32B` was refused as an unknown provider.
+  - `gwenflow.Agent` node: parent outputs the task does not reference are no longer
+    appended to the prompt, unless `append_inputs: true`.
+  - A `credentials` block whose values do not name environment variables (blocks written
+    by other tools) made the flow refused; these entries are ignored, with a warning that
+    names the node.
 
 ### Deprecated
 

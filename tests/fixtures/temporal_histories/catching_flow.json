@@ -1,0 +1,188 @@
+{
+ "events": [
+  {
+   "eventId": "1",
+   "eventTime": "2096-11-10T10:32:40Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+   "workflowExecutionStartedEventAttributes": {
+    "workflowType": {
+     "name": "CatchingFlowWorkflow"
+    },
+    "taskQueue": {
+     "name": "q"
+    },
+    "input": {},
+    "workflowExecutionTimeout": "315360000s",
+    "workflowRunTimeout": "315360000s",
+    "workflowTaskTimeout": "10s",
+    "originalExecutionRunId": "05442222-f3d5-4062-afa6-307815ab02f3",
+    "identity": "1@worker",
+    "firstExecutionRunId": "05442222-f3d5-4062-afa6-307815ab02f3",
+    "attempt": 1,
+    "firstWorkflowTaskBackoff": "0s",
+    "priority": {}
+   }
+  },
+  {
+   "eventId": "2",
+   "eventTime": "2096-11-10T10:32:40Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+   "workflowTaskScheduledEventAttributes": {
+    "taskQueue": {
+     "name": "q"
+    },
+    "startToCloseTimeout": "10s",
+    "attempt": 1
+   }
+  },
+  {
+   "eventId": "3",
+   "eventTime": "2096-11-10T10:32:40Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+   "workflowTaskStartedEventAttributes": {
+    "scheduledEventId": "2",
+    "identity": "1@worker",
+    "historySizeBytes": "198"
+   }
+  },
+  {
+   "eventId": "4",
+   "eventTime": "2096-11-10T10:32:40.002Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+   "workflowTaskCompletedEventAttributes": {
+    "scheduledEventId": "2",
+    "identity": "1@worker",
+    "binaryChecksum": "2927f5708114ed4f92ccb251712db6e6",
+    "sdkMetadata": {
+     "coreUsedFlags": [
+      2,
+      3,
+      4,
+      1
+     ],
+     "sdkName": "temporal-python",
+     "sdkVersion": "1.35.0"
+    },
+    "meteringMetadata": {}
+   }
+  },
+  {
+   "eventId": "5",
+   "eventTime": "2096-11-10T10:32:40.002Z",
+   "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+   "activityTaskScheduledEventAttributes": {
+    "activityId": "1",
+    "activityType": {
+     "name": "gwenflow__flow_node"
+    },
+    "taskQueue": {
+     "name": "q",
+     "kind": "TASK_QUEUE_KIND_NORMAL"
+    },
+    "header": {},
+    "input": {
+     "payloads": [
+      {
+       "metadata": {
+        "encoding": "anNvbi9wbGFpbg=="
+       },
+       "data": "eyJpbnB1dF9kYXRhIjpudWxsLCJub2RlIjp7ImNyZWRlbnRpYWxzIjp7fSwiaWQiOiIwMWEyMjFiNi1jODI4LTcwNjctYWM5Ny1lNTVlYTY3NzBkNzEiLCJuYW1lIjoiZG93biIsInBhcmFtZXRlcnMiOnsiZmFpbHVyZXMiOjk5LCJrZXkiOiJkb3duIn0sInBvc2l0aW9uIjpbMCwwXSwic2V0dGluZ3MiOnsicmV0cmllcyI6MH0sInR5cGUiOiJ0ZW1wb3JhbF90ZXN0LkZsYWt5IiwidmVyc2lvbiI6MX19"
+      }
+     ]
+    },
+    "scheduleToCloseTimeout": "315360000s",
+    "scheduleToStartTimeout": "315360000s",
+    "startToCloseTimeout": "3600s",
+    "heartbeatTimeout": "30s",
+    "workflowTaskCompletedEventId": "3",
+    "retryPolicy": {
+     "initialInterval": "1s",
+     "backoffCoefficient": 2.0,
+     "maximumInterval": "30s",
+     "maximumAttempts": 1
+    },
+    "priority": {}
+   }
+  },
+  {
+   "eventId": "6",
+   "eventTime": "2096-11-10T10:32:40.002Z",
+   "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+   "activityTaskStartedEventAttributes": {
+    "scheduledEventId": "5",
+    "identity": "1@worker",
+    "attempt": 1
+   }
+  },
+  {
+   "eventId": "7",
+   "eventTime": "2096-11-10T10:32:40.004Z",
+   "eventType": "EVENT_TYPE_ACTIVITY_TASK_FAILED",
+   "activityTaskFailedEventAttributes": {
+    "failure": {
+     "message": "transient error",
+     "stackTrace": "  File \"/src/gwenflow/.venv/lib/python3.13/site-packages/temporalio/worker/_activity.py\", line 379, in _handle_start_activity_task\n    result = await self._execute_activity(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        start, running_activity, task_token, data_converter\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n\n  File \"/src/gwenflow/.venv/lib/python3.13/site-packages/temporalio/worker/_activity.py\", line 712, in _execute_activity\n    return await impl.execute_activity(input)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\n  File \"/src/gwenflow/.venv/lib/python3.13/site-packages/temporalio/worker/_activity.py\", line 921, in execute_activity\n    return await input.fn(*input.args)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\n  File \"/src/gwenflow/gwenflow/durability/flows.py\", line 60, in run\n    return task.result()\n           ~~~~~~~~~~~^^\n\n  File \"/usr/lib/python3.13/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\n  File \"/usr/lib/python3.13/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n\n  File \"/src/gwenflow/gwenflow/flows/runtime.py\", line 53, in run\n    return fn(*args)\n\n  File \"/src/gwenflow/gwenflow/flows/flows.py\", line 516, in call_handler\n    result = handler(parameters, input_data)\n\n  File \"/src/gwenflow/tests/test_durability_temporal.py\", line 189, in _flaky\n    raise RuntimeError(\"transient error\")\n",
+     "applicationFailureInfo": {
+      "type": "RuntimeError"
+     }
+    },
+    "scheduledEventId": "5",
+    "startedEventId": "6",
+    "identity": "1@worker",
+    "retryState": "RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED"
+   }
+  },
+  {
+   "eventId": "8",
+   "eventTime": "2096-11-10T10:32:40.004Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+   "workflowTaskScheduledEventAttributes": {
+    "taskQueue": {
+     "name": "q"
+    },
+    "startToCloseTimeout": "10s",
+    "attempt": 1
+   }
+  },
+  {
+   "eventId": "9",
+   "eventTime": "2096-11-10T10:32:40.004Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+   "workflowTaskStartedEventAttributes": {
+    "scheduledEventId": "8",
+    "identity": "1@worker",
+    "historySizeBytes": "2702"
+   }
+  },
+  {
+   "eventId": "10",
+   "eventTime": "2096-11-10T10:32:40.005Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+   "workflowTaskCompletedEventAttributes": {
+    "scheduledEventId": "8",
+    "identity": "1@worker",
+    "binaryChecksum": "2927f5708114ed4f92ccb251712db6e6",
+    "sdkMetadata": {},
+    "meteringMetadata": {}
+   }
+  },
+  {
+   "eventId": "11",
+   "eventTime": "2096-11-10T10:32:40.005Z",
+   "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+   "workflowExecutionCompletedEventAttributes": {
+    "result": {
+     "payloads": [
+      {
+       "metadata": {
+        "encoding": "anNvbi9wbGFpbg=="
+       },
+       "data": "ImNhdWdodCBkb3duIg=="
+      }
+     ]
+    },
+    "workflowTaskCompletedEventId": "9"
+   }
+  }
+ ]
+}

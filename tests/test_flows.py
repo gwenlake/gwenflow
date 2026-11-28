@@ -140,7 +140,9 @@ def test_autoflow_plans_a_flow(monkeypatch):
     flow = AutoFlow(llm=llm, tools=[tool]).plan("A short bio")
     assert flow.topological_order() == ["Research", "Write"]
     research = flow.node("Research").parameters
-    assert research["model"] == "openai/gpt-5-mini" and research["tools"] == ["shell"]
+    # The provider is written on its own: in a flow, the prefix of `model` does not choose the client.
+    assert (research["provider"], research["model"]) == ("openai", "gpt-5-mini")
+    assert research["tools"] == ["shell"]
 
 
 def test_flow_with_durability_runs_normally_outside_a_workflow():

@@ -1,3 +1,5 @@
+import asyncio
+
 import click
 from rich.console import Console
 from rich.markdown import Markdown
@@ -44,13 +46,54 @@ def run(flow_file, plot, interactive):
         runner.plot()
     else:
         try:
-            results = runner.run()
+            # `arun`, not `run`: `run()` prints the last result itself, and the outputs are shown below.
+            results = asyncio.run(runner.arun())
         except FlowError as e:
             console.print(f"[red]{e}[/red]")
             raise SystemExit(1) from e
         for name in runner.flow.sinks():
             value = results[name]
             console.print(Markdown(value) if isinstance(value, str) else value)
+
+
+@main.command()
+@click.argument("flow_file", type=click.Path(exists=True))
+def check(flow_file):
+    """Check a flow file and list the nodes that may run at the same time.
+
+    Two nodes without a path between them run in parallel (unless the flow sets
+    `settings.parallel: false`). A pair is flagged when both nodes declare the
+    same file or SQLite database.
+    """
+    from gwenflow.flows import Flow, FlowError
+
+    try:
+        flow = Flow.from_file(flow_file)
+        flow.validate()
+    except FlowError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
+
+    parallel = flow.settings.get("parallel", True)
+    console.print(f"Flow '{flow.name}': {len(flow.nodes)} node(s), valid.")
+    if not parallel:
+        console.print("`settings.parallel` is false: nodes run one at a time, in this order:")
+        console.print("  " + " -> ".join(flow.sequential_order()))
+    report = flow.concurrent_report()
+    if not report:
+        console.print("No two nodes can run at the same time.")
+        return
+    click.echo("Nodes that may run at the same time:" if parallel else "Nodes that would run at the same time:")
+    for pair in report:
+        # One plain line per pair: paths are long, and the output is meant to be searched.
+        shared = f"  <- both declare {', '.join(pair.shared_paths)}" if pair.shared_paths else ""
+        click.echo(f"  {pair.first} | {pair.second}{shared}")
+    conflicts = sum(1 for pair in report if pair.shared_paths)
+    if conflicts:
+        console.print(
+            f"[yellow]{conflicts} pair(s) declare the same path: connect the two nodes, "
+            "or set `settings.parallel: false`.[/yellow]"
+        )
 
 
 @main.command()

@@ -496,7 +496,7 @@ nodes:
   - name: summarize
     type: gwenflow.Agent
     parameters:
-      model: openai/gpt-5-mini
+      model: gpt-5-mini
       instructions: You are a tech journalist who writes concise summaries.
       task: "Here are today's top Hacker News story IDs:\n\n{fetch_news}\n\nWhat topics are trending?"
 
@@ -515,15 +515,31 @@ results = runner.run()  # every node's result, keyed by node name
 print(results["summarize"])
 ```
 
-Independent branches run in parallel. Each node accepts `settings` (`timeout` in seconds,
-`retries`) and `credentials` (parameter name → environment variable, resolved only when
-the node runs).
+Independent branches run in parallel: a node starts as soon as all its parents are done.
+`gwenflow check flows/news_summary.yaml` lists the nodes that may run at the same time
+and flags those that declare the same file or SQLite database; `settings: {parallel:
+false}` at the top of the flow runs the nodes one at a time instead. Each node accepts
+`settings` (`timeout` in seconds, `retries`) and `credentials` (parameter name →
+environment variable, resolved only when the node runs).
 
-**Migrating from 1.5:** `FlowRunner.run()` used to print the result and exit with
-`SystemExit(1)` when a node failed. It now returns a dict of every node's result, keyed
-by node name, and a failing node raises `FlowNodeError` (a subclass of `FlowError`, also
-raised for invalid flows: cycles, duplicate names, unknown connections). Print the
-result yourself and catch `FlowError` where you relied on the exit:
+An agent node uses the OpenAI client: `model: gpt-5-mini`, or any model of an
+OpenAI-compatible endpoint, such as `model: Qwen/Qwen3-32B`, sent whole. Add `provider`
+to use another client; `model` is then sent as written:
+
+```yaml
+    parameters:
+      provider: mistral          # openai, anthropic, google, mistral, ollama, deepseek, gwenlake, azure
+      model: mistral-large-latest
+```
+
+The full reference is in [docs/flows.md](docs/flows.md).
+
+**Migrating from 1.5:** a flow written for 1.5 runs as it did, and `FlowRunner.run()`
+still prints the result of the last node. What changed: `run()` returns a dict of every
+node's result, keyed by node name, instead of `None`; a failing node raises
+`FlowNodeError` instead of exiting with `SystemExit(1)` (a subclass of `FlowError`, also
+raised for invalid flows: cycles, duplicate names, unknown connections); nodes that are
+not connected run in parallel. Catch `FlowError` where you relied on the exit:
 
 ```python
 from gwenflow.flows import FlowError, FlowRunner
@@ -582,9 +598,8 @@ scheduled on Temporal). The full guide (activity timeouts and retries, approvals
 A node that exhausts its retries raises `FlowNodeError` in the workflow: catch it, or let
 it fail the run (`worker_options()` declares it as a workflow failure).
 
-Not supported yet: a durable agent cannot have a team or sub-agents, MCP servers, skills
-or long-term memory (an explicit error is raised when it is built), and streaming raises
-inside a workflow.
+Not supported yet in a workflow: a team or sub-agents (the worker refuses to start, and such
+an agent still runs normally outside a workflow), and streaming.
 
 ## Context Management
 

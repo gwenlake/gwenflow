@@ -71,6 +71,12 @@ def model_id(llm: Any) -> str:
     raise ValueError(f"{cls_name} is not a built-in provider: it cannot be referenced from a flow.")
 
 
+def provider_and_model(llm: Any) -> tuple[str, str]:
+    """The `provider` and `model` to write in a flow for a built-in LLM instance."""
+    provider, _, model = model_id(llm).partition("/")
+    return provider, model
+
+
 def tool_key(tool: Any) -> str:
     """Inverse of `make_tools` for one built-in tool instance."""
     cls_name = type(tool).__name__
