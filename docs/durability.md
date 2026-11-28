@@ -279,6 +279,19 @@ with async `put(key, data)` and `get(key)` methods can serve as a store. Blobs m
 as long as the histories that reference them can be replayed, and the client and the
 workers must use the same codec.
 
+## Flows in a workflow
+
+A flow run by `DurableFlow`, or by `flow.arun()` in your own workflow, follows the same
+rules as a local run: a node starts as soon as all its parents are done, and
+`settings.parallel: false` runs the nodes one at a time (see [flows.md](flows.md)). Two
+things differ from a local run:
+
+- a node result is recorded in the workflow history, so the activity converts it to JSON
+  data (`datetime` and `Decimal` become strings, `tuple` and `set` lists) and a node that
+  returns any other object fails with a non-retryable error. Locally, the next node
+  receives the result as it is;
+- nodes are activities run by the worker: `FlowRunner._execute_node` is not called.
+
 ## Not supported yet
 
 A durable agent cannot run in a workflow with a team or sub-agents. Nothing is refused

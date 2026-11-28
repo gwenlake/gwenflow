@@ -4,8 +4,9 @@ import json
 from gwenflow.agents import Agent
 from gwenflow.flows.flows import Flow, execute_flow
 from gwenflow.flows.handlers import compose_task
+from gwenflow.flows.runtime import run_sync
 from gwenflow.logger import logger
-from gwenflow.registry import model_id, tool_key
+from gwenflow.registry import provider_and_model, tool_key
 from gwenflow.utils.json import parse_json_markdown
 
 EXAMPLE = [
@@ -135,6 +136,8 @@ class AutoFlow:
                         "name": entry["name"],
                         **self._model_parameter(),
                         "task": entry.get("task", ""),
+                        # Every agent reads what the agents it depends on produced.
+                        "append_inputs": True,
                         "tools": [self._tool_reference(t) for t in self.tools if t.name in wanted],
                     },
                 }
@@ -149,7 +152,8 @@ class AutoFlow:
         """Plan, then run the agents and return the last one's output.
 
         Agents run in-process with this AutoFlow's own llm and tool instances
-        (custom ones included); independent agents run concurrently.
+        (custom ones included); independent agents run concurrently. Called
+        from async code, the flow runs in a thread of its own.
         """
         flow = self.plan(query)
         tools = {self._tool_reference(t): t for t in self.tools}
@@ -160,20 +164,26 @@ class AutoFlow:
                 llm=self.llm,
                 tools=[tools[ref] for ref in node.parameters.get("tools", []) if ref in tools],
             )
-            task = compose_task(node.parameters.get("task", ""), input_data)
+            task = compose_task(node.parameters.get("task", ""), input_data, append_inputs=True)
             logger.info(f"Running agent: {agent.name}")
             response = await asyncio.to_thread(agent.run, task)
             return response.content
 
-        results = asyncio.run(execute_flow(flow, run_agent))
-        return results[flow.topological_order()[-1]]
+        results = run_sync(lambda: execute_flow(flow, run_agent))
+        # As v1.5.1 did: the output of the last agent, in the order it ran them.
+        return results[flow.sequential_order()[-1]]
 
     def _model_parameter(self) -> dict:
-        """`model` for the flow file, when the llm is a built-in provider."""
+        """`provider` and `model` for the flow file, when the llm is a built-in provider.
+
+        The provider is written on its own: in a flow, the prefix of `model`
+        does not choose the client.
+        """
         try:
-            return {"model": model_id(self.llm)}
+            provider, model = provider_and_model(self.llm)
         except ValueError:
             return {}
+        return {"provider": provider, "model": model}
 
     @staticmethod
     def _tool_reference(tool) -> str:

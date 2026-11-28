@@ -62,7 +62,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name -> environment variable, resolved only when the node runs, so secrets stay out of
   flow files and durable histories).
 - `AutoFlow.plan(query)` returns the planned `Flow` without running it, so it can be
-  saved, reviewed or run durably.
+  saved, reviewed or run durably. Its agent nodes name their `provider` explicitly.
+- Flow setting `settings.parallel` (default `true`). Set to `false`, nodes run one at a
+  time, in the order v1.5.1 ran them (`Flow.sequential_order()`, the order
+  `networkx.topological_sort` gave), locally and in a Temporal workflow.
+- `Flow.concurrent_pairs()`: the pairs of nodes without a path between them, which may
+  run at the same time. `Flow.concurrent_report()` adds the files and SQLite databases
+  both nodes declare, and `gwenflow check <flow file>` prints it for a flow file.
+- `gwenflow.Agent` node parameters: `provider` (the client comes from that provider, and
+  `model` is sent as written, so `Qwen/Qwen3-32B` stays whole), `append_inputs` (append
+  as context the parent outputs the task does not reference), `tools` (built-in tool
+  names) and `name`.
+- `FlowRunner._execute_node(node, input_data)` is back: every local run of a
+  `FlowRunner` goes through it, once per attempt, inside the node's timeout and retries,
+  so a subclass that overrides it is called again.
 - `gwenflow.registry`: built-in LLM providers and tools addressable by name
   (`make_llm("anthropic/...")`, `make_tools([...])`), shared by the CLI and flows.
 - Identifiers are UUIDv7 (time-sortable; native on Python 3.14, polyfill before), and
@@ -72,16 +85,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Independent branches of a flow run in parallel: a node starts as soon as all its
   parents are done.
-- `FlowRunner.run()` returns the results of every node as a dict instead of printing the
-  result, and raises `FlowNodeError` (a `FlowError`) instead of exiting with
-  `SystemExit(1)`. `gwenflow run` prints the flow's outputs (its sink nodes).
+- `FlowRunner.run()` returns the results of every node as a dict (it returned `None`),
+  and raises `FlowNodeError` (a `FlowError`) instead of exiting with `SystemExit(1)`. It
+  still prints the result of the last node, as v1.5.1 did; `Flow.run()`, `Flow.arun()` and
+  `FlowRunner.arun()` print nothing. `gwenflow run` prints the flow's outputs (its sink
+  nodes).
 - Flows are validated when loaded: cycles, duplicate node names and connections to
   unknown nodes raise `FlowError`.
-- The `gwenflow.Agent` flow node uses the provider given by the model prefix
-  (`anthropic/…`, `mistral/…`) instead of always using the OpenAI client, and appends as
-  context the parent outputs that the task does not reference with a `{node_name}`
-  placeholder.
 - `AutoFlow.run()` runs independent agents in parallel.
+- Differences with v1.5.1 kept on purpose for flows:
+  - two nodes that are not connected no longer run in declaration order but in parallel
+    (`settings.parallel: false` restores the old behaviour; `gwenflow check` lists them);
+  - two nodes of the same name: the flow is refused (v1.5.1 ran both, a bug);
+  - `run()` returns a dict instead of `None`;
+  - an invalid flow raises `FlowError`, a failed node `FlowNodeError`;
+  - an unknown node type is found before anything runs, not when its turn comes;
+  - nodes run in worker threads, no longer in the main thread;
+  - idempotent nodes (file readers and writers, `websiteReader`, `textSplitter`,
+    `httpRequest` with GET / HEAD / OPTIONS, `opensearchQuery` search / count / get) are
+    retried up to 2 times; `settings.retries: 0` (node) or `settings.node_retries: 0`
+    (flow) switches it off;
+  - a `gwenflow.Python` script that fails raises a `RuntimeError` carrying its stderr
+    (it was a `subprocess.CalledProcessError`).
 - Agent, response, memory and flow identifiers are UUIDv7 instead of UUIDv4.
 
 ### Fixed
@@ -114,8 +139,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ResponseOpenAI` raised on a response left `incomplete` by `max_output_tokens` or the content
   filter, losing the partial answer; it now returns it with `finish_reason="length"` /
   `"content_filter"`. An `incomplete` response for any other reason still raises.
-- The `gwenflow.Agent` flow node ignored the provider of its `model` and could not be
-  given tools (it now accepts `tools`, built-in tool names).
+- Flows written for v1.5.1 run as they did (the differences kept on purpose are listed
+  under Changed):
+  - `Flow.run()`, `FlowRunner.run()` and `AutoFlow.run()` failed with `asyncio.run()
+    cannot be called from a running event loop` when called from async code (a FastAPI
+    endpoint, a notebook). The flow then runs in a thread of its own, with the caller's
+    context variables, and the call waits for its result.
+  - A node result was always converted to JSON data: a node returning any other object
+    failed, and `Decimal`, `datetime`, `tuple` and `set` changed type. Locally the next
+    node receives the result as it is; the conversion only happens in the Temporal
+    activity, where results are recorded in the history.
+  - `gwenflow.Agent` node: without `provider`, the client is the OpenAI one and `model`
+    loses what comes before its first `/`, as in v1.5.1 (`Qwen/Qwen3-32B` was refused as
+    an unknown provider; `mistral/…` and `gwenlake/…` chose another client). A warning
+    names the `provider` to add when the prefix is a provider's name.
+  - `gwenflow.Agent` node: parent outputs the task does not reference are no longer
+    appended to the prompt, unless `append_inputs: true`.
+  - A `credentials` block whose values do not name environment variables (blocks written
+    by other tools) made the flow refused; these entries are ignored, with a warning that
+    names the node.
 
 ### Deprecated
 

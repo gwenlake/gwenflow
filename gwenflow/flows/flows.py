@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from gwenflow.flows.handlers import NODE_TYPE_REGISTRY, is_idempotent
-from gwenflow.flows.runtime import NodeCancelledError, NodeControl, NodeTimeoutError, start_in_thread
+from gwenflow.flows.handlers import NODE_TYPE_REGISTRY, is_idempotent, node_paths
+from gwenflow.flows.runtime import NodeCancelledError, NodeControl, NodeTimeoutError, run_sync, start_in_thread
 from gwenflow.logger import logger
 from gwenflow.telemetry import tracer
 from gwenflow.utils.durable import in_workflow, new_id
@@ -42,6 +42,7 @@ class FlowNodeError(FlowError):
 
 
 NodeExecutor = Callable[["Node", dict[str, Any] | None], Awaitable[Any]]
+NodeCall = Callable[["Node", dict[str, Any] | None], Any]
 StatusListener = Callable[[str, str], None]
 
 DEFAULT_IDEMPOTENT_RETRIES = 2
@@ -76,6 +77,16 @@ class Node:
     """Execution settings: `timeout` (seconds) and `retries` (extra attempts)."""
 
 
+@dataclass(frozen=True)
+class ConcurrentPair:
+    """Two nodes without a path between them: they may run at the same time."""
+
+    first: str
+    second: str
+    shared_paths: tuple[str, ...] = ()
+    """Files or databases both nodes declare (see `node_paths`): a likely conflict."""
+
+
 @dataclass
 class ConnectionEndpoint:
     node: str
@@ -90,6 +101,8 @@ class Flow:
     nodes: list[Node]
     connections: dict[str, list[list[ConnectionEndpoint]]]
     settings: dict[str, Any] = field(default_factory=dict)
+    """`node_timeout`, `node_retries`: defaults for every node. `parallel` (default
+    true): when false, nodes run one at a time, in `sequential_order()`."""
     durability: Any = field(default=None, repr=False, compare=False)
     """Durable execution backend, e.g. `TemporalDurability()`: nodes become activities
     when the flow runs inside a workflow. Not part of the flow definition."""
@@ -172,17 +185,22 @@ class Flow:
                 )
             self.validate()
             return await execute_flow(self, self.durability.execute_node, on_status)
+        return await self._arun_locally(on_status=on_status)
+
+    async def _arun_locally(self, call: NodeCall | None = None, on_status: StatusListener | None = None) -> Any:
+        """Local run; `call(node, input_data)` replaces the handler call of each attempt."""
         self.validate()
 
         async def execute_locally(node: Node, input_data: dict[str, Any] | None) -> Any:
-            return await run_node_locally(node, input_data, node_execution(node, self))
+            return await run_node_locally(node, input_data, node_execution(node, self), call)
 
         return await execute_flow(self, execute_locally, on_status)
 
     def run(self) -> dict[str, Any]:
+        """Blocking run. Called from async code, the flow runs in a thread of its own."""
         if in_workflow():
             raise FlowError("Inside a workflow, use `await flow.arun()`.")
-        return asyncio.run(self.arun())
+        return run_sync(self.arun)
 
     # -- graph -----------------------------------------------------------------
 
@@ -214,6 +232,69 @@ class Flow:
             pending = [name for name in pending if name not in ready]
         return done
 
+    def sequential_order(self) -> list[str]:
+        """Node names in the order v1.5.1 ran them: `networkx.topological_sort` of the graph.
+
+        Used when `settings.parallel` is false. Same generations as
+        `topological_order()`, but inside a generation a node comes when its last
+        parent releases it (parents in order, their targets in connection order),
+        not in declaration order. Computed here: networkx is not imported to run a flow.
+        """
+        names = [n.name for n in self.nodes]
+        id_to_name = {n.id: n.name for n in self.nodes}
+        children: dict[str, list[str]] = {name: [] for name in names}
+        for source, ports in self.connections.items():
+            for port in ports:
+                for endpoint in port:
+                    target = id_to_name[endpoint.node]
+                    if target not in children[id_to_name[source]]:
+                        children[id_to_name[source]].append(target)
+        waiting = {name: 0 for name in names}
+        for targets in children.values():
+            for target in targets:
+                waiting[target] += 1
+        order: list[str] = []
+        generation = [name for name in names if waiting[name] == 0]
+        while generation:
+            order.extend(generation)
+            released = []
+            for name in generation:
+                for child in children[name]:
+                    waiting[child] -= 1
+                    if waiting[child] == 0:
+                        released.append(child)
+            generation = released
+        if len(order) != len(names):
+            raise FlowError(f"Flow '{self.name}' has a cycle between: {', '.join(n for n in names if n not in order)}")
+        return order
+
+    def concurrent_pairs(self) -> list[tuple[str, str]]:
+        """Pairs of nodes without a path between them, in declaration order.
+
+        With `settings.parallel` left to true, the two nodes of a pair may run at
+        the same time: check that they do not write the same file, table or
+        resource. `concurrent_report()` adds the paths both declare.
+        """
+        parents = self.parents()
+        ancestors: dict[str, set[str]] = {}
+        for name in self.topological_order():
+            ancestors[name] = set(parents[name]).union(*(ancestors[p] for p in parents[name]))
+        names = [n.name for n in self.nodes]
+        return [
+            (a, b)
+            for i, a in enumerate(names)
+            for b in names[i + 1 :]
+            if a not in ancestors[b] and b not in ancestors[a]
+        ]
+
+    def concurrent_report(self) -> list[ConcurrentPair]:
+        """`concurrent_pairs()`, each with the paths (files, SQLite databases) both nodes declare."""
+        declared = {n.name: {str(Path(p).resolve()): p for p in node_paths(n.type, n.parameters)} for n in self.nodes}
+        return [
+            ConcurrentPair(a, b, tuple(path for key, path in declared[a].items() if key in declared[b]))
+            for a, b in self.concurrent_pairs()
+        ]
+
     def sinks(self) -> list[str]:
         """Nodes nobody consumes: the outputs of the flow."""
         consumed = {p for ps in self.parents().values() for p in ps}
@@ -244,6 +325,8 @@ class Flow:
         problems.extend(
             f"flow settings: {p}" for p in _settings_problems(self.settings, "node_timeout", "node_retries")
         )
+        if not isinstance(self.settings.get("parallel", True), bool):
+            problems.append("flow settings: `parallel` must be true or false")
         if not problems:
             try:
                 self.topological_order()
@@ -280,8 +363,17 @@ def _parse_nodes(raw: Any, errors: list[str]) -> list[Node]:
             if item.get(key) is not None and not isinstance(item[key], dict):
                 errors.append(f"{label}: `{key}` must be a mapping")
         credentials = item.get("credentials")
-        if isinstance(credentials, dict) and not all(isinstance(v, str) and v for v in credentials.values()):
-            errors.append(f"{label}: each credential must name an environment variable")
+        if isinstance(credentials, dict):
+            # v1.5.1 ignored the whole block, and flows exported from other tools carry
+            # one (`{"api": {"id": "1", "name": "my key"}}`): what does not name an
+            # environment variable is left out, not refused.
+            ignored = [key for key, value in credentials.items() if not (isinstance(value, str) and value)]
+            if ignored:
+                logger.warning(
+                    f"Flow {label}: credentials ignored ({', '.join(map(str, ignored))}): "
+                    "a credential must name an environment variable."
+                )
+            credentials = {key: value for key, value in credentials.items() if key not in ignored}
         if item.get("id") is not None and not isinstance(item["id"], str):
             errors.append(f"{label}: `id` must be a string")
         if not isinstance(item.get("version", 1), int):
@@ -298,7 +390,7 @@ def _parse_nodes(raw: Any, errors: list[str]) -> list[Node]:
                 version=item.get("version", 1),
                 position=item.get("position", [0, 0]),
                 parameters=item.get("parameters") or {},
-                credentials=item.get("credentials") or {},
+                credentials=credentials or {},
                 settings=item.get("settings") or {},
             )
         )
@@ -365,9 +457,15 @@ async def execute_flow(
     thread locally, an activity in a Temporal workflow. Only asyncio tasks are
     used here, so this function is valid workflow code. The first failure
     cancels the nodes still running and is raised as `FlowNodeError`.
+
+    With `settings.parallel` set to false, nodes run one at a time instead, in
+    `flow.sequential_order()`, as before v1.5.2.
     """
     parents = flow.parents()
     tasks: dict[str, asyncio.Task] = {}
+
+    if flow.settings.get("parallel", True) is False:
+        return await _execute_one_by_one(flow, execute_node, on_status)
 
     async def run(name: str) -> Any:
         try:
@@ -405,6 +503,33 @@ async def execute_flow(
         await asyncio.gather(*tasks.values(), return_exceptions=True)
         raise
     return {name: task.result() for name, task in tasks.items()}
+
+
+async def _execute_one_by_one(
+    flow: Flow, execute_node: NodeExecutor, on_status: StatusListener | None = None
+) -> dict[str, Any]:
+    parents = flow.parents()
+    order = flow.sequential_order()
+    results: dict[str, Any] = {}
+
+    def notify(name: str, status: str) -> None:
+        if on_status is not None:
+            on_status(name, status)
+
+    for position, name in enumerate(order):
+        input_data = {p: results[p] for p in parents[name]} if parents[name] else None
+        notify(name, "running")
+        try:
+            results[name] = await execute_node(flow.node(name), input_data)
+        except BaseException as e:
+            notify(name, "cancelled" if isinstance(e, asyncio.CancelledError) else "failed")
+            for skipped in order[position + 1 :]:
+                notify(skipped, "skipped")
+            if isinstance(e, asyncio.CancelledError | FlowNodeError) or not isinstance(e, Exception):
+                raise
+            raise FlowNodeError(name, describe_error(e)) from e
+        notify(name, "done")
+    return results
 
 
 @dataclass(frozen=True)
@@ -510,10 +635,15 @@ def _json_key(key: Any) -> str:
 
 
 def call_handler(node_type: str, parameters: dict[str, Any], input_data: dict[str, Any] | None) -> Any:
+    """The handler's result, as it is: locally, the next node receives the same object."""
     handler = NODE_TYPE_REGISTRY.get(node_type)
     if handler is None:
         raise NotImplementedError(f"Node type '{node_type}' is not supported.")
-    result = handler(parameters, input_data)
+    return handler(parameters, input_data)
+
+
+def jsonable_result(node_type: str, result: Any) -> Any:
+    """A node result as JSON data, for a durable execution: it is recorded in the history."""
     try:
         return to_jsonable(result)
     except TypeError as e:
@@ -541,15 +671,27 @@ async def run_in_thread(fn: Callable[..., Any], *args: Any, timeout: float | Non
 
 
 async def run_node_locally(
-    node: Node, input_data: dict[str, Any] | None, execution: NodeExecution | None = None
+    node: Node,
+    input_data: dict[str, Any] | None,
+    execution: NodeExecution | None = None,
+    call: NodeCall | None = None,
 ) -> Any:
-    """Local executor: a worker thread, with the node's timeout and retries."""
+    """Local executor: a worker thread, with the node's timeout and retries.
+
+    `call(node, input_data)` does one attempt in place of the handler call
+    (`FlowRunner._execute_node`); it runs in the worker thread too.
+    """
     execution = execution or node_execution(node)
-    parameters = resolve_credentials(node)
+    if call is None:
+        parameters = resolve_credentials(node)
+
+        def call(node: Node, input_data: dict[str, Any] | None) -> Any:
+            return call_handler(node.type, parameters, input_data)
+
     for attempt in range(1, execution.attempts + 1):
         logger.info(f"Running node: {node.name} [{node.type}]" + (f" (attempt {attempt})" if attempt > 1 else ""))
         try:
-            return await run_in_thread(call_handler, node.type, parameters, input_data, timeout=execution.timeout)
+            return await run_in_thread(call, node, input_data, timeout=execution.timeout)
         except Exception as e:
             if attempt == execution.attempts or not is_retryable(e):
                 raise
@@ -571,15 +713,43 @@ class FlowRunner:
             self._graph = self._build_graph()
         return self._graph
 
+    def _execute_node(self, node: Node, input_data: dict[str, Any] | None) -> Any:
+        """Run one attempt of one node, and return its result.
+
+        Override it to wrap or replace what a node does (audit, cache, test
+        double): every local run of this runner goes through it. It is called
+        in the node's worker thread, once per attempt, and the node's timeout and
+        retries apply around it. Inside a Temporal workflow nodes are activities,
+        run by the worker: this method is not called.
+        """
+        return call_handler(node.type, resolve_credentials(node), input_data)
+
     async def arun(self) -> dict[str, Any]:
         """Run the flow; returns every node's result, keyed by node name."""
+        return await self._arun(echo=False)
+
+    async def _arun(self, echo: bool) -> dict[str, Any]:
         with tracer.span("Flow Run"):
-            results = await self.flow.arun()
+            if in_workflow():
+                results = await self.flow.arun()
+            else:
+                results = await self.flow._arun_locally(self._execute_node)
+        if echo and results:
+            # As v1.5.1 did: the result of the last node, in the order it ran them.
+            print(results[self.flow.sequential_order()[-1]])  # noqa: T201
         logger.info(f"Flow '{self.flow.name}' completed.")
         return results
 
     def run(self) -> dict[str, Any]:
-        return asyncio.run(self.arun())
+        """Blocking run: prints the last node's result, and returns every node's result.
+
+        Called from async code (a running event loop), the flow runs in a thread
+        of its own. Use `await runner.arun()` there to run it on the loop, without
+        the print.
+        """
+        if in_workflow():
+            raise FlowError("Inside a workflow, use `await runner.arun()`.")
+        return run_sync(lambda: self._arun(echo=True))
 
     # -- plotting --------------------------------------------------------------
 

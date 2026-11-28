@@ -867,6 +867,39 @@ def test_durable_flow(monkeypatch):
     assert failure.cause.type == "FlowNodeError"
 
 
+def test_durable_flow_runs_nodes_one_by_one_with_parallel_false():
+    definition = {
+        "name": "one by one",
+        "settings": {"parallel": False},
+        "nodes": [
+            {"name": "b", "type": "temporal_test.Sleep", "parameters": {"seconds": 0.3, "value": "B"}},
+            {"name": "a", "type": "temporal_test.Sleep", "parameters": {"seconds": 0.3, "value": "A"}},
+            {"name": "join", "type": "temporal_test.Join"},
+        ],
+        "connections": {n: [[{"node": "join"}]] for n in ("a", "b")},
+    }
+
+    async def go():
+        async with await _env() as env:
+            opts = _options(DurableFlow)
+            async with Worker(env.client, task_queue="flows", **opts):
+                handle = await env.client.start_workflow(DurableFlow.run, definition, id="flow-seq", task_queue="flows")
+                result = await handle.result()
+                history = await handle.fetch_history()
+                await Replayer(workflows=opts["workflows"], workflow_runner=opts["workflow_runner"]).replay_workflow(
+                    history
+                )
+                return result
+
+    result = asyncio.run(go())
+
+    assert result["join"] == {"a": "A", "b": "B"}
+    # One activity at a time, in declaration order for nodes that are not connected:
+    # `b` is declared first, and `a` starts once it has ended.
+    (a_start, _), (_, b_end) = SPANS["A"], SPANS["B"]
+    assert b_end <= a_start
+
+
 # ---------------------------------------------------------------------------
 # A failing flow in a custom workflow
 # ---------------------------------------------------------------------------

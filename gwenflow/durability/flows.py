@@ -18,6 +18,7 @@ from gwenflow.flows.flows import (
     FlowNodeError,
     Node,
     call_handler,
+    jsonable_result,
     node_execution,
 )
 from gwenflow.flows.policy import FlowPolicy, FlowPolicyError
@@ -57,7 +58,8 @@ class FlowNodeActivity:
             control.stop()
             raise
         try:
-            return task.result()
+            # Recorded in the history: JSON data only, the same on every worker.
+            return jsonable_result(node.type, task.result())
         except NON_RETRYABLE_ERRORS as e:
             raise ApplicationError(str(e), type=type(e).__name__, non_retryable=True) from e
 

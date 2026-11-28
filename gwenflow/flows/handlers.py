@@ -117,8 +117,12 @@ def handle_http_request(parameters: dict, input_data: dict | None) -> Any:
         return response.text
 
 
-def compose_task(task: str, input_data: dict | None) -> str:
-    """Fill `{node_name}` placeholders with parent outputs; append the others as context."""
+def compose_task(task: str, input_data: dict | None, append_inputs: bool = False) -> str:
+    """Fill the `{node_name}` placeholders of `task` with the parent outputs.
+
+    A parent the task does not reference is left out, as in v1.5.1. With
+    `append_inputs`, it is appended as context instead, so every input reaches the agent.
+    """
     unreferenced = []
     for name, value in (input_data or {}).items():
         serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -127,10 +131,42 @@ def compose_task(task: str, input_data: dict | None) -> str:
             task = task.replace(placeholder, serialized)
         else:
             unreferenced.append(f"Output from {name}:\n{serialized}")
-    if unreferenced:
+    if append_inputs and unreferenced:
         task = f"{task}\n\nContext from previous steps:\n" + "\n\n".join(unreferenced)
 
     return task
+
+
+def agent_llm(parameters: dict) -> Any:
+    """The LLM client of an agent node.
+
+    Without `provider`, as in v1.5.1: an OpenAI client, and `model` loses what comes
+    before its first `/` (`openai/gpt-4o-mini` and `gpt-4o-mini` are the same model;
+    `Qwen/Qwen3-32B` is sent as `Qwen3-32B`). The prefix never chooses the client.
+
+    With `provider` (`openai`, `mistral`, `anthropic`, `gwenlake`...), the client is
+    that provider's, and `model` is sent as written (`Qwen/Qwen3-32B` stays whole).
+    """
+    from gwenflow.registry import DEFAULT_MODEL, PROVIDERS, make_llm
+
+    provider = parameters.get("provider")
+    if provider:
+        model = parameters.get("model")
+        if not model:
+            raise ValueError("an agent node with `provider` needs a `model`")
+        return make_llm(f"{provider}/{model}")
+
+    from gwenflow import ChatOpenAI
+    from gwenflow.logger import logger
+
+    raw_model = parameters.get("model", DEFAULT_MODEL)
+    prefix, _, name = raw_model.partition("/")
+    if name and prefix.lower() in PROVIDERS and prefix.lower() != "openai":
+        logger.warning(
+            f"Agent node model '{raw_model}': the prefix does not choose the client, "
+            f"an OpenAI client is used. Add `provider: {prefix.lower()}` to use that provider."
+        )
+    return ChatOpenAI(model=raw_model.split("/", 1)[-1])
 
 
 @node_type("gwenflow.Agent", paths=("harness",))
@@ -138,16 +174,17 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
     """Run an agent on the node's task, from a harness or from the parameters written in the flow.
 
     Parameters: `harness` (a harness directory or a single-file agent, relative to the
-    working directory) or `instructions`; `model` (`provider/model-name`, overrides the
-    harness model), `task`, `tools` (built-in tool names) and an optional `name`.
+    working directory) or `instructions`; `model` and `provider` (see `agent_llm`;
+    `model` overrides the harness model), `task`, `tools` (built-in tool names), an
+    optional `name`, and `append_inputs`.
 
-    Parent outputs fill the `{node_name}` placeholders of `task`; those the task
-    does not reference are appended as context, so every input reaches the agent.
+    Parent outputs fill the `{node_name}` placeholders of `task`. With
+    `append_inputs: true`, those the task does not reference are appended as context.
     """
     from gwenflow import Agent
-    from gwenflow.registry import DEFAULT_MODEL, make_llm, make_tools
+    from gwenflow.registry import make_llm, make_tools
 
-    task = compose_task(parameters.get("task", ""), input_data)
+    task = compose_task(parameters.get("task", ""), input_data, bool(parameters.get("append_inputs", False)))
 
     harness = parameters.get("harness")
     if harness:
@@ -155,7 +192,16 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
             raise ValueError("an agent node has either `harness` or `instructions`, not both")
         from gwenflow.harness import Harness
 
-        agent = Harness.load(harness).build_agent(model=parameters.get("model"))
+        loaded = Harness.load(harness)
+        model, provider = parameters.get("model"), parameters.get("provider")
+        if provider:
+            # The harness model runs on that provider's client instead of the harness default.
+            name = model or loaded.config.model
+            if not name:
+                raise ValueError("an agent node with `provider` needs a `model` (in the node or in the harness)")
+            agent = loaded.build_agent(llm=make_llm(f"{provider}/{name}"))
+        else:
+            agent = loaded.build_agent(model=model)
         return agent.run(task).content
 
     instructions = parameters.get("instructions", "")
@@ -165,7 +211,7 @@ def handle_agent(parameters: dict, input_data: dict | None) -> str:
     agent = Agent(
         name=parameters.get("name", "Flow Agent"),
         instructions=instructions,
-        llm=make_llm(parameters.get("model", DEFAULT_MODEL)),
+        llm=agent_llm(parameters),
         tools=make_tools(parameters.get("tools")),
     )
     return agent.run(task).content
